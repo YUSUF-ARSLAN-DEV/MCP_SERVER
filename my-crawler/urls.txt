@@ -1,0 +1,14 @@
+https://sat.aljazeera.net/ar
+https://sat.aljazeera.net/ar/frequency-search
+https://sat.aljazeera.net/ar/map
+https://sat.aljazeera.net/ar/map-search-results/-1/null
+https://sat.aljazeera.net/ar/newfrequencies
+https://sat.aljazeera.net/ar/subscribe
+https://sat.aljazeera.net/ar/tunereceiver
+https://sat.aljazeera.net/en
+https://sat.aljazeera.net/en/frequency-search
+https://sat.aljazeera.net/en/map
+https://sat.aljazeera.net/en/map-search-results/-1/null
+https://sat.aljazeera.net/en/newfrequencies
+https://sat.aljazeera.net/en/subscribe
+https://sat.aljazeera.net/en/tunereceiver

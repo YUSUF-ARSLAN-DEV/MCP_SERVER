@@ -1,0 +1,30 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+my-crawler/node_modules/
+
+# Generated test and evidence artifacts
+test-results/
+playwright-report/
+reports/
+evidence.json
+results.json
+generation-debug.log
+exploration/
+traces/
+_failed-specs/
+_legacy-specs/
+my-crawler/storage/
+
+# Python and editor files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

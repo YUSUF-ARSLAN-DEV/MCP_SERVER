@@ -1,0 +1,78 @@
+==============================================================
+AL JAZEERA SATELLITE FREQUENCIES WEBSITE - PERSONA & USER FLOW
+==============================================================
+URL: https://sat.aljazeera.net/en/tunereceiver (and related pages)
+USER MODE: Single User (No Login, No Multi-User Concurrency)
+
+PURPOSE:
+This document serves as a persona reference for AI agents to generate automated smoke tests. It defines the expected user behaviors, navigation flows, and system responses for a standard user exploring the Al Jazeera Satellite Frequencies website.
+
+--------------------------------------------------------------
+USER PERSONA (The "Who")
+--------------------------------------------------------------
+Role: General user (viewer, technician, or enthusiast).
+Goal: Quickly find satellite frequencies, tune their receiver, or subscribe to alerts.
+Technical Level: Average. Familiar with dropdowns, forms, CAPTCHAs, and step-by-step wizards.
+Session: Typically short, task-oriented (find one specific piece of data or complete a single form).
+
+--------------------------------------------------------------
+CORE USER STORIES & INTERACTIONS (The "What happens when")
+--------------------------------------------------------------
+
+**1. Finding Frequencies (Homepage - "Find Al Jazeera Near You")**
+- User Action: User lands on the homepage and sees a banner with two main options: "Select your location" and "Select your channel" dropdowns, or an option to "Go to Map".
+- System Response: System loads the homepage and displays the search bar and dropdowns clearly.
+- User Action: User selects a country and channel from the dropdowns, then clicks the "Search" button.
+- System Response: System validates the input. If fields are empty, the system should prompt the user or disable the button. If valid, the system navigates the user to a results page (or displays the frequency table, similar to the "New Frequencies" page) filtering the results based on the selected parameters.
+- User Action: Alternatively, user clicks "Go to Map".
+- System Response: System loads an interactive map page where the user can click on geographic locations to find frequencies.
+
+**2. Viewing "New Frequencies"**
+- User Action: User navigates via the top menu bar and clicks on "New Frequencies".
+- System Response: System loads a comprehensive table showing the latest satellite updates, with columns: Satellite, Channel, Frequency, Orbit, Symbol Rate, FEC, Polarity, and Transmission.
+- User Action: User scrolls through the table to read data.
+- System Response: Table must be responsive, horizontally scrollable if necessary on mobile, and text must be clearly legible.
+
+**3. Tuning the Receiver (Multi-Step Wizard)**
+- User Action: User clicks on "Tune Your Receiver" in the main navigation.
+- System Response: System loads a dark-themed page presenting a 5-step wizard (STEP 1 to STEP 5).
+- User Action (Step 1): User reads the instruction "Press on Menu button using remote control" and clicks the "Setting" and then the "Installation" button (as per instruction), then clicks "Next".
+- System Response: System transitions smoothly to Step 2, providing new instructions.
+- User Action (Steps 2-4): User follows the on-screen instructions for the specific steps.
+- User Action (Step 5): User reaches the final step and is instructed to press the "Menu" button on their physical remote to finalize the setup.
+- System Response: System displays a "Next" button or a "Finish" confirmation on Step 5, confirming successful completion of the wizard.
+
+**4. Subscribing for Updates**
+- User Action: User clicks the "Subscribe for Updates" link in the main navigation or the gold "Subscribe Now" button on the homepage banner.
+- System Response: System loads a form with the following fields: Name, Email, Country, City, Channel, Mobile, Language, and a CAPTCHA image ("What code is in the image?").
+- User Action: User fills out all the required fields, types the CAPTCHA code, and clicks the gold "Submit Request" button.
+- System Response: System performs client-side and server-side validation. If the CAPTCHA is incorrect or required fields are missing, the system displays clear error messages without losing user input. If successful, the system provides a success message (e.g., "Thank you for subscribing") and possibly clears the form.
+
+**5. Language Switching**
+- User Action: User clicks the "العربية" (Arabic) link in the top right menu to switch to the Arabic version of the site.
+- System Response: System immediately reloads the current page with all text, headers, and labels translated to Arabic (RTL layout). The "العربية" link toggles to "English" to allow switching back.
+
+**6. Navigation and Footer (Secondary Flow)**
+- User Action: User clicks on any link in the footer (e.g., "Al Jazeera English", "Privacy Policy", "Cookie Policy").
+- System Response: System opens the corresponding page or a new tab without returning a 404 error. User can click the "Al Jazeera" logo at any point to return to the homepage.
+
+--------------------------------------------------------------
+ELEMENT BEHAVIOR EXPECTATIONS (For Smoke Tests)
+--------------------------------------------------------------
+- Navigation Bar: Must be sticky (or clearly accessible) across all pages.
+- Dropdowns: Must open, allow selection, and remain selected on form submission (if validation fails).
+- Buttons: Must have a visible hover state and correctly trigger actions (e.g., navigation, submission).
+- CAPTCHA: Must clearly display a distinct code, be refreshable if needed, and strictly enforce accuracy.
+- Wizards: Must not allow skipping steps unless explicitly provided. Must show current step highlighted (gold/yellow) and completed steps marked.
+
+--------------------------------------------------------------
+SINGLE-USER SPECIFIC EDGE CASES (For Agent Checks)
+--------------------------------------------------------------
+- If a user double-clicks the "Submit Request" button, the system should prevent duplicate form submissions.
+- If a user presses the browser "Back" button after submitting a form, they should be taken back to the previous page without page-break errors.
+- If a user refreshes the page mid-wizard, they should restart from Step 1 (no broken state).
+- If the CAPTCHA is refreshed or changed, the user input should be reset for that specific field.
+
+--------------------------------------------------------------
+END OF PERSONA FILE
+--------------------------------------------------------------
