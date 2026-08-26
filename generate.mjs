@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, renameSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import 'dotenv/config';
+import { generate as llmGenerate } from './llm.mjs';
 
 // 1. Read inputs
 const guide = readFileSync('AI-TEST-GUIDE.md', 'utf-8');
@@ -19,16 +20,8 @@ function specName(rawUrl) {
 const browser = await chromium.launch({ headless: process.env.HEADLESS !== 'false' });
 const page = await browser.newPage();
 
-const API_URL = process.env.API_URL || 'https://llm-1.d4done.com/v1/chat/completions';
-const MODEL_NAME = process.env.MODEL_NAME || 'google/gemma-4-26b-a4b-qat';
-const API_KEY = process.env.API_KEY;
-
-// AI connection (OpenAI-compatible format)
-const MODEL_TIMEOUT_MS = Number(process.env.MODEL_TIMEOUT_MS || 300000);
-const MODEL_RETRIES = Number(process.env.MODEL_RETRIES || 4);
-const RETRY_BASE_MS = Number(process.env.RETRY_BASE_MS || 3000);
+// --- Debug logging (LLM transport now lives in ./llm.mjs -> ./providers/*) ---
 const DEBUG_LOG = 'generation-debug.log';
-let requestNumber = 0;
 writeFileSync(DEBUG_LOG, `Generation started ${new Date().toISOString()}\n`);
 
 function debug(message, details = '') {
@@ -41,69 +34,10 @@ function preview(value, limit = 700) {
   return String(value ?? '').replace(/\s+/g, ' ').slice(0, limit);
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function isTransientStatus(status) {
-  return status === 408 || status === 409 || status === 425 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 524;
-}
-
+// Thin wrapper: the active provider (see .env LLM_PROVIDER) does the transport,
+// retries, and response-shape handling. We just pass our debug logger in.
 async function callModel(prompt) {
-  const messages = [
-    { role: 'system', content: 'You are a test spec generator. Output ONLY the TypeScript code block.' },
-    { role: 'user', content: prompt }
-  ];
-
-  for (let attempt = 1; attempt <= MODEL_RETRIES; attempt++) {
-    const requestId = ++requestNumber;
-    const started = Date.now();
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
-    try {
-      const resp = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${API_KEY}` },
-        body: JSON.stringify({ model: MODEL_NAME, messages, temperature: 0.1, max_tokens: 3072, stream: false }),
-        signal: controller.signal
-      });
-      const body = await resp.text();
-      debug(`request #${requestId} response`, `attempt=${attempt}/${MODEL_RETRIES} status=${resp.status} ms=${Date.now() - started} bytes=${body.length}`);
-      if (!resp.ok) {
-        const error = new Error(`API error: ${resp.status}`);
-        error.status = resp.status;
-        error.body = body.slice(0, 1000);
-        if (!isTransientStatus(resp.status) || attempt === MODEL_RETRIES) throw error;
-        debug('transient server error; retrying', `request=#${requestId} status=${resp.status} waitMs=${RETRY_BASE_MS * 2 ** (attempt - 1)} body=${preview(body)}`);
-        await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
-        continue;
-      }
-      let data;
-      try { data = JSON.parse(body); } catch {
-        const error = new Error('API returned non-JSON success response');
-        error.transient = true; error.body = body.slice(0, 1000);
-        throw error;
-      }
-      let content = data.choices?.[0]?.message?.content ?? data.output_text ?? data.response ?? data.content;
-      if (Array.isArray(content)) content = content.map(part => typeof part === 'string' ? part : part.text || '').join('');
-      if (!content) {
-        const error = new Error('API response had no usable model content');
-        error.transient = true;
-        error.body = `keys=${Object.keys(data).join(',')} preview=${preview(JSON.stringify(data))}`;
-        throw error;
-      }
-      debug(`request #${requestId} accepted`, `contentChars=${String(content).length} keys=${Object.keys(data).join(',')}`);
-      return content;
-    } catch (error) {
-      const transient = error.transient || error.name === 'AbortError' || error.code === 'ECONNRESET' || isTransientStatus(error.status);
-      debug(`request #${requestId} failed`, `attempt=${attempt}/${MODEL_RETRIES} ms=${Date.now() - started} type=${error.name || 'Error'} message=${error.message} detail=${preview(error.body)}`);
-      if (!transient || attempt === MODEL_RETRIES) throw error;
-      debug('retrying model request', `request=#${requestId} waitMs=${RETRY_BASE_MS * 2 ** (attempt - 1)}`);
-      await sleep(RETRY_BASE_MS * 2 ** (attempt - 1));
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
+  return llmGenerate(prompt, { log: debug });
 }
 
 async function explorePage(page) {
