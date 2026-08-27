@@ -12,7 +12,9 @@ export async function actionEvidence(
   action: () => Promise<void>,
   verify: () => Promise<void>,
 ) {
+  if (typeof action !== 'function' || typeof verify !== 'function') throw new TypeError('actionEvidence requires action and verify callbacks');
   await action();
+  if (typeof verify !== 'function') throw new TypeError('observationEvidence requires a verify callback');
   await verify();
   const path = testInfo.outputPath(`${fileSafe(label)}.png`);
   await page.screenshot({ path, fullPage: true });
@@ -25,6 +27,7 @@ export async function observationEvidence(
   label: string,
   verify: () => Promise<void>,
 ) {
+  if (typeof verify !== 'function') throw new TypeError('observationEvidence requires a verify callback');
   await verify();
   const path = testInfo.outputPath(`${fileSafe(label)}.png`);
   await page.screenshot({ path, fullPage: true });
