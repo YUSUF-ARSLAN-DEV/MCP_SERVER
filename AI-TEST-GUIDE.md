@@ -76,3 +76,13 @@ It encodes hard-won rules — every rule here exists because ignoring it caused 
 - External domains (facebook.com, aljazeera.com proper) — only this site.
 - Analytics / third-party console noise.
 - Anything you did not actually observe on the page.
+
+
+## Machine-checkable output contract
+
+- Return exactly one complete TypeScript code block; never return prose, multiple alternatives, or a partial draft.
+- Treat the supplied live inventory as authoritative. Do not infer controls, success messages, URLs, or workflows from PERSONA text.
+- Every generated behavioral test must contain one actionEvidence call whose action callback performs the action and whose verify callback contains the postcondition assertion.
+- Every observationEvidence call must contain a meaningful visibility/content/state assertion in its verify callback.
+- If no reliable postcondition is observed, generate `test.skip('NOT TESTABLE: <specific reason>', ...)` and do not invent a workflow.
+- Keep each test independent and include all setup required for that test.
