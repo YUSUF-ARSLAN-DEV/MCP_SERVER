@@ -15,6 +15,7 @@
     "generate": "node generate.mjs",
     "validate:specs": "node scripts/validate_specs.mjs",
     "test:smoke": "playwright test --project=chromium --reporter=list,html",
+    "check:report": "python -m py_compile scripts/generate_evidence_docx.py",
     "check": "node --check generate.mjs && node --check evidence-reporter.mjs && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_secrets.ps1 && npm run validate:specs",
     "clean:artifacts": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/clean_artifacts.ps1"
   },
