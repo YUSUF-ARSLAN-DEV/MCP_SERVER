@@ -76,3 +76,6 @@ SINGLE-USER SPECIFIC EDGE CASES (For Agent Checks)
 --------------------------------------------------------------
 END OF PERSONA FILE
 --------------------------------------------------------------
+
+IMPLEMENTATION CONSTRAINT:
+The live PAGE URL, accessibility snapshot, and compact inventory supplied in the generation prompt are authoritative. The user stories above are behavioral context only; never generate a test for a control, route, success state, CAPTCHA, language, or workflow unless it is observed in the supplied page evidence.
