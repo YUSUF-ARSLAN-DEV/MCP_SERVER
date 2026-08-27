@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { resolve, relative } from 'node:path';
-const ROOT = resolve(new URL('..', import.meta.url).pathname, '..');
+import { resolve, relative, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const TEST_ROOT = resolve(ROOT, 'tests');
 const requested = process.argv.slice(2);
 function inside(p, root) { const r = relative(root, p); return r && !r.startsWith('..') && !r.includes('\0'); }
