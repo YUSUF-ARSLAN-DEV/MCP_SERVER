@@ -5,7 +5,7 @@ export const router = createPlaywrightRouter();
 router.addDefaultHandler(async ({ enqueueLinks, log }) => {
     log.info(`enqueueing new URLs`);
     await enqueueLinks({
-        include: ['https://crawlee.dev/**'],
+        include: [(process.env.ALLOWED_ORIGINS || 'https://sat.aljazeera.net').split(',').map(origin => `${origin.trim()}/**`)],
         label: 'detail',
     });
 });
