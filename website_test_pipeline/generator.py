@@ -24,4 +24,5 @@ def generate_spec(client, guide: str, persona: str, inventory: PageInventory, ou
             if exc.status in {401, 403, 429, 500, 502, 503, 504, 524, 530}:
                 break
         except Exception as exc: last = exc
+    if isinstance(last, ModelError): raise last
     raise RuntimeError(f"spec rejected: {last}")

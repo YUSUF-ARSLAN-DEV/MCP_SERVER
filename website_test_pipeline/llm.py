@@ -33,7 +33,7 @@ class ModelClient:
         payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt}], "temperature": 0.1, "max_tokens": 3072, "stream": False}).encode()
         for attempt in range(1, self.s.model_retries + 2):
             request_id = uuid.uuid4().hex[:10]; started = time.monotonic()
-            req = urllib.request.Request(self.s.api_url, data=payload, headers={"Content-Type":"application/json", **({"Authorization": f"Bearer {self.s.api_key}"} if self.s.api_key else {})})
+            req = urllib.request.Request(self.s.api_url, data=payload, headers={"Content-Type":"application/json", "User-Agent":"website-test-pipeline/0.1", **({"Authorization": f"Bearer {self.s.api_key}"} if self.s.api_key else {})})
             try:
                 with urllib.request.urlopen(req, timeout=self.s.model_timeout_ms / 1000) as response:
                     status = response.status; raw = response.read().decode("utf-8", "replace")
