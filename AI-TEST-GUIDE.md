@@ -1,88 +1,129 @@
 # AI Test Generation Guide
 
-You are generating website-independent Playwright smoke tests. Follow this guide exactly.
-It encodes hard-won rules — every rule here exists because ignoring it caused real failures.
+You are generating website-independent **Python + Playwright** smoke tests, run
+under `pytest`. Follow this guide exactly. It encodes hard-won rules — every
+rule here exists because ignoring it caused real failures.
 
 ## Task
 
-1. Read the supplied URL list. It contains one URL per line; the domain, language, controls, and workflows are unknown until observed.
-2. Process the URLs **one at a time**.
-3. For each URL, navigate to it and read the accessibility snapshot.
-4. Create ONE spec file per page in `tests/`, named after the page
-   (e.g. `en-frequency-search.spec.ts`, `ar-subscribe.spec.ts`). Never combine pages.
-5. Wrap each page's tests in `test.describe('<full page URL>', () => { ... })` so the
-   HTML report groups tests by page.
-6. If a spec file for that page already exists, OVERWRITE it.
-7. When finished, report how many spec files you created.
+1. You are given ONE page: its URL, title, observed inventory (headings and
+   interactive controls), and a filtered accessibility snapshot.
+2. Produce ONE `pytest` module for that page — a set of independent smoke tests
+   derived only from what was actually observed.
+3. Return **exactly one complete Python code block** (```python … ```), no prose,
+   no alternatives, no partial drafts. The pipeline extracts the first code
+   block and writes it to `python_tests/<slug>_test.py`.
+4. There is no fixed test count and no fixed workflow. Generate a test only when
+   the observed inventory gives you a reliable postcondition to assert.
+
+## Output contract (the pipeline rejects the spec if any of these fail)
+
+- The module must be valid Python (it is parsed with `ast.parse`).
+- It must contain at least one real `assert` **or** Playwright `expect(...)`
+  assertion. A test that only clicks and waits is invalid.
+- The **exact page URL string must appear literally** in the module (use it in
+  `page.goto(...)` and/or an `expect(page).to_have_url(...)` check).
+- **No text-based selectors.** The strings `get_by_text`, `:has-text`, and
+  `text=` are forbidden anywhere in the file.
+- **No system imports.** Never import `os`, `subprocess`, or `socket`.
+- Every state-changing action (`.click(`, `.fill(`, `.select_option(`,
+  `.check(`, `.uncheck(`, `.press(`) must go through `action_evidence(...)`
+  (see Evidence rules). A bare action in the module body is rejected.
+
+## Module skeleton
+
+```python
+from pathlib import Path
+from playwright.sync_api import Page, expect
+from website_test_pipeline.evidence import action_evidence, observation_evidence
+
+URL = "<exact page URL>"
+
+
+def _open(page: Page) -> None:
+    page.goto(URL, wait_until="domcontentloaded")
+    allow = page.get_by_role("button", name="Allow all")
+    if allow.is_visible():
+        allow.click()
+
+
+def test_<behavior_specific_to_this_page>(page: Page, tmp_path: Path) -> None:
+    _open(page)
+    expect(page).to_have_url(URL)
+    heading = page.get_by_role("heading", name="<exact accessible name>")
+    expect(heading).to_be_visible()
+```
+
+- The `page` fixture comes from `pytest-playwright`. Do not create your own
+  browser or `sync_playwright()` block.
+- `tmp_path` is the pytest-provided directory for this test's evidence; pass it
+  straight into `action_evidence` / `observation_evidence`.
+- Call `_open(page)` (or inline equivalent) at the start of every test — tests
+  must be independent and not rely on another test's navigation or side effects.
 
 ## Locator rules (these caused the most failures)
 
-- **Never use `:has-text(...)` or text-based CSS selectors.** They match visible text,
-  which is often translated (Arabic pages), rendered differently, or not the accessible name.
-- **Prefer, in this order:** `getByRole('<role>', { name: '<accessible name>' })`, then
-  `href`-based locators (`a[href="/en/map"]`), then `getByLabel` / `getByTestId`.
-- Read the **actual** accessible name from the snapshot. Do not guess or invent text.
-- Never assume a control, workflow, success message, language, route, or business rule exists because it is common on another website.
-- Use the page title, URL, accessibility snapshot, and observed DOM state as the only source of truth.
-- On Arabic (`/ar`) pages, use the actual Arabic accessible names you observe —
-  do NOT reuse English names like "Toggle navigation".
+- **Prefer, in this order:** `page.get_by_role("<role>", name="<accessible
+  name>")`, then an attribute locator (`page.locator('a[href="/en/map"]')`),
+  then `page.get_by_label(...)` / `page.get_by_test_id(...)`.
+- Copy the accessible name **verbatim from the snapshot**. Never guess, invent,
+  or translate it. Never use an OR-regex or a single shared word — it matches
+  sibling elements and raises a strict-mode violation.
+- On Arabic (`/ar`) pages use the actual Arabic accessible names you observe.
+  Do not reuse English names like "Toggle navigation".
+- Never assume a control, route, success message, language, or business rule
+  exists because it is common on other sites. The observed inventory, title,
+  URL, and accessibility snapshot are the only source of truth.
 
 ## Assertion rules
 
-- **Every test must have at least one real `expect`.** Never write a test that only
-  clicks and waits.
-- **`await` every async call.** In particular `await page.title()`, `await locator.inputValue()`.
-  A missing `await` returns a Promise and the assertion silently checks the wrong thing.
-- **Do not assert `toBeVisible()` on elements that are hidden by design:**
-  - Skip links (`a[href="#main-content"]`) are screen-reader-only and invisible.
-    Assert `await expect(locator).toHaveCount(1)` or `.toBeAttached()` instead.
-  - Any visually-hidden / `sr-only` element: check presence, not visibility.
-- **Responsive / mobile-only elements** (hamburger / nav toggle): do NOT assert they are
-  visible at desktop width. Set a mobile viewport first
-  (`await page.setViewportSize({ width: 375, height: 667 })`), then assert visible.
-- For links that may sit below the fold, `toBeVisible()` is fine (it checks render state,
-  not viewport), but if unsure prefer `.toBeAttached()`.
+- Use Playwright's auto-retrying `expect(...)` for anything the page renders
+  asynchronously (`to_be_visible`, `to_have_text`, `to_have_url`,
+  `to_have_count`). Use bare `assert` only for pure Python values you already
+  hold.
+- **Do not assert `to_be_visible()` on elements hidden by design:**
+  - Skip links (`a[href="#main-content"]`) are screen-reader-only. Assert
+    `expect(locator).to_have_count(1)` instead.
+  - Any `sr-only` / visually-hidden element: check presence, not visibility.
+- **Responsive / mobile-only elements** (hamburger, nav toggle): do not assert
+  visibility at desktop width. Call
+  `page.set_viewport_size({"width": 375, "height": 667})` first, then assert.
+- Match the assertion to the intent: "this specific heading says X" → a named
+  single-element locator; "some heading exists" → `.to_have_count(...)`.
 
 ## Evidence rules
 
-- For every meaningful user action, import `actionEvidence` from `./evidence`.
-- Use it to perform the action, assert the expected post-state, and capture a screenshot.
-- Give every evidence label a descriptive name such as `country-selected-post-state`.
-- Never rely on the generic end-of-test screenshot as proof that an action succeeded.
-- For native selectors, verify the selected value changed; opening the OS menu is not screenshot evidence.
-- For custom pickers, verify that the option list is visible and contains the expected options.
-- After language navigation, verify the target URL plus a target-language title and visible heading before capture.
-- A CTA observation must verify visible CTA text and a visible button; attachment alone is invalid.
-- Generic Playwright screenshots are diagnostic only and must not be reported as action evidence.
-- If the page does not expose enough information to prove the intended behavior, write a skipped test
-  titled `NOT TESTABLE: <reason>` rather than guessing or asserting only that an element is attached.
-- A behavioral test that only checks `toBeAttached()` is invalid and must be regenerated.
+- For every meaningful user action, wrap it:
+  `action_evidence(page, "<label>", lambda: <do the action>, lambda: <assert the
+  post-state>, tmp_path)`. It performs the action, runs the verify callback,
+  then captures a full-page screenshot and returns its path.
+- For a pure observation with no action, use
+  `observation_evidence(page, "<label>", lambda: <assert>, tmp_path)`.
+- The `verify` callback **must contain a real assertion** — visible text, a
+  changed value, a target URL. Attachment or attachment-count alone is invalid.
+- Give every label a descriptive, page-specific name such as
+  `country-selected-post-state`, not `works` or `after-click`.
+- For a native `<select>`, verify the selected value changed — opening the OS
+  menu is not evidence. For a custom picker, verify the option list is visible
+  and contains the expected options.
+- After a language switch, verify the target URL **and** a target-language
+  title and visible heading before capturing.
+- If the page does not expose enough to prove the intended behavior, emit a
+  skipped test instead of guessing:
+  `@pytest.mark.skip(reason="NOT TESTABLE: <specific reason>")` (add
+  `import pytest` when you use it). Do not invent a workflow.
 
 ## Structure rules
 
-- Handle the cookie banner in `beforeEach` (click "Allow all" if present), guarded so it
-  doesn't fail when the banner is absent.
-- Keep tests independent — no test should depend on another test's side effects.
-- Name each test after the behavior it checks, matching what it actually asserts.
-- Every test title must identify the page-specific target, such as the exact heading, link,
-  form field, picker, button, or resulting state observed on that page.
-- Do not use generic titles such as `works`, `displays correctly`, `functional navigation`,
-  or `selects a country and channel` when the page exposes multiple possible targets.
-- Generate a dynamic set of independent smoke tests from the observed targets and outcomes.
-  There is no fixed test count or fixed workflow; do not invent extra tests to reach a quota.
+- Name each test after the behavior it checks, and make the name match what it
+  actually asserts. No generic names (`test_works`, `test_navigation`,
+  `test_displays_correctly`).
+- Every test name must identify the page-specific target: the exact heading,
+  link, field, picker, button, or resulting state observed on this page.
+- Keep tests independent and self-contained — each test does its own setup.
 
 ## What NOT to test
 
-- External domains (facebook.com, aljazeera.com proper) — only this site.
+- External domains — only this site.
 - Analytics / third-party console noise.
-- Anything you did not actually observe on the page.
-
-
-## Machine-checkable output contract
-
-- Return exactly one complete TypeScript code block; never return prose, multiple alternatives, or a partial draft.
-- Treat the supplied live inventory as authoritative. Do not infer controls, success messages, URLs, or workflows from PERSONA text.
-- Every generated behavioral test must contain one actionEvidence call whose action callback performs the action and whose verify callback contains the postcondition assertion.
-- Every observationEvidence call must contain a meaningful visibility/content/state assertion in its verify callback.
-- If no reliable postcondition is observed, generate `test.skip('NOT TESTABLE: <specific reason>', ...)` and do not invent a workflow.
-- Keep each test independent and include all setup required for that test.
+- Anything you did not actually observe in the supplied inventory.

@@ -7,7 +7,7 @@ from .llm import ModelError
 SYSTEM = "Return exactly one complete Python pytest code block and no prose. Generate only tests supported by the observed page inventory."
 
 def prompt_for(guide: str, persona: str, inventory: PageInventory) -> str:
-    return f"{guide}\n\nPERSONA:\n{persona}\n\nPAGE URL: {inventory.url}\nPAGE TITLE: {inventory.title}\n\nOBSERVED INVENTORY:\n{inventory.headings}\n{inventory.controls}\n\nACCESSIBILITY SIGNALS:\n{inventory.accessibility}\n\nGenerate dynamic, page-specific smoke tests. Every state-changing action must use action_evidence(page, test_name, action, verify) and assert the post-state before capturing evidence. Use pytest and Playwright Python; never invent controls or outcomes."
+    return f"{guide}\n\nPERSONA:\n{persona}\n\nPAGE URL: {inventory.url}\nPAGE TITLE: {inventory.title}\n\nOBSERVED INVENTORY:\n{inventory.headings}\n{inventory.controls}\n\nACCESSIBILITY SIGNALS:\n{inventory.accessibility}\n\nGenerate dynamic, page-specific smoke tests as one pytest module. Use the pytest-playwright 'page' fixture and 'tmp_path'; do not open your own browser. Every state-changing action must use action_evidence(page, label, action, verify, tmp_path) and assert the post-state before capturing evidence. Use pytest and Playwright Python; never invent controls or outcomes."
 
 def extract_code(raw: str) -> str:
     match = re.search(r"```(?:python|py)?\s*\n(.*?)```", raw, re.S)
