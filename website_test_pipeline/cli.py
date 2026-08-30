@@ -37,6 +37,6 @@ def main() -> int:
             except Exception as exc:
                 diagnosis = diagnose_error(getattr(exc, 'status', None), getattr(exc, 'body', ''), str(exc)); log.error('ROOT CAUSE url=%s diagnosis=%s', url, diagnosis); manifest['urls'][url] = {'status':'failed','error':str(exc),'diagnosis':diagnosis}
         browser.close()
-    manifest['finished_at'] = datetime.now(timezone.utc).isoformat(); manifest['summary'] = {'total':len(urls), 'generated':sum(x['status']=='generated' for x in manifest['urls'].values()), 'failed':sum(x['status']=='failed' for x in manifest['urls'].values())}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8'); log.info('RUN SUMMARY total=%s generated=%s failed=%s', **manifest['summary']); return 1 if manifest['summary']['failed'] else 0
+    manifest['finished_at'] = datetime.now(timezone.utc).isoformat(); manifest['summary'] = {'total':len(urls), 'generated':sum(x['status']=='generated' for x in manifest['urls'].values()), 'failed':sum(x['status']=='failed' for x in manifest['urls'].values())}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8'); summary = manifest['summary']; log.info('RUN SUMMARY total=%s generated=%s failed=%s', summary['total'], summary['generated'], summary['failed']); return 1 if summary['failed'] else 0
 
 if __name__ == '__main__': raise SystemExit(main())
