@@ -3,22 +3,15 @@
 .env.*
 !.env.example
 
-# Dependencies
-node_modules/
-my-crawler/node_modules/
-
-# Generated test and evidence artifacts
-test-results/
-playwright-report/
+# Generated specs, evidence, and run artifacts
+python_tests/
+python_artifacts/
 reports/
 evidence.json
 results.json
 generation-debug.log
-exploration/
+generation-*.manifest.json
 traces/
-_failed-specs/
-_legacy-specs/
-my-crawler/storage/
 
 # Python and editor files
 __pycache__/
@@ -28,3 +21,6 @@ __pycache__/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# Tooling
+graphify-out/

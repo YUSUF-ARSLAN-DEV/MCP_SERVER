@@ -1,7 +1,0 @@
-import { mkdirSync, writeFileSync, existsSync } from 'fs';
-import { spawnSync } from 'child_process';
-export default class EvidenceReporter {
-  constructor(options = {}) { this.outputFile = options.outputFile || 'evidence.json'; this.results = []; }
-  onTestEnd(test, result) { this.results.push({ title: test.title, titlePath: test.titlePath(), file: test.location?.file, status: result.status, durationMs: result.duration, error: result.error ? { message: result.error.message, stack: result.error.stack } : null, attachments: (result.attachments || []).filter(a => a.path && a.name !== 'screenshot' && /image\//i.test(a.contentType || '')).map(a => ({ name: a.name, contentType: a.contentType, path: a.path })) }); }
-  async onEnd(fullResult) { mkdirSync('reports', { recursive: true }); const payload = { schemaVersion: 1, generatedAt: new Date().toISOString(), status: fullResult.status, results: this.results, errors: fullResult.errors || [] }; writeFileSync(this.outputFile, JSON.stringify(payload, null, 2)); const python = process.env.PYTHON || (process.platform === 'win32' ? 'python.exe' : 'python3'); const r = spawnSync(python, ['scripts/generate_evidence_docx.py', this.outputFile, 'reports/test-evidence.docx'], { stdio: 'inherit' }); if (r.error || r.signal || r.status !== 0 || !existsSync('reports/test-evidence.docx')) { console.error(`Word evidence report failed: ${r.error?.message || r.signal || `exit ${r.status}`}`); process.exitCode = 1; } else console.log('Word evidence report: reports/test-evidence.docx'); }
-}

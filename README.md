@@ -1,51 +1,77 @@
 # Dynamic Website Test Generator and Evidence Suite
 
 This repository explores a URL with Playwright, supplies compact page-specific
-signals to a configurable OpenAI-compatible model, validates generated tests,
-executes reviewed smoke tests, and produces screenshot evidence in JSON and
-Word formats. Generated output is intentionally ignored by Git.
+signals to a configurable OpenAI-compatible model, validates the generated
+tests, executes the reviewed smoke tests, and produces screenshot evidence.
+Generated output is intentionally ignored by Git.
 
-## Safe setup
+The implementation is a single Python package: `website_test_pipeline`. (An
+earlier JavaScript/TypeScript implementation was removed — see
+`git log` for history.)
 
-Requirements: Node.js 20+, Python 3.10+, and Playwright Chromium.
+## Setup
+
+Requirements: Python 3.10+ and Playwright Chromium.
 
 ```powershell
-npm install
-npx playwright install chromium
 python -m pip install -r requirements.txt
+python -m playwright install chromium
 Copy-Item .env.example .env
 # Edit .env and provide API_KEY locally
 ```
 
-Never commit `.env`, API keys, reports, screenshots, traces, crawler storage,
-or generated specifications. The model endpoint is an external dependency and
-may return rate limits, Cloudflare 524/530 errors, malformed responses, or
-timeouts. The generator retries transient failures and writes diagnostics to
-`generation-debug.log`.
+Never commit `.env`, API keys, reports, screenshots, traces, or generated
+specifications. The model endpoint is an external dependency and may return
+rate limits, Cloudflare 524/530 errors, malformed responses, or timeouts. The
+generator retries transient failures and records the exact error per URL in
+`python_artifacts/run.json` and `python_artifacts/generation.log`.
 
 ## Commands
 
 ```powershell
-npm run check                 # syntax and generated-spec validation
-npm run generate              # explore URLs and generate validated drafts
-npm run test:smoke            # run the executable smoke suite and HTML report
-npm run report                # open the Playwright report
-npm run clean:artifacts       # remove local generated output
+python -m website_test_pipeline.cli explore    # crawl each URL, write page inventories
+python -m website_test_pipeline.cli generate   # explore + generate a validated spec per URL
+python -m website_test_pipeline.cli execute    # run the generated specs under pytest
+pytest tests_python -q                          # unit tests for the pipeline itself
 ```
 
-Set URLs in `my-crawler/urls.txt`. Set `API_URL`, `MODEL_NAME`, `MODEL_TIMEOUT_MS`,
-`MODEL_RETRIES`, and `RETRY_BASE_MS` in `.env` as needed. Treat AI-generated
-tests as reviewed drafts: validation checks syntax and unsafe patterns, while
-human review remains necessary for behavioral accuracy.
+- URLs come from `urls.txt` (one per line, `#` comments allowed). Override with
+  the `URLS_FILE` environment variable.
+- Generated specs are written to `python_tests/`; run artifacts and inventories
+  to `python_artifacts/`. Both directories are ignored by Git.
+- Failures are isolated per URL — one unreachable page or one bad model
+  response does not stop the run.
 
-Automated end-to-end tests for the Al Jazeera Satellite Frequencies site
-(`https://sat.aljazeera.net`), covering the English site and its Arabic (`/ar`)
-mirror — 12 pages total. Built with [Playwright](https://playwright.dev/)
-(`@playwright/test`), Node ≥ 20.
+### Configuration (`.env`)
 
-**Status:** 399 passing · 0 failing · 0 flaky · 2 documented skips · Chromium only.
+| Variable | Default | Meaning |
+|---|---|---|
+| `API_URL` | `https://llm-1.d4done.com/v1/chat/completions` | OpenAI-compatible chat completions endpoint |
+| `API_KEY` | *(empty)* | Bearer token for the endpoint |
+| `MODEL_NAME` | `google/gemma-4-26b-a4b-qat` | Model identifier |
+| `MODEL_TIMEOUT_MS` | `300000` | Per-request timeout |
+| `MODEL_RETRIES` | `4` | Retry count for transient failures |
+| `RETRY_BASE_MS` | `3000` | Base for exponential backoff |
+| `NAV_TIMEOUT_MS` | `60000` | Playwright navigation timeout |
+| `HEADLESS` | `true` | Set `false` to watch the browser |
+| `URLS_FILE` | `urls.txt` | Path to the URL list |
 
----
+## How the pipeline works
+
+1. **`explore`** (`explorer.py`) — loads each page in Chromium and records a
+   compact `PageInventory`: title, visible headings, up to 120 interactive
+   controls, and a filtered ARIA snapshot. No AI.
+2. **`generate`** (`generator.py` + `llm.py`) — builds a prompt from
+   `AI-TEST-GUIDE.md` + `persona.txt` + the page inventory, calls the model,
+   and extracts a single Python code block.
+3. **`validate`** (`validator.py`) — AST-parses the generated spec and rejects
+   it unless it asserts something, references the target URL, wraps every
+   state-changing action in `action_evidence(...)`, avoids unstable text
+   selectors, and imports nothing dangerous (`os`, `subprocess`, `socket`).
+   Invalid specs trigger one regeneration attempt.
+4. **`execute`** — runs `python_tests/` under `pytest`. Each spec captures a
+   full-page screenshot after every verified action (`evidence.py`).
+5. **`report.py`** — assembles captured evidence into a Word document.
 
 ## Architecture — three layers, ordered by how much you can trust them
 
@@ -53,16 +79,14 @@ The suite is deliberately split into three layers. The first two are pure code
 and can be trusted completely; the third is AI-assisted and is treated as
 *reviewed drafts*, never as ground truth.
 
-**1. Deterministic crawler — `crawl.mjs`** (no AI, trustworthy)
-BFS over same-site links, dedupes by the pre-`#` key, caps at 100 pages, logs
-load failures as findings. Produces `urls.txt` and `crawl-report.json`.
-
-**2. Mechanical health checks — `tests/health.spec.ts`** (no AI, trustworthy)
-Per URL: HTTP status < 400, no broken images, alt-text present. Pure observation.
-
-**3. Behavioral tests — `tests/*.spec.ts`** (AI-generated, reviewed drafts)
-One spec per page, generated from `AI-TEST-GUIDE.md`. This is the only fuzzy
-layer — the only one that can hallucinate — so every spec is human-reviewed.
+1. **Deterministic exploration** (no AI, trustworthy) — visits each URL and
+   records only what is observably on the page.
+2. **Mechanical validation** (no AI, trustworthy) — AST checks on the generated
+   spec: has assertions, names the URL, evidences its actions, no unsafe
+   imports, no unstable selectors.
+3. **Behavioral tests** (AI-generated, reviewed drafts) — one spec per page,
+   generated from `AI-TEST-GUIDE.md`. This is the only fuzzy layer — the only
+   one that can hallucinate — so every spec is human-reviewed.
 
 ## Core principle: `is` vs `should`
 
@@ -70,92 +94,34 @@ An AI can observe what **is** on a page (an element exists, is visible, is named
 X). It cannot know what **should** be there — the intended behavior lives in the
 developers' heads or a spec, neither of which we have here. So the behavioral
 tests are **is-checks, smoke tests, and change-detectors**, not behavior
-specifications. When a pattern is wrong, fix the **generator** (`AI-TEST-GUIDE.md`)
-and regenerate — don't hand-patch each site's output.
-
-## What "399 green" actually means (read this before trusting it)
-
-Green means **none of our assertions are currently false**, verified against the
-live DOM — not that the site is proven correct. Concretely:
-
-- **Strong assertions** (exact accessible names, `#id` selectors, `columnheader`
-  roles, `toHaveCount`) *would* fail if the site renamed a heading, dropped the
-  search dropdown, or broke the frequencies table. Real regression protection.
-- **Smoke tests** (`count >= 1`, non-empty body) catch a page that renders blank
-  or errors out. Shallow, but real.
-- **No always-true assertions remain** — every test can fail for some real reason.
-- **2 skips** are documented inline (Arabic tune-widget *click* flows that live in
-  a hidden tab and assert no outcome — kept as `test.skip` with the reason in the
-  title rather than faked green).
-
-## Running the suite
-
-```bash
-npm install
-npx playwright install chromium          # first time only
-
-npx playwright test --reporter=list,html # run + write the HTML report
-npx playwright show-report               # open the visual dashboard
-```
-
-Run one file or one test:
-
-```bash
-npx playwright test tests/en.spec.ts             # one file
-npx playwright test tests/en.spec.ts:44          # one test (by line)
-npx playwright test -g "select your location"    # by title
-```
-
-> Note: `--reporter=list` alone prints counts to the terminal but does **not**
-> write the HTML report. Use `--reporter=list,html` to get both.
-
-## Project layout
-
-| Path | What it is |
-|------|-----------|
-| `crawl.mjs`, `collect-urls.mjs` | Crawler → `urls.txt`, `crawl-report.json` |
-| `tests/health.spec.ts` | Layer 2 — mechanical health checks |
-| `tests/{en,ar,…}.spec.ts` | Layer 3 — per-page behavioral specs |
-| `AI-TEST-GUIDE.md` | The reusable rulebook a model reads to generate specs |
-| `login.mjs` | Optional SSO/session capture → `.auth/state.json` (not wired in) |
-| `playwright.config.ts` | Chromium-only; screenshot/video/trace on failure |
+specifications. When a pattern is wrong, fix the **generator**
+(`AI-TEST-GUIDE.md`) and regenerate — don't hand-patch each site's output.
 
 ## `AI-TEST-GUIDE.md` — the reusable asset
 
 This is the part worth keeping. It's the rulebook the model reads to generate
 specs, and it encodes the locator lessons this project paid for:
 
-- Target an element by its **exact accessible name, copied verbatim from the page
-  snapshot** — never an OR-regex or a single shared word (they match sibling
-  elements and cause strict-mode violations).
+- Target an element by its **exact accessible name, copied verbatim from the
+  page snapshot** — never an OR-regex or a single shared word (they match
+  sibling elements and cause strict-mode violations).
 - The site has **no `<main>` landmark** — use `#main-content` (the skip-link
-  target). Header/footer exist but the header is empty, so assert `toBeAttached`,
-  not `toBeVisible`.
-- The mobile nav toggle is `button.navbar-toggle`, `display:none` at desktop width
-  (so it's absent from the accessibility tree — use a CSS locator + `toBeAttached`).
-- Table columns are `getByRole('columnheader', { name: '…' })`, not `th` text.
+  target). Header/footer exist but the header is empty, so assert attachment,
+  not visibility.
+- The mobile nav toggle is `button.navbar-toggle`, `display:none` at desktop
+  width (absent from the accessibility tree — use a CSS locator).
+- Table columns are matched by `columnheader` role and name, not `th` text.
 - Match the assertion to the intent: "this specific heading says X" → named
-  single-element locator; "some heading exists" → `.count()` / `toHaveCount`.
+  single-element locator; "some heading exists" → a count assertion.
 
-**Regeneration discipline:** regenerate in small batches (2–3 files at a time — a
-single all-files pass strains the model and produces malformed syntax) and always
-syntax-validate generated code (e.g. with `esbuild`) before running it.
+**Regeneration discipline:** regenerate in small batches (2–3 files at a time —
+a single all-files pass strains the model and produces malformed syntax) and
+always validate generated code before running it.
 
 ## Known limitations
 
 - **No product spec**, so the behavioral layer verifies structure/presence, not
   correctness of behavior. This is a property of the task, not a bug.
-- **Chromium only.** Firefox/WebKit/mobile projects were removed while stabilizing;
-  re-add them in `playwright.config.ts` and run `npx playwright install` to restore.
-- **Auth not wired.** `login.mjs` can capture a session to `.auth/state.json`; to
-  use it, add `storageState: '.auth/state.json'` to the config `use:` block.
-
-## Next steps
-
-- **CI:** a GitHub Actions workflow that runs the suite on every push and publishes
-  the HTML report as an artifact. (Turns this from a QA task into a CI/CD one.)
-- **Cross-browser:** re-enable Firefox/WebKit once the suite is stable.
-- **v2 — pluggable spec generator (separate project):** a `generate.mjs` that takes
-  `AI-TEST-GUIDE.md` + a page snapshot and emits a spec via a **swappable model
-  backend** (OpenAI / Anthropic / local Ollama) with syntax validation. This keeps
-  the runtime deterministic — the model only ever runs at authoring time.
+- **Chromium only.**
+- The model endpoint is external and rate-limited; large runs will hit
+  transient failures that the retry logic absorbs but cannot eliminate.
