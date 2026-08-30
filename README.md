@@ -29,14 +29,18 @@ generator retries transient failures and records the exact error per URL in
 ## Commands
 
 ```powershell
-python -m website_test_pipeline.cli explore    # crawl each URL, write page inventories
+python -m website_test_pipeline.cli crawl      # BFS from SEED_URL, overwrite urls.txt with same-origin pages
+python -m website_test_pipeline.cli explore    # load each URL, write page inventories
 python -m website_test_pipeline.cli generate   # explore + generate a validated spec per URL
 python -m website_test_pipeline.cli execute    # run the generated specs under pytest
 pytest tests_python -q                          # unit tests for the pipeline itself
 ```
 
 - URLs come from `urls.txt` (one per line, `#` comments allowed). Override with
-  the `URLS_FILE` environment variable.
+  the `URLS_FILE` environment variable. `crawl` is the only command that writes
+  `urls.txt` — it replaces the file with the pages it discovered. The other
+  commands never modify it, so a hand-curated list stays intact until you run
+  `crawl` again. `crawl` requires `SEED_URL`; it is never run automatically.
 - Generated specs are written to `python_tests/`; run artifacts and inventories
   to `python_artifacts/`. Both directories are ignored by Git.
 - Failures are isolated per URL — one unreachable page or one bad model
@@ -48,16 +52,23 @@ pytest tests_python -q                          # unit tests for the pipeline it
 |---|---|---|
 | `API_URL` | `https://llm-1.d4done.com/v1/chat/completions` | OpenAI-compatible chat completions endpoint |
 | `API_KEY` | *(empty)* | Bearer token for the endpoint |
-| `MODEL_NAME` | `google/gemma-4-26b-a4b-qat` | Model identifier |
+| `MODEL_NAME` | `qwen/qwen3-coder-30b` | Model identifier — use a non-reasoning code model |
 | `MODEL_TIMEOUT_MS` | `300000` | Per-request timeout |
 | `MODEL_RETRIES` | `4` | Retry count for transient failures |
 | `RETRY_BASE_MS` | `3000` | Base for exponential backoff |
 | `NAV_TIMEOUT_MS` | `60000` | Playwright navigation timeout |
-| `HEADLESS` | `true` | Set `false` to watch the browser |
-| `URLS_FILE` | `urls.txt` | Path to the URL list |
+| `HEADLESS` | `true` | Set `false` to watch the browser (`explore`/`generate`/`crawl`) |
+| `SEED_URL` | *(empty)* | Entry point for `crawl`; required by that command |
+| `CRAWL_MAX_DEPTH` | `3` | BFS depth from the seed (`0` = seed only) |
+| `CRAWL_MAX_PAGES` | `100` | Hard cap on discovered URLs |
+| `URLS_FILE` | `urls.txt` | Path to the URL list (`crawl` overwrites it) |
 
 ## How the pipeline works
 
+0. **`crawl`** (`crawler.py`) — optional. Breadth-first walk from `SEED_URL`,
+   following only same-origin `<a href>` links, canonicalized and deduplicated,
+   bounded by `CRAWL_MAX_DEPTH` / `CRAWL_MAX_PAGES`. Overwrites `urls.txt` with
+   the result. Skip it and maintain `urls.txt` by hand if you prefer. No AI.
 1. **`explore`** (`explorer.py`) — loads each page in Chromium and records a
    compact `PageInventory`: title, visible headings, up to 120 interactive
    controls, and a filtered ARIA snapshot. No AI.

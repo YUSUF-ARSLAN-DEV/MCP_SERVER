@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from .config import Settings
+from .crawler import crawl
 from .explorer import explore
 from .generator import generate_spec
 from .llm import ModelClient, diagnose_error
@@ -13,8 +14,21 @@ def name(url: str) -> str: return re.sub(r'[^a-z0-9]+', '-', url.lower()).strip(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
-    parser.add_argument('command', choices=['generate','explore','execute'], nargs='?', default='generate'); args = parser.parse_args()
+    parser.add_argument('command', choices=['crawl','generate','explore','execute'], nargs='?', default='generate'); args = parser.parse_args()
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
+    if args.command == 'crawl':
+        if not settings.seed_url:
+            log.error('crawl requires SEED_URL in .env'); return 2
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=settings.headless)
+            try:
+                page = browser.new_context().new_page()
+                discovered = crawl(page, settings.seed_url, settings.crawl_max_depth, settings.crawl_max_pages, log, settings.navigation_timeout_ms)
+            finally:
+                browser.close()
+        settings.urls_file.write_text('\n'.join(discovered) + '\n', encoding='utf-8')
+        log.info('CRAWL SUMMARY seed=%s discovered=%s file=%s', settings.seed_url, len(discovered), settings.urls_file)
+        return 0
     urls = read_urls(settings.urls_file)
     guide = (settings.root/'AI-TEST-GUIDE.md').read_text(encoding='utf-8') if (settings.root/'AI-TEST-GUIDE.md').exists() else ''
     persona = (settings.root/'persona.txt').read_text(encoding='utf-8') if (settings.root/'persona.txt').exists() else ''

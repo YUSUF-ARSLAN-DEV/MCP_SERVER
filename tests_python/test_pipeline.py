@@ -3,6 +3,7 @@ from pathlib import Path
 from website_test_pipeline.generator import extract_code
 from website_test_pipeline.validator import validate_python_spec, SpecError
 from website_test_pipeline.urls import canonicalize
+from website_test_pipeline.crawler import crawl
 
 def test_extracts_python_code_block():
     assert extract_code('```python\nassert 1\n```') == 'assert 1\n'
@@ -21,3 +22,50 @@ def test_canonicalize_removes_fragment_and_trailing_slash():
 def test_rejects_unsafe_import():
     with pytest.raises(SpecError, match='unsafe system import'):
         validate_python_spec('import subprocess\nassert True\n# https://example.test', 'https://example.test')
+
+
+class _FakePage:
+    def __init__(self, links):
+        self.links = links  # {url: [href, ...]}
+        self._current = None
+
+    def set_default_navigation_timeout(self, ms):
+        pass
+
+    def goto(self, url, **kwargs):
+        self._current = url
+
+    def locator(self, selector):
+        return self
+
+    def evaluate_all(self, script):
+        return self.links.get(self._current, [])
+
+
+def test_crawl_stays_same_origin_and_dedupes():
+    page = _FakePage({
+        'https://site.test/a': [
+            'https://site.test/a',            # self, already seen
+            'https://site.test/b',
+            'https://site.test/b#frag',       # canonicalizes to /b, deduped
+            'https://other.test/x',           # different origin, dropped
+            'mailto:hi@site.test',            # non-http, dropped
+        ],
+        'https://site.test/b': ['https://site.test/c'],
+    })
+    found = crawl(page, 'https://site.test/a', max_depth=2, max_pages=10)
+    assert found == ['https://site.test/a', 'https://site.test/b', 'https://site.test/c']
+
+
+def test_crawl_respects_max_pages():
+    page = _FakePage({'https://site.test/a': [
+        'https://site.test/1', 'https://site.test/2', 'https://site.test/3',
+    ]})
+    found = crawl(page, 'https://site.test/a', max_depth=5, max_pages=2)
+    assert found == ['https://site.test/a', 'https://site.test/1']
+
+
+def test_crawl_depth_zero_visits_only_seed():
+    page = _FakePage({'https://site.test/a': ['https://site.test/b']})
+    found = crawl(page, 'https://site.test/a', max_depth=0, max_pages=10)
+    assert found == ['https://site.test/a']
