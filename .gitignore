@@ -1,7 +1,6 @@
 # Secrets and local configuration
 .env
 .env.*
-!.env.example
 
 # Generated specs, evidence, and run artifacts
 python_tests/
