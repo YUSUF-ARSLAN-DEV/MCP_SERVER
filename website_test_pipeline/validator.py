@@ -9,7 +9,7 @@ def _norm(value: str) -> str:
 def _allowed_tokens(inventory) -> set[str]:
     tokens: set[str] = set()
     for control in getattr(inventory, "controls", None) or []:
-        for key in ("selector", "testid", "id", "field_name", "name"):
+        for key in ("selector", "testid", "id", "field_name", "name", "href"):
             value = control.get(key)
             if value: tokens.add(_norm(str(value)))
     for form in getattr(inventory, "forms", None) or []:
@@ -20,12 +20,21 @@ def _allowed_tokens(inventory) -> set[str]:
         if heading.get("text"): tokens.add(_norm(str(heading["text"])))
     return {token for token in tokens if token}
 
-def _locator_literals(source: str) -> list[str]:
-    literals: list[str] = []
-    literals += [m.group(2) for m in re.finditer(r"\.locator\(\s*(['\"])(.+?)\1", source, re.S)]
-    literals += [m.group(2) for m in re.finditer(r"\.get_by_(?:label|placeholder|test_id|alt_text|title)\(\s*(['\"])(.+?)\1", source, re.S)]
-    literals += [m.group(2) for m in re.finditer(r"\.get_by_role\(\s*['\"][^'\"]+['\"][^)]*?\bname\s*=\s*(['\"])(.+?)\1", source, re.S)]
-    return literals
+# .locator("...") - CSS/text selector strings
+def _css_locators(source: str) -> list[str]:
+    return [m.group(2) for m in re.finditer(r"\.locator\(\s*(['\"])(.+?)\1", source, re.S)]
+
+# get_by_* helpers keyed on user-visible text / labels - high hallucination risk
+def _text_locators(source: str) -> list[str]:
+    out = [m.group(2) for m in re.finditer(r"\.get_by_(?:label|placeholder|test_id|alt_text|title)\(\s*(['\"])(.+?)\1", source, re.S)]
+    out += [m.group(2) for m in re.finditer(r"\.get_by_role\(\s*['\"][^'\"]+['\"][^)]*?\bname\s*=\s*(['\"])(.+?)\1", source, re.S)]
+    return out
+
+# identifying fragments inside a CSS selector: #id and [attr=value]; a selector with none is purely structural
+_ID_FRAGMENT = re.compile(r"#([A-Za-z0-9_-]+)|\[[A-Za-z-]+\s*[*^$|~]?=\s*['\"]?([^'\"\]]+)")
+
+def _selector_fragments(literal: str) -> list[str]:
+    return [(m.group(1) or m.group(2)).strip() for m in _ID_FRAGMENT.finditer(literal) if (m.group(1) or m.group(2))]
 
 def _known(literal: str, tokens: set[str]) -> bool:
     normalized = _norm(literal)
@@ -44,6 +53,13 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
         raise SpecError("unsafe system import found")
     if inventory is not None:
         tokens = _allowed_tokens(inventory)
-        unknown = sorted({literal for literal in _locator_literals(source) if not _known(literal, tokens)})
+        unknown: list[str] = []
+        for literal in _css_locators(source):
+            fragments = _selector_fragments(literal)
+            if fragments and not any(_known(fragment, tokens) for fragment in fragments):
+                unknown.append(literal)
+        for literal in _text_locators(source):
+            if not _known(literal, tokens):
+                unknown.append(literal)
         if unknown:
             raise SpecError(f"selector not in observed inventory: {unknown[0]!r}")
