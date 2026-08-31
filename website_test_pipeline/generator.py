@@ -16,9 +16,65 @@ EVIDENCE_RULES = (
     "- 'label' is a short kebab-case step name like '01-form-visible' or '02-name-filled'."
 )
 
+SCOPE_RULES = (
+    "Write 3 to 8 test functions, no more. Cover the highest-value user goals from the persona that this page supports "
+    "(finding frequencies, tuning, subscribing, language switch, primary navigation). Combine related checks into one "
+    "test - a single test may assert several related elements. Do NOT write one test per link, per heading, or per "
+    "footer item; one test covering the nav bar or the footer as a group is enough."
+)
+
+def _compact_controls(controls: list[dict], limit: int = 70) -> str:
+    lines: list[str] = []
+    external = 0
+    for control in controls:
+        href = str(control.get("href") or "")
+        if href.startswith("http"):
+            external += 1
+            if external > 10:
+                continue
+        parts: list[str] = [str(control.get("tag") or "?")]
+        name = (control.get("name") or "").strip()
+        if name:
+            parts.append(f'"{name[:80]}"')
+        for key in ("selector", "id", "testid", "field_name"):
+            if control.get(key):
+                parts.append(f"{key}={control[key]}")
+                break
+        if href:
+            parts.append(f"href={href}")
+        if control.get("type"):
+            parts.append(f"type={control['type']}")
+        if control.get("options"):
+            parts.append(f"options={list(control['options'])[:15]}")
+        for flag in ("required", "disabled"):
+            if control.get(flag):
+                parts.append(flag)
+        if control.get("checked") is not None:
+            parts.append(f"checked={control['checked']}")
+        lines.append(" ".join(parts))
+        if len(lines) >= limit:
+            break
+    return "\n".join(lines)
+
+def _compact_headings(headings: list[dict]) -> str:
+    return "\n".join(
+        f"{h.get('level') or 'H?'}: {(h.get('text') or '').strip()[:120]}"
+        for h in headings if (h.get("text") or "").strip()
+    )
+
 def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str = "") -> str:
     correction = f"\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: {feedback}\nFix exactly that problem and return a corrected module." if feedback else ""
-    return f"{guide}\n\nPERSONA:\n{persona}\n\nPAGE URL: {inventory.url}\nPAGE TITLE: {inventory.title}\n\nHEADINGS:\n{inventory.headings}\n\nCONTROLS (use the 'selector' field verbatim when present; otherwise use get_by_role with 'name'; never invent a selector):\n{inventory.controls}\n\nFORMS:\n{inventory.forms}\n\nACCESSIBILITY SIGNALS:\n{inventory.accessibility}\n\nGenerate dynamic, page-specific smoke tests as one pytest module. Only test controls that appear above; skip any marked disabled. Respect required/checked state and use only the listed select options. Use the pytest-playwright 'page' fixture. Never invent controls or outcomes.\n\n{EVIDENCE_RULES}{correction}"
+    return (
+        f"{guide}\n\nPERSONA:\n{persona}\n\n"
+        f"PAGE URL: {inventory.url}\nPAGE TITLE: {inventory.title}\n\n"
+        f"HEADINGS:\n{_compact_headings(inventory.headings)}\n\n"
+        f"CONTROLS (one per line; use the id/selector token verbatim when present, else get_by_role with the quoted name; never invent a selector):\n{_compact_controls(inventory.controls)}\n\n"
+        f"FORMS:\n{inventory.forms}\n\n"
+        f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
+        "Generate dynamic, page-specific smoke tests as one pytest module. Only test controls that appear above; skip any marked disabled. "
+        "Respect required/checked state and use only the listed select options. Use the pytest-playwright 'page' fixture. Never invent controls or outcomes.\n\n"
+        f"{SCOPE_RULES}\n\n{EVIDENCE_RULES}{correction}"
+    )
 
 def extract_code(raw: str) -> str:
     match = re.search(r"```(?:python|py)?\s*\n(.*?)```", raw, re.S)
