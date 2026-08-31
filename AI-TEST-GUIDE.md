@@ -36,14 +36,13 @@ rule here exists because ignoring it caused real failures.
 from pathlib import Path
 from playwright.sync_api import Page, expect
 from website_test_pipeline.evidence import action_evidence, observation_evidence
-from website_test_pipeline.pageutils import dismiss_overlays
+from website_test_pipeline.pageutils import open_page
 
 URL = "<exact page URL>"
 
 
 def _open(page: Page) -> None:
-    page.goto(URL, wait_until="domcontentloaded")
-    dismiss_overlays(page)  # closes cookie / consent dialogs and ad interstitials
+    open_page(page, URL)  # navigate, wait for load, clear consent / ad overlays
 
 
 def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> None:

@@ -21,6 +21,16 @@ _CONTAINERS = (
 )
 
 
+def open_page(page, url: str) -> None:
+    """Navigate, let the SPA settle, and clear consent / ad overlays."""
+    page.goto(url, wait_until="domcontentloaded")
+    try:
+        page.wait_for_load_state("load", timeout=15000)
+    except Exception:
+        pass
+    dismiss_overlays(page)
+
+
 def dismiss_overlays(page, rounds: int = 3) -> bool:
     """Best-effort close of consent dialogs, ad interstitials and popups.
 

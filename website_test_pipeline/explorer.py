@@ -2,6 +2,8 @@ from .models import PageInventory
 from .pageutils import dismiss_overlays
 
 def explore(page, url: str) -> PageInventory:
+    try: page.wait_for_load_state("load", timeout=15000)
+    except Exception: pass
     dismiss_overlays(page)  # snapshot the real page, not consent / ad overlays
     title = page.title()
     headings = page.locator('h1,h2,h3,h4,h5,h6,[role="heading"]').evaluate_all("""els => els.filter(e => e.getClientRects().length).map(e => ({level:e.tagName,text:(e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,180)}))""")
