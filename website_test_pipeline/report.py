@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -15,6 +16,9 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
@@ -259,7 +263,30 @@ def _status_line(document, outcome: TestOutcome) -> None:
     para.add_run(f"    Duration: {outcome.duration:.2f}s")
 
 
-def _render_outcome(document, outcome: TestOutcome) -> None:
+def _add_hyperlink(paragraph, target: str, text: str) -> None:
+    r_id = paragraph.part.relate_to(target, RT.HYPERLINK, is_external=True)
+    link = OxmlElement("w:hyperlink")
+    link.set(qn("r:id"), r_id)
+    run = OxmlElement("w:r")
+    props = OxmlElement("w:rPr")
+    color = OxmlElement("w:color"); color.set(qn("w:val"), "0563C1"); props.append(color)
+    underline = OxmlElement("w:u"); underline.set(qn("w:val"), "single"); props.append(underline)
+    run.append(props)
+    node = OxmlElement("w:t"); node.text = text; run.append(node)
+    link.append(run)
+    paragraph._p.append(link)
+
+
+def _rel(target: str, base: Path | None) -> str:
+    if base is None:
+        return target
+    try:
+        return os.path.relpath(target, base).replace(os.sep, "/")
+    except ValueError:
+        return target
+
+
+def _render_outcome(document, outcome: TestOutcome, *, embed: bool = True, link_base: Path | None = None) -> None:
     document.add_heading(outcome.title.replace("_", " "), 2)
     _status_line(document, outcome)
 
@@ -276,14 +303,18 @@ def _render_outcome(document, outcome: TestOutcome) -> None:
         path = Path(image)
         if not path.is_file():
             continue
-        try:
-            document.add_picture(str(path), width=Inches(6.0))
-        except Exception as exc:  # unreadable / truncated screenshot
-            document.add_paragraph(f"(could not embed {path.name}: {exc})")
-            continue
-        caption = document.add_paragraph(path.stem.replace("-", " "))
-        caption.runs[0].italic = True
-        caption.runs[0].font.size = Pt(9)
+        if embed:
+            try:
+                document.add_picture(str(path), width=Inches(6.0))
+            except Exception as exc:  # unreadable / truncated screenshot
+                document.add_paragraph(f"(could not embed {path.name}: {exc})")
+                continue
+            caption = document.add_paragraph(path.stem.replace("-", " "))
+            caption.runs[0].italic = True
+            caption.runs[0].font.size = Pt(9)
+        else:
+            para = document.add_paragraph(f"{path.stem.replace('-', ' ')}  —  ", style="List Bullet")
+            _add_hyperlink(para, _rel(str(path), link_base), path.name)
 
     if outcome.status in {"failed", "error"}:
         document.add_heading("Failure detail", 3)
@@ -291,8 +322,9 @@ def _render_outcome(document, outcome: TestOutcome) -> None:
         block.runs[0].font.name = "Consolas"
         block.runs[0].font.size = Pt(8)
         for attachment in outcome.attachments:
-            note = document.add_paragraph(f"Attachment: {Path(attachment).name}  ({attachment})")
-            note.runs[0].font.size = Pt(9)
+            para = document.add_paragraph("Attachment: ")
+            para.runs[0].font.size = Pt(9)
+            _add_hyperlink(para, _rel(attachment, link_base), Path(attachment).name)
 
 
 def _summary_table(document, reports: list[UrlReport]) -> None:
@@ -355,8 +387,13 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
     document = Document()
     document.add_heading("Website Test Evidence Report — Full Run", 0)
     _metadata(document, run, scope="all URLs")
+    document.add_paragraph(
+        "Screenshots and traces in this combined report are linked, not embedded; "
+        "open it from beside the python_artifacts/ folder so the links resolve."
+    )
     _summary_table(document, run.url_reports)
     _warnings_section(document, run.warnings)
+    link_base = destination.parent
     for report in run.url_reports:
         document.add_page_break()
         document.add_heading(report.url, 1)
@@ -365,7 +402,7 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
             _warnings_section(document, report.warnings)
         for outcome in report.outcomes:
             document.add_page_break()
-            _render_outcome(document, outcome)
+            _render_outcome(document, outcome, embed=False, link_base=link_base)
     destination.parent.mkdir(parents=True, exist_ok=True)
     document.save(destination)
 
