@@ -18,6 +18,9 @@ def _allowed_tokens(inventory) -> set[str]:
             if field: tokens.add(_norm(str(field)))
     for heading in getattr(inventory, "headings", None) or []:
         if heading.get("text"): tokens.add(_norm(str(heading["text"])))
+    # the aria snapshot is authoritative for accessible names - harvest every quoted name
+    for match in re.finditer(r'"([^"\n]+)"', getattr(inventory, "accessibility", "") or ""):
+        tokens.add(_norm(match.group(1)))
     return {token for token in tokens if token}
 
 # .locator("...") - CSS/text selector strings (single string literal, no line crossing)

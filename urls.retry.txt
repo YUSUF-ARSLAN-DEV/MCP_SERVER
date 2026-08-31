@@ -1,4 +1,2 @@
-https://sat.aljazeera.net/en/frequency-search
-https://sat.aljazeera.net/en/subscribe
 https://sat.aljazeera.net/en/tunereceiver
 https://sat.aljazeera.net/ar/tunereceiver

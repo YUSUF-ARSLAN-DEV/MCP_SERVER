@@ -2,9 +2,10 @@ from .models import PageInventory
 
 def explore(page, url: str) -> PageInventory:
     title = page.title()
-    headings = page.locator('h1,h2,h3,[role="heading"]').evaluate_all("""els => els.filter(e => e.getClientRects().length).map(e => ({level:e.tagName,text:(e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,180)}))""")
+    headings = page.locator('h1,h2,h3,h4,h5,h6,[role="heading"]').evaluate_all("""els => els.filter(e => e.getClientRects().length).map(e => ({level:e.tagName,text:(e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,180)}))""")
     controls = page.locator('a,button,input,select,textarea,[role]').evaluate_all("""els => els.filter(e => { const s=getComputedStyle(e); return s.display!=='none' && s.visibility!=='hidden' && e.getClientRects().length; }).slice(0,150).map(e => {
-        const label = e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].textContent) || e.getAttribute('placeholder') || (e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,120);
+        const isInputButton = e.tagName === 'INPUT' && ['button','submit','reset'].includes((e.type||'').toLowerCase());
+        const label = e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].textContent) || e.getAttribute('placeholder') || (isInputButton ? e.value : '') || (e.textContent||'').trim().replace(/\\s+/g,' ').slice(0,120);
         const testid = (e.dataset && e.dataset.testid) || null;
         let selector = null;
         if (testid) selector = `[data-testid="${testid}"]`;
