@@ -4,7 +4,7 @@ from urllib.parse import urlsplit
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)  # .env is the source of truth, even over a stale shell env
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"

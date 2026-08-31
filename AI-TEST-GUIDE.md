@@ -36,15 +36,14 @@ rule here exists because ignoring it caused real failures.
 from pathlib import Path
 from playwright.sync_api import Page, expect
 from website_test_pipeline.evidence import action_evidence, observation_evidence
+from website_test_pipeline.pageutils import dismiss_consent
 
 URL = "<exact page URL>"
 
 
 def _open(page: Page) -> None:
     page.goto(URL, wait_until="domcontentloaded")
-    allow = page.get_by_role("button", name="Allow all")
-    if allow.is_visible():
-        allow.click()
+    dismiss_consent(page)  # closes the cookie/consent overlay if present
 
 
 def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> None:
@@ -77,6 +76,11 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
 - Copy the accessible name **verbatim from the snapshot**. Never guess, invent,
   or translate it. Never use an OR-regex or a single shared word — it matches
   sibling elements and raises a strict-mode violation.
+- **Headings with a common name** ("News", "Live", "About") collide with
+  newsletter/footer widgets. Pin them: add `level=1` (or the observed level),
+  or scope to a landmark, e.g.
+  `page.get_by_test_id("section-page-header").get_by_role("heading", name="News")`.
+  If you cannot disambiguate, assert `.to_have_count(1)` on the specific one.
 - On Arabic (`/ar`) pages use the actual Arabic accessible names you observe.
   Do not reuse English names like "Toggle navigation".
 - Never assume a control, route, success message, language, or business rule
@@ -98,6 +102,10 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
   `page.set_viewport_size({"width": 375, "height": 667})` first, then assert.
 - Match the assertion to the intent: "this specific heading says X" → a named
   single-element locator; "some heading exists" → `.to_have_count(...)`.
+- **After clicking a navigation link, do not assert an exact URL** — sites
+  redirect, append locale/tracking, or trailing-slash. Use a glob
+  (`page.wait_for_url("**/middleeast**")`) or, better, assert a heading/landmark
+  that is unique to the destination page.
 
 ## Evidence rules
 

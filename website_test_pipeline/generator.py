@@ -81,7 +81,9 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         f"FORMS:\n{inventory.forms}\n\n"
         f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
         "Generate dynamic, page-specific smoke tests as one pytest module. Only test controls that appear above; skip any marked disabled. "
-        "Respect required/checked state and use only the listed select options. Use the pytest-playwright 'page' fixture. Never invent controls or outcomes.\n\n"
+        "Respect required/checked state and use only the listed select options. Use the pytest-playwright 'page' fixture. Never invent controls or outcomes.\n"
+        "Start every test with _open(page), and define _open to call dismiss_consent(page) "
+        "(from website_test_pipeline.pageutils) right after page.goto - the consent overlay blocks clicks and visibility otherwise.\n\n"
         f"{SCOPE_RULES}\n\n{LOCATOR_RULES}\n\n{EVIDENCE_RULES}{correction}"
     )
 
