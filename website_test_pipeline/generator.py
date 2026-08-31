@@ -18,11 +18,18 @@ EVIDENCE_RULES = (
 
 SCOPE_RULES = (
     "Write 3 to 8 test functions, no more. Cover the highest-value user goals from the persona that this page supports "
-    "(finding frequencies, tuning, subscribing, language switch, primary navigation). Combine related checks into one "
-    "test - a single test may assert several related elements. Do NOT write one test per link, per heading, or per "
-    "footer item; one test covering the nav bar or the footer as a group is enough.\n"
+    "(finding frequencies, tuning, subscribing, language switch, primary navigation).\n"
+    "One test = one user goal. Group only checks that belong to the SAME goal (e.g. all fields of one form). "
+    "Keep navigation, search, and each distinct form as their own separate tests - do not fold unrelated checks into "
+    "one big test, and never write one test per link, per heading, or per footer item.\n"
     "If a control opens a menu, panel, or dropdown whose contents are NOT in the CONTROLS list, only assert that the "
     "trigger button is visible and enabled - never click it and assert on guessed elements (no '# assuming ...' selectors)."
+)
+
+LOCATOR_RULES = (
+    "For a <select> / combobox, ALWAYS locate it by its id or selector token from CONTROLS "
+    "(e.g. page.locator('#countrylist')). NEVER use get_by_label or get_by_role(name=...) for a select - "
+    "its accessible name is often the concatenation of every option and will not match."
 )
 
 def _compact_controls(controls: list[dict], limit: int = 70) -> str:
@@ -75,7 +82,7 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
         "Generate dynamic, page-specific smoke tests as one pytest module. Only test controls that appear above; skip any marked disabled. "
         "Respect required/checked state and use only the listed select options. Use the pytest-playwright 'page' fixture. Never invent controls or outcomes.\n\n"
-        f"{SCOPE_RULES}\n\n{EVIDENCE_RULES}{correction}"
+        f"{SCOPE_RULES}\n\n{LOCATOR_RULES}\n\n{EVIDENCE_RULES}{correction}"
     )
 
 def extract_code(raw: str) -> str:

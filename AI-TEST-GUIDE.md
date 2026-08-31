@@ -70,6 +70,10 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
 - **Prefer, in this order:** `page.get_by_role("<role>", name="<accessible
   name>")`, then an attribute locator (`page.locator('a[href="/en/map"]')`),
   then `page.get_by_label(...)` / `page.get_by_test_id(...)`.
+- **For a `<select>` / combobox, always locate by id or selector**
+  (`page.locator('#countrylist')`). Never `get_by_label` or
+  `get_by_role(name=...)` for a select — its accessible name is often every
+  option concatenated and will not match.
 - Copy the accessible name **verbatim from the snapshot**. Never guess, invent,
   or translate it. Never use an OR-regex or a single shared word — it matches
   sibling elements and raises a strict-mode violation.
