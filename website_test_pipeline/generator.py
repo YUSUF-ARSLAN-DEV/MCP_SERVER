@@ -20,7 +20,9 @@ SCOPE_RULES = (
     "Write 3 to 8 test functions, no more. Cover the highest-value user goals from the persona that this page supports "
     "(finding frequencies, tuning, subscribing, language switch, primary navigation). Combine related checks into one "
     "test - a single test may assert several related elements. Do NOT write one test per link, per heading, or per "
-    "footer item; one test covering the nav bar or the footer as a group is enough."
+    "footer item; one test covering the nav bar or the footer as a group is enough.\n"
+    "If a control opens a menu, panel, or dropdown whose contents are NOT in the CONTROLS list, only assert that the "
+    "trigger button is visible and enabled - never click it and assert on guessed elements (no '# assuming ...' selectors)."
 )
 
 def _compact_controls(controls: list[dict], limit: int = 70) -> str:
@@ -81,7 +83,7 @@ def extract_code(raw: str) -> str:
     if not match: raise ValueError("model did not return a Python code block")
     return match.group(1).strip() + "\n"
 
-def generate_spec(client, guide: str, persona: str, inventory: PageInventory, output: Path, attempts: int = 2) -> None:
+def generate_spec(client, guide: str, persona: str, inventory: PageInventory, output: Path, attempts: int = 3) -> None:
     last = None
     feedback = ""
     for _ in range(attempts):

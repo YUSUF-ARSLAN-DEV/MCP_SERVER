@@ -66,7 +66,8 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     except SyntaxError as exc: raise SpecError(f"syntax error at line {exc.lineno}: {exc.msg}") from exc
     if not re.search(r"assert\s+", source) and "expect(" not in source: raise SpecError("no assertion found")
     if url not in source: raise SpecError("target URL missing from spec")
-    if re.search(r"getByText|:has-text|text=", source): raise SpecError("unstable text selector found")
+    text_selector = re.search(r"get_by_text|getByText|:has-text|text=", source)
+    if text_selector: raise SpecError(f"unstable text selector {text_selector.group(0)!r} - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead")
     if any(isinstance(node, (ast.Import, ast.ImportFrom)) and any(alias.name in {"os", "subprocess", "socket"} for alias in node.names) for node in ast.walk(tree)):
         raise SpecError("unsafe system import found")
     missing_evidence = _tests_without_evidence(tree)
