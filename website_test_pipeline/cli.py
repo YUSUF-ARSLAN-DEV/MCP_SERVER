@@ -12,9 +12,13 @@ from .urls import read_urls
 
 def name(url: str) -> str: return re.sub(r'[^a-z0-9]+', '-', url.lower()).strip('-')[:100]
 
+PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--tracing=retain-on-failure']
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
-    parser.add_argument('command', choices=['crawl','generate','explore','execute'], nargs='?', default='generate'); args = parser.parse_args()
+    parser.add_argument('command', choices=['crawl','generate','explore','execute','report'], nargs='?', default='generate')
+    parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
+    args = parser.parse_args()
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
     if args.command == 'crawl':
         if not settings.seed_url:
@@ -30,12 +34,21 @@ def main() -> int:
         log.info('CRAWL SUMMARY seed=%s discovered=%s file=%s', settings.seed_url, len(discovered), settings.urls_file)
         return 0
     urls = read_urls(settings.urls_file)
-    guide = (settings.root/'AI-TEST-GUIDE.md').read_text(encoding='utf-8') if (settings.root/'AI-TEST-GUIDE.md').exists() else ''
-    persona = (settings.root/'persona.txt').read_text(encoding='utf-8') if (settings.root/'persona.txt').exists() else ''
-    manifest = {'started_at': datetime.now(timezone.utc).isoformat(), 'urls': {}}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     if args.command == 'execute':
         result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q'], cwd=settings.root)
         return result.returncode
+    if args.command == 'report':
+        from . import report as report_mod
+        pw_out = settings.artifacts_dir/'pw'
+        result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}'], cwd=settings.root)
+        run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined)
+        log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
+        for warning in run.warnings:
+            log.warning('REPORT WARNING %s', warning)
+        return result.returncode
+    guide = (settings.root/'AI-TEST-GUIDE.md').read_text(encoding='utf-8') if (settings.root/'AI-TEST-GUIDE.md').exists() else ''
+    persona = (settings.root/'persona.txt').read_text(encoding='utf-8') if (settings.root/'persona.txt').exists() else ''
+    manifest = {'started_at': datetime.now(timezone.utc).isoformat(), 'urls': {}}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     client = ModelClient(settings, log)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=settings.headless)

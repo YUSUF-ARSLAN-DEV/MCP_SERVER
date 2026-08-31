@@ -47,17 +47,21 @@ def _open(page: Page) -> None:
         allow.click()
 
 
-def test_<behavior_specific_to_this_page>(page: Page, tmp_path: Path) -> None:
+def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> None:
     _open(page)
     expect(page).to_have_url(URL)
     heading = page.get_by_role("heading", name="<exact accessible name>")
-    expect(heading).to_be_visible()
+    observation_evidence(page, "heading-visible", lambda: expect(heading).to_be_visible(), evidence_dir)
 ```
 
 - The `page` fixture comes from `pytest-playwright`. Do not create your own
   browser or `sync_playwright()` block.
-- `tmp_path` is the pytest-provided directory for this test's evidence; pass it
-  straight into `action_evidence` / `observation_evidence`.
+- `evidence_dir` is a `pathlib.Path` fixture (from conftest.py) — the persistent
+  folder this test's screenshots are written to. Pass it straight into
+  `action_evidence` / `observation_evidence`. Do not use `tmp_path`.
+- **Every test must capture at least one screenshot.** A read-only test calls
+  `observation_evidence(...)` once; a test with actions wraps each one in
+  `action_evidence(...)`. A test with no evidence call is rejected.
 - Call `_open(page)` (or inline equivalent) at the start of every test — tests
   must be independent and not rely on another test's navigation or side effects.
 
@@ -95,10 +99,10 @@ def test_<behavior_specific_to_this_page>(page: Page, tmp_path: Path) -> None:
 
 - For every meaningful user action, wrap it:
   `action_evidence(page, "<label>", lambda: <do the action>, lambda: <assert the
-  post-state>, tmp_path)`. It performs the action, runs the verify callback,
+  post-state>, evidence_dir)`. It performs the action, runs the verify callback,
   then captures a full-page screenshot and returns its path.
 - For a pure observation with no action, use
-  `observation_evidence(page, "<label>", lambda: <assert>, tmp_path)`.
+  `observation_evidence(page, "<label>", lambda: <assert>, evidence_dir)`.
 - The `verify` callback **must contain a real assertion** — visible text, a
   changed value, a target URL. Attachment or attachment-count alone is invalid.
 - Give every label a descriptive, page-specific name such as

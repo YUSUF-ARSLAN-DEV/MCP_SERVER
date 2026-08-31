@@ -4,7 +4,8 @@
 !.env.example
 
 # Generated specs, evidence, and run artifacts
-python_tests/
+python_tests/*
+!python_tests/conftest.py
 python_artifacts/
 reports/
 evidence.json

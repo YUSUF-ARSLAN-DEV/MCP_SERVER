@@ -1,15 +1,391 @@
-from pathlib import Path
-from docx import Document
-from docx.shared import Inches
+"""Build human-verifiable Word reports from a test run.
 
-def create_report(results: list[dict], destination: Path) -> None:
-    doc = Document(); doc.add_heading('Website Test Evidence Report', 0); doc.add_paragraph(f"{len(results)} tests recorded.")
-    for index, result in enumerate(results, 1):
-        doc.add_page_break(); doc.add_heading(f"{index}. {result.get('title', 'Unnamed test')}", 1); doc.add_paragraph(f"Status: {result.get('status','unknown').upper()}")
-        if result.get('error'): doc.add_heading('What happened', 2); doc.add_paragraph(str(result['error']))
-        doc.add_heading('Browser evidence', 2); attachments = result.get('attachments', [])
-        if not attachments: doc.add_paragraph('No verified evidence was captured.')
-        for image in attachments:
-            path = Path(image)
-            if path.is_file(): doc.add_picture(str(path), width=Inches(6.2)); doc.add_paragraph(path.name)
-    destination.parent.mkdir(parents=True, exist_ok=True); doc.save(destination)
+The report exists so a person can confirm the pass/fail numbers instead of
+trusting the generator + runner blindly: every test is shown with the
+assertions it made and the screenshot evidence captured at each step.
+"""
+from __future__ import annotations
+
+import ast
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from docx import Document
+from docx.shared import Inches, Pt, RGBColor
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
+ATTACH_EXTS = {".webm", ".zip"}
+
+
+# --------------------------------------------------------------------------- model
+
+@dataclass
+class TestOutcome:
+    nodeid: str
+    title: str
+    url: str
+    status: str                       # passed | failed | skipped | error
+    duration: float = 0.0
+    error: str | None = None
+    assertions: list[str] = field(default_factory=list)
+    evidence: list[str] = field(default_factory=list)     # step screenshots
+    attachments: list[str] = field(default_factory=list)  # video / trace
+
+    @property
+    def passed(self) -> bool:
+        return self.status == "passed"
+
+
+@dataclass
+class UrlReport:
+    url: str
+    spec_path: str | None = None
+    generated_status: str | None = None
+    outcomes: list[TestOutcome] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.outcomes)
+
+    @property
+    def passed(self) -> int:
+        return sum(o.passed for o in self.outcomes)
+
+    @property
+    def failed(self) -> int:
+        return sum(o.status in {"failed", "error"} for o in self.outcomes)
+
+
+@dataclass
+class RunReport:
+    base_url: str = ""
+    model: str = ""
+    started_at: str = ""
+    finished_at: str = ""
+    url_reports: list[UrlReport] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return sum(u.total for u in self.url_reports)
+
+    @property
+    def passed(self) -> int:
+        return sum(u.passed for u in self.url_reports)
+
+    @property
+    def failed(self) -> int:
+        return sum(u.failed for u in self.url_reports)
+
+    @property
+    def warnings(self) -> list[str]:
+        out: list[str] = []
+        for u in self.url_reports:
+            out.extend(f"[{u.url}] {w}" for w in u.warnings)
+        return out
+
+
+# ----------------------------------------------------------------------- assertions
+
+def assertions_for(spec_path: Path, test_title: str) -> list[str]:
+    """Pull the expect(...) / assert lines of one test function out of its source."""
+    try:
+        tree = ast.parse(spec_path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == test_title:
+            picked: list[str] = []
+            for child in ast.walk(node):
+                if isinstance(child, ast.Call) and _is_expect(child):
+                    picked.append(_unparse(child))
+                elif isinstance(child, ast.Assert):
+                    picked.append("assert " + _unparse(child.test))
+            return _dedupe(picked)
+    return []
+
+
+def _unparse(node: ast.AST) -> str:
+    try:
+        return ast.unparse(node)
+    except Exception:
+        return ""
+
+
+def _is_expect(call: ast.Call) -> bool:
+    target = call.func
+    while isinstance(target, ast.Attribute):
+        target = target.value
+    return isinstance(target, ast.Call) and isinstance(target.func, ast.Name) and target.func.id == "expect"
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen, out = set(), []
+    for v in values:
+        if v and v not in seen:
+            seen.add(v)
+            out.append(v)
+    return out
+
+
+# ---------------------------------------------------------------------------- load
+
+def _slug(nodeid: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"
+
+
+def _pw_slug(nodeid: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", nodeid.lower()).strip("-")
+
+
+def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "") -> RunReport:
+    results = json.loads((artifacts_dir / "test_results.json").read_text(encoding="utf-8"))
+    manifest = _maybe_json(artifacts_dir / "run.json")
+
+    generated = {url: info.get("status") for url, info in (manifest.get("urls") or {}).items()}
+    specs = {url: info.get("spec") for url, info in (manifest.get("urls") or {}).items()}
+
+    by_url: dict[str, UrlReport] = {}
+    for row in results.get("tests", []):
+        url = row.get("url") or "(unknown url)"
+        report = by_url.setdefault(url, UrlReport(url=url))
+        report.spec_path = specs.get(url) or _guess_spec(row.get("nodeid", ""), tests_dir)
+        report.generated_status = generated.get(url)
+
+        spec = Path(report.spec_path) if report.spec_path else None
+        title = row.get("nodeid", "").split("::")[-1].split("[")[0]
+        outcome = TestOutcome(
+            nodeid=row.get("nodeid", ""),
+            title=row.get("title") or title,
+            url=url,
+            status=row.get("status", "error"),
+            duration=float(row.get("duration") or 0.0),
+            error=row.get("error"),
+            assertions=assertions_for(spec, title) if spec and spec.exists() else [],
+            evidence=_find_images(artifacts_dir / "evidence" / _slug(row.get("nodeid", ""))),
+            attachments=_find_attachments(artifacts_dir / "pw", _pw_slug(row.get("nodeid", ""))),
+        )
+        report.outcomes.append(outcome)
+
+    # generated specs that produced no test rows at all
+    for url, status in generated.items():
+        if status == "generated" and url not in by_url:
+            by_url[url] = UrlReport(url=url, spec_path=specs.get(url), generated_status=status)
+
+    run = RunReport(
+        base_url=_common_prefix([u for u in by_url]),
+        model=model or manifest.get("model", ""),
+        started_at=manifest.get("started_at", ""),
+        finished_at=manifest.get("finished_at", results.get("finished_at", "")),
+        url_reports=[by_url[k] for k in sorted(by_url)],
+    )
+    for report in run.url_reports:
+        validate_url(report)
+    return run
+
+
+def _maybe_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _guess_spec(nodeid: str, tests_dir: Path) -> str | None:
+    stem = nodeid.split("::")[0]
+    candidate = tests_dir / Path(stem).name
+    return str(candidate) if candidate.exists() else None
+
+
+def _find_images(directory: Path) -> list[str]:
+    if not directory.is_dir():
+        return []
+    return [str(p) for p in sorted(directory.iterdir()) if p.suffix.lower() in IMAGE_EXTS]
+
+
+def _find_attachments(pw_dir: Path, slug: str) -> list[str]:
+    if not pw_dir.is_dir():
+        return []
+    out: list[str] = []
+    for child in pw_dir.iterdir():
+        if child.is_dir() and slug and slug in child.name:
+            out.extend(str(p) for p in sorted(child.iterdir()) if p.suffix.lower() in ATTACH_EXTS)
+    return out
+
+
+def _common_prefix(urls: list[str]) -> str:
+    if not urls:
+        return ""
+    first = urls[0]
+    for i, ch in enumerate(first):
+        if any(len(u) <= i or u[i] != ch for u in urls):
+            return first[:i]
+    return first
+
+
+# ------------------------------------------------------------------------ validate
+
+def validate_url(report: UrlReport) -> None:
+    warnings = report.warnings
+    if report.generated_status == "generated" and report.total == 0:
+        warnings.append("spec was generated but no tests executed")
+    for outcome in report.outcomes:
+        if outcome.passed and not outcome.evidence:
+            warnings.append(f"{outcome.title}: PASSED with no screenshot evidence")
+        if outcome.status in {"failed", "error"} and not outcome.attachments and not outcome.evidence:
+            warnings.append(f"{outcome.title}: FAILED with no evidence or trace recorded")
+        if outcome.passed and not outcome.assertions:
+            warnings.append(f"{outcome.title}: PASSED with no detectable assertion (trivial test)")
+
+
+# --------------------------------------------------------------------------- render
+
+def _heading_color(document, text: str, level: int, rgb: tuple[int, int, int] | None = None) -> None:
+    heading = document.add_heading(text, level)
+    if rgb:
+        for run in heading.runs:
+            run.font.color.rgb = RGBColor(*rgb)
+
+
+def _status_line(document, outcome: TestOutcome) -> None:
+    para = document.add_paragraph()
+    run = para.add_run(f"Status: {outcome.status.upper()}")
+    run.bold = True
+    run.font.color.rgb = RGBColor(0x1B, 0x7F, 0x37) if outcome.passed else RGBColor(0xB3, 0x26, 0x1A)
+    para.add_run(f"    Duration: {outcome.duration:.2f}s")
+
+
+def _render_outcome(document, outcome: TestOutcome) -> None:
+    document.add_heading(outcome.title.replace("_", " "), 2)
+    _status_line(document, outcome)
+
+    if outcome.assertions:
+        document.add_heading("Assertions verified", 3)
+        for line in outcome.assertions:
+            document.add_paragraph(line, style="List Bullet")
+
+    document.add_heading("Browser evidence", 3)
+    if not outcome.evidence:
+        para = document.add_paragraph("No screenshot evidence was captured for this test.")
+        para.runs[0].italic = True
+    for image in outcome.evidence:
+        path = Path(image)
+        if not path.is_file():
+            continue
+        try:
+            document.add_picture(str(path), width=Inches(6.0))
+        except Exception as exc:  # unreadable / truncated screenshot
+            document.add_paragraph(f"(could not embed {path.name}: {exc})")
+            continue
+        caption = document.add_paragraph(path.stem.replace("-", " "))
+        caption.runs[0].italic = True
+        caption.runs[0].font.size = Pt(9)
+
+    if outcome.status in {"failed", "error"}:
+        document.add_heading("Failure detail", 3)
+        block = document.add_paragraph(outcome.error or "(no traceback captured)")
+        block.runs[0].font.name = "Consolas"
+        block.runs[0].font.size = Pt(8)
+        for attachment in outcome.attachments:
+            note = document.add_paragraph(f"Attachment: {Path(attachment).name}  ({attachment})")
+            note.runs[0].font.size = Pt(9)
+
+
+def _summary_table(document, reports: list[UrlReport]) -> None:
+    table = document.add_table(rows=1, cols=4)
+    try:
+        table.style = "Table Grid"
+    except KeyError:
+        pass
+    for cell, label in zip(table.rows[0].cells, ("URL", "Tests", "Passed", "Failed")):
+        cell.paragraphs[0].add_run(label).bold = True
+    for report in reports:
+        cells = table.add_row().cells
+        cells[0].text = report.url
+        cells[1].text = str(report.total)
+        cells[2].text = str(report.passed)
+        cells[3].text = str(report.failed)
+
+
+def _metadata(document, run: RunReport, scope: str) -> None:
+    document.add_paragraph(f"Scope: {scope}")
+    document.add_paragraph(f"Model: {run.model or 'unknown'}")
+    document.add_paragraph(f"Run started: {run.started_at or 'unknown'}")
+    document.add_paragraph(
+        f"Generated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+    )
+    document.add_paragraph(
+        f"Totals: {run.total} tests | {run.passed} passed | {run.failed} failed"
+    )
+
+
+def _warnings_section(document, warnings: list[str]) -> None:
+    document.add_heading("Validation warnings", 1)
+    if not warnings:
+        document.add_paragraph("None. Every test has evidence and at least one assertion.")
+        return
+    document.add_paragraph(
+        "These items mean the numbers above cannot be fully trusted from the "
+        "document alone and need a manual look:"
+    )
+    for warning in warnings:
+        para = document.add_paragraph(warning, style="List Bullet")
+        para.runs[0].font.color.rgb = RGBColor(0xB3, 0x26, 0x1A)
+
+
+def build_url_docx(run: RunReport, report: UrlReport, destination: Path) -> None:
+    document = Document()
+    document.add_heading("Website Test Evidence Report", 0)
+    document.add_heading(report.url, 1)
+    _metadata(document, run, scope=f"single URL ({report.url})")
+    _summary_table(document, [report])
+    _warnings_section(document, report.warnings)
+    for outcome in report.outcomes:
+        document.add_page_break()
+        _render_outcome(document, outcome)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    document.save(destination)
+
+
+def build_combined_docx(run: RunReport, destination: Path) -> None:
+    document = Document()
+    document.add_heading("Website Test Evidence Report — Full Run", 0)
+    _metadata(document, run, scope="all URLs")
+    _summary_table(document, run.url_reports)
+    _warnings_section(document, run.warnings)
+    for report in run.url_reports:
+        document.add_page_break()
+        document.add_heading(report.url, 1)
+        _summary_table(document, [report])
+        if report.warnings:
+            _warnings_section(document, report.warnings)
+        for outcome in report.outcomes:
+            document.add_page_break()
+            _render_outcome(document, outcome)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    document.save(destination)
+
+
+def name_for(url: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", url.lower()).strip("-")[:100] or "url"
+
+
+def create_report(
+    artifacts_dir: Path,
+    tests_dir: Path,
+    out_dir: Path,
+    *,
+    model: str = "",
+    combined: bool = False,
+) -> RunReport:
+    run = load_run(artifacts_dir, tests_dir, model=model)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for report in run.url_reports:
+        build_url_docx(run, report, out_dir / f"{name_for(report.url)}.docx")
+    if combined:
+        build_combined_docx(run, out_dir / "full-report.docx")
+    return run

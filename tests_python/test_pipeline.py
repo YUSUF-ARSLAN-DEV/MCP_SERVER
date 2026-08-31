@@ -41,6 +41,16 @@ def test_locator_match_does_not_span_lines():
     src = 'link = page.get_by_role("link", name="Real")\nexpect(link).to_be_visible()\nassert link\n# https://example.test'
     validate_python_spec(src, 'https://example.test', _inventory())
 
+def test_rejects_test_without_evidence():
+    src = 'def test_x(page, evidence_dir):\n    expect(page).to_have_url("https://example.test")\n'
+    with pytest.raises(SpecError, match='no evidence'):
+        validate_python_spec(src, 'https://example.test')
+
+def test_accepts_test_with_observation_evidence():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    observation_evidence(page, "seen", lambda: expect(page).to_have_url("https://example.test"), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test')
+
 
 class _FakePage:
     def __init__(self, links):

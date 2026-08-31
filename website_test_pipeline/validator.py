@@ -44,6 +44,21 @@ def _known(literal: str, tokens: set[str]) -> bool:
     if not normalized: return True
     return any(token == normalized or (len(token) >= 3 and (token in normalized or normalized in token)) for token in tokens)
 
+_EVIDENCE_CALLS = {"action_evidence", "observation_evidence"}
+
+def _tests_without_evidence(tree: ast.AST) -> list[str]:
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+            continue
+        calls = {
+            child.func.id for child in ast.walk(node)
+            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+        }
+        if not (calls & _EVIDENCE_CALLS):
+            offenders.append(node.name)
+    return offenders
+
 def validate_python_spec(source: str, url: str, inventory=None) -> None:
     if re.search(r"\.\s*(click|fill|select_option|check|uncheck|press)\s*\(", source) and "action_evidence" not in source:
         raise SpecError("action requires action_evidence")
@@ -54,6 +69,9 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     if re.search(r"getByText|:has-text|text=", source): raise SpecError("unstable text selector found")
     if any(isinstance(node, (ast.Import, ast.ImportFrom)) and any(alias.name in {"os", "subprocess", "socket"} for alias in node.names) for node in ast.walk(tree)):
         raise SpecError("unsafe system import found")
+    missing_evidence = _tests_without_evidence(tree)
+    if missing_evidence:
+        raise SpecError(f"test captures no evidence (needs action_evidence/observation_evidence): {missing_evidence[0]}")
     if inventory is not None:
         tokens = _allowed_tokens(inventory)
         unknown: list[str] = []
