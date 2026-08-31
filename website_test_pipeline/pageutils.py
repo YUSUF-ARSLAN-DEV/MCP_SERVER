@@ -1,43 +1,66 @@
 """Shared page helpers used by both the explorer and the generated specs."""
 
-# Accept-button accessible names seen across common consent frameworks.
-_CONSENT_NAMES = (
+# Accept / dismiss button accessible names across common consent + popup frameworks.
+_ACCEPT_NAMES = (
     "Allow all", "Accept all", "Accept All Cookies", "Accept all cookies",
-    "I Accept", "I agree", "Agree", "Got it", "OK", "Continue",
+    "I Accept", "I agree", "Agree", "Got it", "OK",
 )
-# Known container selectors that should detach/hide once consent is handled.
-_CONSENT_CONTAINERS = ("#onetrust-banner-sdk", "#onetrust-consent-sdk", "[id*='cookie-banner']", "[aria-label='Cookie banner']")
-_CONSENT_BUTTONS = ("#onetrust-accept-btn-handler", "button[aria-label='Accept all']")
+_CLOSE_NAMES = (
+    "Close Ad", "Close ad", "Close", "No thanks", "No Thanks", "Not now",
+    "Not Now", "Dismiss", "Maybe later", "Skip",
+)
+_BUTTON_SELECTORS = (
+    "#onetrust-accept-btn-handler",
+    "button[aria-label='Accept all']",
+    "[aria-label*='close' i]",
+    "[class*='close' i][role='button']",
+)
+_CONTAINERS = (
+    "#onetrust-banner-sdk", "#onetrust-consent-sdk",
+    "[id*='cookie-banner' i]", "[aria-label='Cookie banner']",
+)
 
 
-def dismiss_consent(page, timeout: int = 4000) -> bool:
-    """Best-effort dismissal of a cookie/consent overlay. Returns True if one was closed."""
-    for selector in _CONSENT_BUTTONS:
-        button = page.locator(selector)
+def dismiss_overlays(page, rounds: int = 3) -> bool:
+    """Best-effort close of consent dialogs, ad interstitials and popups.
+
+    Runs a few rounds because sites stack layers (ad over cookie dialog, etc.).
+    Returns True if anything was clicked.
+    """
+    acted = False
+    for _ in range(rounds):
+        hit = _click_first(page, _BUTTON_SELECTORS, by="css")
+        hit = _click_first(page, _ACCEPT_NAMES, by="button") or hit
+        hit = _click_first(page, _CLOSE_NAMES, by="button") or hit
+        if not hit:
+            break
+        acted = True
+    _wait_gone(page)
+    return acted
+
+
+# kept for existing imports
+dismiss_consent = dismiss_overlays
+
+
+def _click_first(page, candidates, *, by: str) -> bool:
+    for candidate in candidates:
+        locator = page.locator(candidate) if by == "css" else page.get_by_role("button", name=candidate, exact=True)
         try:
-            if button.count() and button.first.is_visible():
-                button.first.click(timeout=timeout)
-                _wait_gone(page)
+            if locator.count() and locator.first.is_visible():
+                locator.first.click(timeout=2500)
+                page.wait_for_timeout(300)
                 return True
         except Exception:
-            pass
-    for name in _CONSENT_NAMES:
-        button = page.get_by_role("button", name=name, exact=True)
-        try:
-            if button.count() and button.first.is_visible():
-                button.first.click(timeout=timeout)
-                _wait_gone(page)
-                return True
-        except Exception:
-            pass
+            continue
     return False
 
 
 def _wait_gone(page) -> None:
-    for selector in _CONSENT_CONTAINERS:
-        container = page.locator(selector)
+    for selector in _CONTAINERS:
         try:
+            container = page.locator(selector)
             if container.count():
-                container.first.wait_for(state="hidden", timeout=3000)
+                container.first.wait_for(state="hidden", timeout=2500)
         except Exception:
             pass

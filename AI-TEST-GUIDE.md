@@ -36,14 +36,14 @@ rule here exists because ignoring it caused real failures.
 from pathlib import Path
 from playwright.sync_api import Page, expect
 from website_test_pipeline.evidence import action_evidence, observation_evidence
-from website_test_pipeline.pageutils import dismiss_consent
+from website_test_pipeline.pageutils import dismiss_overlays
 
 URL = "<exact page URL>"
 
 
 def _open(page: Page) -> None:
     page.goto(URL, wait_until="domcontentloaded")
-    dismiss_consent(page)  # closes the cookie/consent overlay if present
+    dismiss_overlays(page)  # closes cookie / consent dialogs and ad interstitials
 
 
 def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> None:
@@ -76,11 +76,16 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
 - Copy the accessible name **verbatim from the snapshot**. Never guess, invent,
   or translate it. Never use an OR-regex or a single shared word — it matches
   sibling elements and raises a strict-mode violation.
-- **Headings with a common name** ("News", "Live", "About") collide with
-  newsletter/footer widgets. Pin them: add `level=1` (or the observed level),
-  or scope to a landmark, e.g.
-  `page.get_by_test_id("section-page-header").get_by_role("heading", name="News")`.
-  If you cannot disambiguate, assert `.to_have_count(1)` on the specific one.
+- **Always pass `exact=True`** to `get_by_role(..., name=...)`, `get_by_text`
+  is banned, `get_by_label(..., exact=True)`. A partial name match on a busy
+  page (header + footer + newsletter widget) hits multiple elements.
+- **Common link/heading names** ("News", "Sport", "Privacy Policy", "About")
+  appear in the header nav, the footer, AND inline widgets. Scope every nav
+  check to the landmark and every footer check to `contentinfo`:
+  `page.get_by_role("navigation").get_by_role("link", name="News", exact=True)`,
+  `page.get_by_role("contentinfo").get_by_role("link", name="Privacy Policy", exact=True)`.
+  If a locator can still match more than one, append `.first` for a
+  presence check, or assert `.to_have_count(1)` when the count is the point.
 - On Arabic (`/ar`) pages use the actual Arabic accessible names you observe.
   Do not reuse English names like "Toggle navigation".
 - Never assume a control, route, success message, language, or business rule
