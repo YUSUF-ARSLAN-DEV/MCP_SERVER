@@ -20,14 +20,14 @@ def _allowed_tokens(inventory) -> set[str]:
         if heading.get("text"): tokens.add(_norm(str(heading["text"])))
     return {token for token in tokens if token}
 
-# .locator("...") - CSS/text selector strings
+# .locator("...") - CSS/text selector strings (single string literal, no line crossing)
 def _css_locators(source: str) -> list[str]:
-    return [m.group(2) for m in re.finditer(r"\.locator\(\s*(['\"])(.+?)\1", source, re.S)]
+    return [m.group(2) for m in re.finditer(r"\.locator\(\s*(['\"])([^'\"\n]+)\1", source)]
 
 # get_by_* helpers keyed on user-visible text / labels - high hallucination risk
 def _text_locators(source: str) -> list[str]:
-    out = [m.group(2) for m in re.finditer(r"\.get_by_(?:label|placeholder|test_id|alt_text|title)\(\s*(['\"])(.+?)\1", source, re.S)]
-    out += [m.group(2) for m in re.finditer(r"\.get_by_role\(\s*['\"][^'\"]+['\"][^)]*?\bname\s*=\s*(['\"])(.+?)\1", source, re.S)]
+    out = [m.group(2) for m in re.finditer(r"\.get_by_(?:label|placeholder|test_id|alt_text|title)\(\s*(['\"])([^'\"\n]+)\1", source)]
+    out += [m.group(2) for m in re.finditer(r"\.get_by_role\(\s*['\"][^'\"\n]+['\"][^)\n]*?\bname\s*=\s*(['\"])([^'\"\n]+)\1", source)]
     return out
 
 # identifying fragments inside a CSS selector: #id and [attr=value]; a selector with none is purely structural

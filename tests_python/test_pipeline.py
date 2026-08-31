@@ -37,6 +37,10 @@ def test_accepts_selector_in_inventory():
     src = "page.locator('#real-btn')\nassert True\n# https://example.test"
     validate_python_spec(src, 'https://example.test', _inventory())
 
+def test_locator_match_does_not_span_lines():
+    src = 'link = page.get_by_role("link", name="Real")\nexpect(link).to_be_visible()\nassert link\n# https://example.test'
+    validate_python_spec(src, 'https://example.test', _inventory())
+
 
 class _FakePage:
     def __init__(self, links):
