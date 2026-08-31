@@ -1,19 +1,24 @@
-"""Fixtures and hooks that turn a pytest run into report source data.
+"""Pipeline pytest plugin: evidence capture + result collection.
 
-- ``evidence_dir``: a persistent per-test folder the generated specs write
+Active only when the pipeline runs pytest (it sets WTP_ARTIFACTS to the
+workspace's artifacts dir). A plain `pytest` on the unit tests is unaffected.
+
+- ``evidence_dir``: persistent per-test folder the generated specs write
   step screenshots into (via website_test_pipeline.evidence).
-- a makereport hook that records every test outcome to
-  python_artifacts/test_results.json for report.py to consume.
+- a makereport hook that records every outcome to
+  <WTP_ARTIFACTS>/test_results.json for report.py to consume.
 """
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-ARTIFACTS = ROOT / "python_artifacts"
+_ARTIFACTS = os.environ.get("WTP_ARTIFACTS")
+ACTIVE = bool(_ARTIFACTS)
+ARTIFACTS = Path(_ARTIFACTS) if _ARTIFACTS else Path.cwd() / "python_artifacts"
 EVIDENCE_ROOT = ARTIFACTS / "evidence"
 RESULTS_FILE = ARTIFACTS / "test_results.json"
 
@@ -30,13 +35,16 @@ def evidence_dir(request) -> Path:
 
 
 def pytest_sessionstart(session) -> None:
-    ARTIFACTS.mkdir(parents=True, exist_ok=True)
     session._collected_results = []
+    if ACTIVE:
+        ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
+    if not ACTIVE:
+        return
     report = outcome.get_result()
     if report.when != "call" and not (report.when == "setup" and report.outcome != "passed"):
         return
@@ -60,6 +68,8 @@ def pytest_runtest_makereport(item, call):
 
 
 def pytest_sessionfinish(session, exitstatus) -> None:
+    if not ACTIVE:
+        return
     results = getattr(session, "_collected_results", [])
     payload = {
         "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),

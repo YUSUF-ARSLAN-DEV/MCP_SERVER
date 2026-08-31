@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, json, logging, re, subprocess, sys
+import argparse, json, logging, os, re, subprocess, sys
 from datetime import datetime, timezone
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -20,6 +20,8 @@ def main() -> int:
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
     args = parser.parse_args()
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
+    log.info('WORKSPACE site=%s dir=%s', settings.site, settings.workspace)
+    pytest_env = {**os.environ, 'WTP_ARTIFACTS': str(settings.artifacts_dir)}
     if args.command == 'crawl':
         if not settings.seed_url:
             log.error('crawl requires SEED_URL in .env'); return 2
@@ -35,12 +37,12 @@ def main() -> int:
         return 0
     urls = read_urls(settings.urls_file)
     if args.command == 'execute':
-        result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q'], cwd=settings.root)
+        result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q'], cwd=settings.root, env=pytest_env)
         return result.returncode
     if args.command == 'report':
         from . import report as report_mod
         pw_out = settings.artifacts_dir/'pw'
-        result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}'], cwd=settings.root)
+        result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}'], cwd=settings.root, env=pytest_env)
         run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined)
         log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
         for warning in run.warnings:

@@ -3,9 +3,9 @@
 .env.*
 !.env.example
 
-# Generated specs, evidence, and run artifacts
-python_tests/*
-!python_tests/conftest.py
+# Per-site workspaces: generated specs, evidence, artifacts, reports
+runs/
+python_tests/
 python_artifacts/
 reports/
 evidence.json
