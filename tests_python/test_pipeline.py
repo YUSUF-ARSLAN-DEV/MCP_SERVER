@@ -2,6 +2,7 @@ import pytest
 from pathlib import Path
 from website_test_pipeline.generator import extract_code
 from website_test_pipeline.validator import validate_python_spec, SpecError
+from website_test_pipeline.models import PageInventory
 from website_test_pipeline.urls import canonicalize
 from website_test_pipeline.crawler import crawl
 
@@ -22,6 +23,19 @@ def test_canonicalize_removes_fragment_and_trailing_slash():
 def test_rejects_unsafe_import():
     with pytest.raises(SpecError, match='unsafe system import'):
         validate_python_spec('import subprocess\nassert True\n# https://example.test', 'https://example.test')
+
+def _inventory():
+    return PageInventory('https://example.test', 'T', headings=[{'level': 'H1', 'text': 'Welcome'}],
+                         controls=[{'selector': '#real-btn', 'name': 'Real'}])
+
+def test_rejects_selector_not_in_inventory():
+    src = "page.locator('#ghost-btn')\nassert True\n# https://example.test"
+    with pytest.raises(SpecError, match='inventory'):
+        validate_python_spec(src, 'https://example.test', _inventory())
+
+def test_accepts_selector_in_inventory():
+    src = "page.locator('#real-btn')\nassert True\n# https://example.test"
+    validate_python_spec(src, 'https://example.test', _inventory())
 
 
 class _FakePage:
