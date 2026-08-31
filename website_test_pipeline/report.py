@@ -157,7 +157,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "") -> RunReport
     for row in results.get("tests", []):
         url = row.get("url") or "(unknown url)"
         report = by_url.setdefault(url, UrlReport(url=url))
-        report.spec_path = specs.get(url) or _guess_spec(row.get("nodeid", ""), tests_dir)
+        report.spec_path = _resolve_spec(specs.get(url), row.get("nodeid", ""), tests_dir)
         report.generated_status = generated.get(url)
 
         spec = Path(report.spec_path) if report.spec_path else None
@@ -203,6 +203,13 @@ def _guess_spec(nodeid: str, tests_dir: Path) -> str | None:
     stem = nodeid.split("::")[0]
     candidate = tests_dir / Path(stem).name
     return str(candidate) if candidate.exists() else None
+
+
+def _resolve_spec(stored: str | None, nodeid: str, tests_dir: Path) -> str | None:
+    """Prefer a stored path that still exists, else find the spec by name in tests_dir."""
+    if stored and Path(stored).exists():
+        return stored
+    return _guess_spec(nodeid, tests_dir) or stored
 
 
 def _find_images(directory: Path) -> list[str]:
