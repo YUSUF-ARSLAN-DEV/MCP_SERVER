@@ -3,6 +3,23 @@ import re
 
 class SpecError(ValueError): pass
 
+# Roles Playwright accepts for get_by_role (ARIA 1.2 + a few document-structure roles).
+_ARIA_ROLES = {
+    "alert", "alertdialog", "application", "article", "banner", "blockquote", "button",
+    "caption", "cell", "checkbox", "code", "columnheader", "combobox", "complementary",
+    "contentinfo", "definition", "deletion", "dialog", "document", "emphasis", "feed",
+    "figure", "form", "generic", "grid", "gridcell", "group", "heading", "img", "insertion",
+    "link", "list", "listbox", "listitem", "log", "main", "marquee", "math", "menu",
+    "menubar", "menuitem", "menuitemcheckbox", "menuitemradio", "meter", "navigation",
+    "none", "note", "option", "paragraph", "presentation", "progressbar", "radio",
+    "radiogroup", "region", "row", "rowgroup", "rowheader", "scrollbar", "search",
+    "searchbox", "separator", "slider", "spinbutton", "status", "strong", "subscript",
+    "superscript", "switch", "tab", "table", "tablist", "tabpanel", "term", "textbox",
+    "time", "timer", "toolbar", "tooltip", "tree", "treegrid", "treeitem",
+}
+# Locator factories Playwright actually exposes (get_by_text is handled/blocked separately).
+_GET_BY = {"role", "text", "label", "placeholder", "alt_text", "title", "test_id"}
+
 def _norm(value: str) -> str:
     return re.sub(r"\s+", " ", value or "").strip().lower()
 
@@ -59,6 +76,35 @@ def _tests_without_evidence(tree: ast.AST) -> list[str]:
             offenders.append(node.name)
     return offenders
 
+# Tag names that occur dozens of times on a page - a bare page.locator("<tag>") is meaningless.
+_AMBIGUOUS_TAGS = {"div", "span", "a", "p", "li", "ul", "ol", "button", "img", "label",
+                   "input", "i", "b", "em", "strong", "td", "tr", "th", "section"}
+
+def _bare_tag(selector: str) -> bool:
+    return selector.strip().lower() in _AMBIGUOUS_TAGS
+
+def _locator_misuse(tree: ast.AST) -> str | None:
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        attr, args = node.func.attr, node.args
+        if attr == "to_have_url" and args:
+            arg = args[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and "*" in arg.value:
+                return ("to_have_url() does not understand globs - use "
+                        "expect(page).to_have_url(re.compile(r\"/x\")) for a pattern, or "
+                        "page.wait_for_url(\"**/x**\") outside the verify callback")
+        if attr == "get_by_role" and args and isinstance(args[0], ast.Constant):
+            role = str(args[0].value).strip().lower()
+            if role and role not in _ARIA_ROLES:
+                return f"{role!r} is not a valid ARIA role for get_by_role - use a real role or an id/attribute locator"
+        if attr.startswith("get_by_") and attr[len("get_by_"):] not in _GET_BY and attr != "get_by_text":
+            return f"page.{attr}() is not a Playwright locator method - use get_by_role / get_by_label / a selector"
+        if attr == "locator" and args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str) and _bare_tag(args[0].value):
+            return (f"page.locator({args[0].value!r}) matches every <{args[0].value.strip()}> on the page - "
+                    "qualify it with an id, attribute, or role")
+    return None
+
 def validate_python_spec(source: str, url: str, inventory=None) -> None:
     if re.search(r"\.\s*(click|fill|select_option|check|uncheck|press)\s*\(", source) and "action_evidence" not in source:
         raise SpecError("action requires action_evidence")
@@ -73,6 +119,9 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     missing_evidence = _tests_without_evidence(tree)
     if missing_evidence:
         raise SpecError(f"test captures no evidence (needs action_evidence/observation_evidence): {missing_evidence[0]}")
+    misuse = _locator_misuse(tree)
+    if misuse:
+        raise SpecError(misuse)
     if inventory is not None:
         tokens = _allowed_tokens(inventory)
         unknown: list[str] = []

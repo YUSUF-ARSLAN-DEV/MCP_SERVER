@@ -21,13 +21,24 @@ _CONTAINERS = (
 )
 
 
+def settle_page(page, timeout: int = 6000) -> None:
+    """Give a page a bounded chance to reach the 'load' state.
+
+    Ad- and tracker-heavy sites keep firing requests long after the content is
+    usable, so the 'load' event can be minutes away or never arrive. We wait a
+    short, capped interval and move on - the auto-retrying ``expect`` calls in
+    the tests absorb any remaining async rendering.
+    """
+    try:
+        page.wait_for_load_state("load", timeout=timeout)
+    except Exception:
+        pass
+
+
 def open_page(page, url: str) -> None:
     """Navigate, let the SPA settle, and clear consent / ad overlays."""
     page.goto(url, wait_until="domcontentloaded")
-    try:
-        page.wait_for_load_state("load", timeout=15000)
-    except Exception:
-        pass
+    settle_page(page)
     dismiss_overlays(page)
 
 
@@ -58,7 +69,7 @@ def _click_first(page, candidates, *, by: str) -> bool:
         locator = page.locator(candidate) if by == "css" else page.get_by_role("button", name=candidate, exact=True)
         try:
             if locator.count() and locator.first.is_visible():
-                locator.first.click(timeout=2500)
+                locator.first.click(timeout=1200)
                 page.wait_for_timeout(300)
                 return True
         except Exception:
@@ -71,6 +82,6 @@ def _wait_gone(page) -> None:
         try:
             container = page.locator(selector)
             if container.count():
-                container.first.wait_for(state="hidden", timeout=2500)
+                container.first.wait_for(state="hidden", timeout=1500)
         except Exception:
             pass

@@ -21,8 +21,10 @@ rule here exists because ignoring it caused real failures.
 - The module must be valid Python (it is parsed with `ast.parse`).
 - It must contain at least one real `assert` **or** Playwright `expect(...)`
   assertion. A test that only clicks and waits is invalid.
-- The **exact page URL string must appear literally** in the module (use it in
-  `page.goto(...)` and/or an `expect(page).to_have_url(...)` check).
+- The **exact page URL string must appear literally** in the module — as the
+  `URL = "..."` constant that `_open` passes to `open_page`. Do **not** add an
+  `expect(page).to_have_url(URL)` check (sites redirect / add a trailing slash or
+  locale — see Assertion rules).
 - **No text-based selectors.** The strings `get_by_text`, `:has-text`, and
   `text=` are forbidden anywhere in the file.
 - **No system imports.** Never import `os`, `subprocess`, or `socket`.
@@ -33,6 +35,7 @@ rule here exists because ignoring it caused real failures.
 ## Module skeleton
 
 ```python
+import re
 from pathlib import Path
 from playwright.sync_api import Page, expect
 from website_test_pipeline.evidence import action_evidence, observation_evidence
@@ -47,9 +50,8 @@ def _open(page: Page) -> None:
 
 def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> None:
     _open(page)
-    expect(page).to_have_url(URL)
-    heading = page.get_by_role("heading", name="<exact accessible name>")
-    observation_evidence(page, "heading-visible", lambda: expect(heading).to_be_visible(), evidence_dir)
+    heading = page.get_by_role("heading", name="<exact accessible name from the snapshot>", exact=True)
+    observation_evidence(page, "main-heading-visible", lambda: expect(heading).to_be_visible(), evidence_dir)
 ```
 
 - The `page` fixture comes from `pytest-playwright`. Do not create your own
@@ -80,11 +82,17 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
   page (header + footer + newsletter widget) hits multiple elements.
 - **Common link/heading names** ("News", "Sport", "Privacy Policy", "About")
   appear in the header nav, the footer, AND inline widgets. Scope every nav
-  check to the landmark and every footer check to `contentinfo`:
-  `page.get_by_role("navigation").get_by_role("link", name="News", exact=True)`,
-  `page.get_by_role("contentinfo").get_by_role("link", name="Privacy Policy", exact=True)`.
-  If a locator can still match more than one, append `.first` for a
-  presence check, or assert `.to_have_count(1)` when the count is the point.
+  check to the landmark and every footer check to `contentinfo`, **and append
+  `.first`** — pages routinely render the primary nav twice (desktop +
+  mobile/mega-menu) so even a landmark-scoped locator matches two elements:
+  `page.get_by_role("navigation").get_by_role("link", name="News", exact=True).first`,
+  `page.get_by_role("contentinfo").get_by_role("link", name="Privacy Policy", exact=True).first`.
+  Do the same for any control the inventory marks `AMBIGUOUS`. When the count
+  itself is the point, assert `.to_have_count(n)` only if you observed `n`.
+- **Only real ARIA roles.** `button`, `link`, `heading`, `textbox`, `combobox`,
+  `checkbox`, `radio`, `navigation`, `banner`, `contentinfo`, `list`,
+  `listitem`, `dialog`, `region`, `img`, … There is **no `video` role** — a
+  `<video>` has no role; locate a player by id/selector or an observed control.
 - On Arabic (`/ar`) pages use the actual Arabic accessible names you observe.
   Do not reuse English names like "Toggle navigation".
 - Never assume a control, route, success message, language, or business rule
@@ -106,10 +114,22 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
   `page.set_viewport_size({"width": 375, "height": 667})` first, then assert.
 - Match the assertion to the intent: "this specific heading says X" → a named
   single-element locator; "some heading exists" → `.to_have_count(...)`.
-- **After clicking a navigation link, do not assert an exact URL** — sites
-  redirect, append locale/tracking, or trailing-slash. Use a glob
-  (`page.wait_for_url("**/middleeast**")`) or, better, assert a heading/landmark
-  that is unique to the destination page.
+- **Never assert an exact URL** — not after a click and not for the page under
+  test. Sites redirect, append a locale segment, tracking params, or a trailing
+  slash. And `to_have_url()` does **not** understand globs. Inside a verify
+  callback use a path regex: `expect(page).to_have_url(re.compile(r"/middleeast"))`
+  (`import re` is in the skeleton). `page.wait_for_url("**/middleeast**")` also
+  works but only as a plain statement, not inside a `lambda`. Best of all, assert
+  a heading/landmark unique to the destination. To confirm the page under test
+  loaded, assert its main heading is visible.
+- **Do not assert a state your own action just changed or removed.** A submit
+  button that becomes disabled or relabelled ("Subscribing…") after a click, an
+  overlay `_open()` already dismissed, a field that clears on submit — verify the
+  genuine post-state instead (a value you set, a panel that appeared, a URL glob).
+- **Do not assert guessed copy.** No invented success/error messages. Do not
+  assert the exact text of individual article/news headlines or anything inside a
+  feed, list, or article region — it rotates between crawl and run. Assert stable
+  structural headings and labels only.
 
 ## Evidence rules
 
