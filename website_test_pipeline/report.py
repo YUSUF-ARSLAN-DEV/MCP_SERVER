@@ -395,8 +395,8 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
     document.add_heading("Website Test Evidence Report — Full Run", 0)
     _metadata(document, run, scope="all URLs")
     document.add_paragraph(
-        "Screenshots and traces in this combined report are linked, not embedded; "
-        "open it from beside the python_artifacts/ folder so the links resolve."
+        "Screenshots are embedded beneath each test. Traces and videos remain "
+        "linked; open this report from beside the artifacts/ folder so those links resolve."
     )
     _summary_table(document, run.url_reports)
     _warnings_section(document, run.warnings)
@@ -409,7 +409,7 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
             _warnings_section(document, report.warnings)
         for outcome in report.outcomes:
             document.add_page_break()
-            _render_outcome(document, outcome, embed=False, link_base=link_base)
+            _render_outcome(document, outcome, embed=True, link_base=link_base)
     destination.parent.mkdir(parents=True, exist_ok=True)
     document.save(destination)
 
