@@ -7,6 +7,7 @@ assertions it made and the screenshot evidence captured at each step.
 from __future__ import annotations
 
 import ast
+import io
 import json
 import os
 import re
@@ -23,6 +24,31 @@ from docx.shared import Inches, Pt, RGBColor
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 ATTACH_EXTS = {".webm", ".zip"}
+
+# Full-page screenshots are ~1280px wide and often 4-5k tall; embedded raw they
+# bloat a full-run .docx to hundreds of MB. Downscale + JPEG-encode so the
+# document stays shareable while text on the page is still readable.
+_MAX_IMG_WIDTH = 1000
+_MAX_IMG_HEIGHT = 3600
+_JPEG_QUALITY = 55
+
+
+def _embeddable(path: Path):
+    """Return a JPEG BytesIO for `path`, or the original path if PIL can't read it."""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            scale = min(_MAX_IMG_WIDTH / im.width, _MAX_IMG_HEIGHT / im.height, 1.0)
+            if scale < 1.0:
+                im = im.resize((round(im.width * scale), round(im.height * scale)), Image.LANCZOS)
+            buffer = io.BytesIO()
+            im.save(buffer, format="JPEG", quality=_JPEG_QUALITY, optimize=True)
+            buffer.seek(0)
+            return buffer
+    except Exception:
+        return str(path)
 
 
 # --------------------------------------------------------------------------- model
@@ -312,7 +338,7 @@ def _render_outcome(document, outcome: TestOutcome, *, embed: bool = True, link_
             continue
         if embed:
             try:
-                document.add_picture(str(path), width=Inches(6.0))
+                document.add_picture(_embeddable(path), width=Inches(6.0))
             except Exception as exc:  # unreadable / truncated screenshot
                 document.add_paragraph(f"(could not embed {path.name}: {exc})")
                 continue
