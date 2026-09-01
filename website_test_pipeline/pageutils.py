@@ -21,7 +21,7 @@ _CONTAINERS = (
 )
 
 
-def settle_page(page, timeout: int = 6000) -> None:
+def settle_page(page, timeout: int = 8000) -> None:
     """Give a page a bounded chance to reach the 'load' state.
 
     Ad- and tracker-heavy sites keep firing requests long after the content is
@@ -35,11 +35,35 @@ def settle_page(page, timeout: int = 6000) -> None:
         pass
 
 
+def prime_lazy_content(page) -> None:
+    """Scroll the page top-to-bottom and back so IntersectionObserver-driven
+    content (footers, newsletter widgets, lazy sections) actually mounts.
+
+    Without this the footer / subscribe form is often absent from the DOM at
+    snapshot time and at assert time, and tests for it can only guess.
+    """
+    try:
+        page.evaluate(
+            """async () => {
+                const step = Math.max(600, window.innerHeight);
+                for (let y = 0; y < document.body.scrollHeight; y += step) {
+                    window.scrollTo(0, y);
+                    await new Promise(r => setTimeout(r, 120));
+                }
+                window.scrollTo(0, 0);
+                await new Promise(r => setTimeout(r, 250));
+            }"""
+        )
+    except Exception:
+        pass
+
+
 def open_page(page, url: str) -> None:
-    """Navigate, let the SPA settle, and clear consent / ad overlays."""
+    """Navigate, let the SPA settle, clear overlays, and mount lazy content."""
     page.goto(url, wait_until="domcontentloaded")
     settle_page(page)
     dismiss_overlays(page)
+    prime_lazy_content(page)
 
 
 def dismiss_overlays(page, rounds: int = 3) -> bool:

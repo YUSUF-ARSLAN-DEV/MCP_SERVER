@@ -83,6 +83,29 @@ _AMBIGUOUS_TAGS = {"div", "span", "a", "p", "li", "ul", "ol", "button", "img", "
 def _bare_tag(selector: str) -> bool:
     return selector.strip().lower() in _AMBIGUOUS_TAGS
 
+# #id selectors that look auto-generated - they change on every page load.
+_VOLATILE_ID = re.compile(
+    r"#[A-Za-z][\w-]*?\d{4,}(?:\s|$|\[|:|>|\.)"      # #newsletter-email-768180
+    r"|#(?:radix|mui|headlessui|rc|ember|downshift)[-_:]"
+    r"|#[A-Fa-f0-9]{8,}(?:\s|$|\[|:|>|\.)"
+)
+
+_EVIDENCE_VERIFY_ARG = {"observation_evidence": 2, "action_evidence": 3}
+
+def _empty_verify(tree: ast.AST) -> str | None:
+    """A verify callback that asserts nothing - `lambda: None`, `lambda: True`, ..."""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
+            continue
+        idx = _EVIDENCE_VERIFY_ARG.get(node.func.id)
+        if idx is None or len(node.args) <= idx:
+            continue
+        verify = node.args[idx]
+        if isinstance(verify, ast.Lambda) and isinstance(verify.body, ast.Constant):
+            return (f"{node.func.id}() verify callback asserts nothing (lambda: {verify.body.value!r}) - "
+                    "it must call expect(...) on something")
+    return None
+
 def _locator_misuse(tree: ast.AST) -> str | None:
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
@@ -103,9 +126,14 @@ def _locator_misuse(tree: ast.AST) -> str | None:
                 return f"{role!r} is not a valid ARIA role for get_by_role - use a real role or an id/attribute locator"
         if attr.startswith("get_by_") and attr[len("get_by_"):] not in _GET_BY and attr != "get_by_text":
             return f"page.{attr}() is not a Playwright locator method - use get_by_role / get_by_label / a selector"
-        if attr == "locator" and args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str) and _bare_tag(args[0].value):
-            return (f"page.locator({args[0].value!r}) matches every <{args[0].value.strip()}> on the page - "
-                    "qualify it with an id, attribute, or role")
+        if attr == "locator" and args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str):
+            literal = args[0].value
+            if _bare_tag(literal):
+                return (f"page.locator({literal!r}) matches every <{literal.strip()}> on the page - "
+                        "qualify it with an id, attribute, or role")
+            if _VOLATILE_ID.search(literal + " "):
+                return (f"page.locator({literal!r}) targets an auto-generated id that changes every page load - "
+                        "locate by get_by_role / get_by_placeholder / get_by_label instead")
     return None
 
 def validate_python_spec(source: str, url: str, inventory=None) -> None:
@@ -125,6 +153,9 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     misuse = _locator_misuse(tree)
     if misuse:
         raise SpecError(misuse)
+    empty = _empty_verify(tree)
+    if empty:
+        raise SpecError(empty)
     if inventory is not None:
         tokens = _allowed_tokens(inventory)
         unknown: list[str] = []

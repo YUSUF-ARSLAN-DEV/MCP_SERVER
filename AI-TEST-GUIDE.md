@@ -16,6 +16,33 @@ rule here exists because ignoring it caused real failures.
 4. There is no fixed test count and no fixed workflow. Generate a test only when
    the observed inventory gives you a reliable postcondition to assert.
 
+## Inventory tags
+
+Each CONTROL and HEADING line is prefixed with tags:
+
+- `[content]` — inside `<main>` / `<article>`; specific to **this** page.
+- `[chrome]` — inside the header, nav, or footer; the same on every page of the site.
+- `[other]` — neither.
+- headings also carry `[hidden]` (present only for screen readers — never assert
+  `to_be_visible`, use `to_have_count(1)`) and `[feed]` (inside an article/feed —
+  the text rotates, do not assert it).
+- controls carry `VOLATILE-ID` (the id/name is auto-generated and changes every
+  load — locate by role/placeholder/label, never `#id`) and `AMBIGUOUS` (the
+  name was seen on more than one element).
+
+## Coverage — test this page, not the site chrome
+
+- **At most ONE `[chrome]` test.** A single check that the primary navigation and
+  footer are present is enough. Do **not** write a footer test, a newsletter
+  test, a language-switch test and a search test on every page — those are
+  identical site-wide and add no coverage.
+- **Every other test targets a `[content]` control or `[content]` heading** — the
+  thing that makes this page different.
+- **If the page has only one or two `[content]` controls, write only one or two
+  tests.** A short page-specific file beats a long one padded with chrome checks.
+- **At least half your tests must DO something** (click / fill / select / press)
+  and assert the result — not just `expect(x).to_be_visible()`.
+
 ## Output contract (the pipeline rejects the spec if any of these fail)
 
 - The module must be valid Python (it is parsed with `ast.parse`).
@@ -108,7 +135,16 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
 - **Do not assert `to_be_visible()` on elements hidden by design:**
   - Skip links (`a[href="#main-content"]`) are screen-reader-only. Assert
     `expect(locator).to_have_count(1)` instead.
-  - Any `sr-only` / visually-hidden element: check presence, not visibility.
+  - Any `sr-only` / visually-hidden element, or a heading tagged `[hidden]`:
+    check presence with `to_have_count(1)`, not visibility.
+- **Below-the-fold elements** (footer links, newsletter widget): call
+  `locator.scroll_into_view_if_needed()` as a plain statement *before* the
+  `observation_evidence(...)` line, then assert visibility.
+- **VOLATILE-ID controls:** never `page.locator("#that-id")` — locate with
+  `get_by_role` / `get_by_placeholder` / `get_by_label`.
+- **Language switch:** the "English" / "العربية" toggle usually leaves the
+  domain. Assert only that the link is visible; never assert the resulting URL.
+  Prefer not to test it — it is `[chrome]` and identical everywhere.
 - **Responsive / mobile-only elements** (hamburger, nav toggle): do not assert
   visibility at desktop width. Call
   `page.set_viewport_size({"width": 375, "height": 667})` first, then assert.
@@ -139,15 +175,15 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
   then captures a full-page screenshot and returns its path.
 - For a pure observation with no action, use
   `observation_evidence(page, "<label>", lambda: <assert>, evidence_dir)`.
-- The `verify` callback **must contain a real assertion** — visible text, a
-  changed value, a target URL. Attachment or attachment-count alone is invalid.
+- The `verify` callback **must itself call `expect(...)`** — e.g.
+  `lambda: expect(field).to_have_value("x")`. The screenshot is taken right after
+  `verify()` runs, so the assertion has to be *inside* the callback.
+  `lambda: None` (or putting the assertion only outside the callback) is rejected.
 - Give every label a descriptive, page-specific name such as
   `country-selected-post-state`, not `works` or `after-click`.
 - For a native `<select>`, verify the selected value changed — opening the OS
   menu is not evidence. For a custom picker, verify the option list is visible
   and contains the expected options.
-- After a language switch, verify the target URL **and** a target-language
-  title and visible heading before capturing.
 - If the page does not expose enough to prove the intended behavior, emit a
   skipped test instead of guessing:
   `@pytest.mark.skip(reason="NOT TESTABLE: <specific reason>")` (add
@@ -161,6 +197,8 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
 - Every test name must identify the page-specific target: the exact heading,
   link, field, picker, button, or resulting state observed on this page.
 - Keep tests independent and self-contained — each test does its own setup.
+- Use one consistent verb per concept: `test_<thing>_present`, not a mix of
+  `_visible` / `_exists` / `_present` for the same kind of check.
 
 ## What NOT to test
 

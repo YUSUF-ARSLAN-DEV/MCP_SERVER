@@ -10,20 +10,34 @@ EVIDENCE_RULES = (
     "EVERY test function MUST capture evidence, because the run produces a Word report a human uses to verify results:\n"
     "- import: from website_test_pipeline.evidence import action_evidence, observation_evidence\n"
     "- use the 'evidence_dir' fixture (a pathlib.Path); do NOT use tmp_path and do NOT open your own browser.\n"
-    "- read-only test: call observation_evidence(page, label, verify, evidence_dir) at least once, where verify asserts what is on screen.\n"
-    "- every click/fill/select/check/press: wrap it as action_evidence(page, label, action, verify, evidence_dir); "
-    "verify must assert the post-action state (e.g. expect(field).to_have_value(...)) before the screenshot is taken.\n"
+    "- read-only test: call observation_evidence(page, label, verify, evidence_dir) at least once.\n"
+    "- every click/fill/select/check/press: wrap it as action_evidence(page, label, action, verify, evidence_dir).\n"
+    "- the 'verify' callback MUST itself call expect(...) - e.g. lambda: expect(field).to_have_value('x'). "
+    "NEVER pass lambda: None or put the assertion only outside the callback; the screenshot is taken right after "
+    "verify() runs, so the assertion has to be inside it.\n"
     "- 'label' is a short kebab-case step name like '01-form-visible' or '02-name-filled'."
 )
 
 SCOPE_RULES = (
-    "Write 3 to 8 test functions, no more. Cover the highest-value user goals from the persona that this page supports "
-    "(finding frequencies, tuning, subscribing, language switch, primary navigation).\n"
+    "Write 3 to 8 test functions, no more. Cover the highest-value user goals this page supports.\n"
     "One test = one user goal. Group only checks that belong to the SAME goal (e.g. all fields of one form). "
     "Keep navigation, search, and each distinct form as their own separate tests - do not fold unrelated checks into "
     "one big test, and never write one test per link, per heading, or per footer item.\n"
     "If a control opens a menu, panel, or dropdown whose contents are NOT in the CONTROLS list, only assert that the "
     "trigger button is visible and enabled - never click it and assert on guessed elements (no '# assuming ...' selectors)."
+)
+
+COVERAGE_RULES = (
+    "Every CONTROL and HEADING is tagged [content] (specific to THIS page) or [chrome] (the site-wide "
+    "header / nav / footer / newsletter that is identical on every page).\n"
+    "- Write AT MOST ONE [chrome] test - a single check that the primary navigation and footer are present. "
+    "Do not write separate footer / newsletter / language-switch / search tests on every page.\n"
+    "- Every OTHER test must target a [content] control or a [content] heading - the thing that makes this page "
+    "different from the rest of the site.\n"
+    "- If the page exposes only one or two [content] controls, write only one or two tests. A short, page-specific "
+    "file beats a long file padded with repeated chrome checks.\n"
+    "- At least half of your tests must DO something (click / fill / select / press) and assert the result. A file "
+    "of pure expect(...).to_be_visible() checks has little value."
 )
 
 LOCATOR_RULES = (
@@ -39,7 +53,12 @@ LOCATOR_RULES = (
     "number you can literally count in CONTROLS. For 'these links exist' assert each one .first is visible.\n"
     "Only use roles that are real ARIA roles (button, link, heading, textbox, combobox, checkbox, navigation, "
     "banner, contentinfo, list, listitem, dialog, region, ...). There is no 'video' role - a <video> element "
-    "has no role; locate a media player by an id/selector or a nearby button you actually observed."
+    "has no role; locate a media player by an id/selector or a nearby button you actually observed.\n"
+    "A control tagged VOLATILE-ID has an auto-generated id/name that changes on every page load - NEVER use #id "
+    "or [name=...] for it; locate it with get_by_role / get_by_placeholder / get_by_label.\n"
+    "A heading tagged HIDDEN exists only for screen readers - assert expect(h).to_have_count(1), never to_be_visible().\n"
+    "Before asserting a footer / newsletter / any below-the-fold element, first call "
+    "locator.scroll_into_view_if_needed() as a plain statement (not inside a lambda)."
 )
 
 ASSERTION_RULES = (
@@ -53,52 +72,87 @@ ASSERTION_RULES = (
     "disabled or relabelled after click, an overlay that _open() already dismissed, a field that clears on submit. "
     "Verify the genuine post-state (a value you set, a panel that appeared, a URL glob).\n"
     "Never assert exact copy you did not observe (no guessed success/error messages). Do not assert the exact "
-    "text of individual article/news headlines or any element inside a feed, list, or article region - that "
-    "content rotates between crawl and run. Assert only stable structural headings and labels.\n"
+    "text of a heading tagged [feed] or any individual article/news headline - that content rotates between "
+    "crawl and run. Assert only stable structural headings and labels.\n"
+    "Language switch: the 'English' / 'العربية' toggle usually points to a different domain. Assert only that the "
+    "toggle link is visible - never assert the URL after clicking it, and prefer not to test it at all.\n"
     "Never assert on page.locator('div'/'span'/'a'/'p') with no id, attribute, or role qualifier - it matches "
     "hundreds of nodes."
 )
 
-def _compact_controls(controls: list[dict], limit: int = 70) -> str:
+def _control_line(control: dict) -> str:
+    parts: list[str] = [f"[{control.get('region') or 'other'}]", str(control.get("tag") or "?")]
+    name = (control.get("name") or "").strip()
+    if name:
+        parts.append(f'"{name[:80]}"')
+    for key in ("selector", "id", "testid", "field_name"):
+        if control.get(key):
+            parts.append(f"{key}={control[key]}")
+            break
+    href = str(control.get("href") or "")
+    if href:
+        parts.append(f"href={href}")
+    if control.get("type"):
+        parts.append(f"type={control['type']}")
+    if control.get("options"):
+        parts.append(f"options={list(control['options'])[:15]}")
+    for flag in ("required", "disabled"):
+        if control.get(flag):
+            parts.append(flag)
+    if control.get("volatile_id"):
+        parts.append("VOLATILE-ID(no stable selector - use role/name/placeholder)")
+    if control.get("ambiguous"):
+        parts.append("AMBIGUOUS(name seen on >1 element - scope to a landmark and/or append .first)")
+    if control.get("checked") is not None:
+        parts.append(f"checked={control['checked']}")
+    return " ".join(parts)
+
+def _href_prefix(href: str) -> str:
+    return "/".join(href.split("/")[:4]) if href.startswith("/") and href.count("/") >= 3 else ""
+
+def _compact_controls(controls: list[dict], content_budget: int = 55, chrome_budget: int = 18) -> str:
+    # content-region first (survives the cap); collapse feed-style link runs; keep a little chrome.
+    rank = {"content": 0, "other": 1, "chrome": 2}
+    ordered = sorted(controls, key=lambda c: rank.get(c.get("region"), 1))
     lines: list[str] = []
-    external = 0
-    for control in controls:
+    used_content = used_chrome = external = 0
+    prefix_seen: dict[str, int] = {}
+    for control in ordered:
+        chrome = control.get("region") == "chrome"
+        if chrome and used_chrome >= chrome_budget:
+            continue
+        if not chrome and used_content >= content_budget:
+            continue
         href = str(control.get("href") or "")
+        prefix = _href_prefix(href)
+        if prefix:
+            prefix_seen[prefix] = prefix_seen.get(prefix, 0) + 1
+            if prefix_seen[prefix] > 4:  # collapse a run of feed/article links
+                continue
         if href.startswith("http"):
             external += 1
             if external > 10:
                 continue
-        parts: list[str] = [str(control.get("tag") or "?")]
-        name = (control.get("name") or "").strip()
-        if name:
-            parts.append(f'"{name[:80]}"')
-        for key in ("selector", "id", "testid", "field_name"):
-            if control.get(key):
-                parts.append(f"{key}={control[key]}")
-                break
-        if href:
-            parts.append(f"href={href}")
-        if control.get("type"):
-            parts.append(f"type={control['type']}")
-        if control.get("options"):
-            parts.append(f"options={list(control['options'])[:15]}")
-        for flag in ("required", "disabled"):
-            if control.get(flag):
-                parts.append(flag)
-        if control.get("ambiguous"):
-            parts.append("AMBIGUOUS(name seen on >1 element - scope to a landmark and/or append .first)")
-        if control.get("checked") is not None:
-            parts.append(f"checked={control['checked']}")
-        lines.append(" ".join(parts))
-        if len(lines) >= limit:
-            break
+        lines.append(_control_line(control))
+        if chrome:
+            used_chrome += 1
+        else:
+            used_content += 1
     return "\n".join(lines)
 
 def _compact_headings(headings: list[dict]) -> str:
-    return "\n".join(
-        f"{h.get('level') or 'H?'}: {(h.get('text') or '').strip()[:120]}"
-        for h in headings if (h.get("text") or "").strip()
-    )
+    out: list[str] = []
+    for h in headings:
+        text = (h.get("text") or "").strip()
+        if not text:
+            continue
+        tags = f"[{h.get('region') or 'other'}]"
+        if h.get("hidden"):
+            tags += "[hidden]"
+        if h.get("in_feed"):
+            tags += "[feed]"
+        out.append(f"{tags} {h.get('level') or 'H?'}: {text[:120]}")
+    return "\n".join(out)
 
 def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str = "") -> str:
     correction = f"\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: {feedback}\nFix exactly that problem and return a corrected module." if feedback else ""
@@ -117,7 +171,7 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         "and footer checks to get_by_role('contentinfo'), then put .first on the LINK, never on the landmark "
         "(the first navigation/contentinfo landmark is often a hidden mobile or skip-link menu): "
         "page.get_by_role('navigation').get_by_role('link', name='News', exact=True).first\n\n"
-        f"{SCOPE_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
+        f"{SCOPE_RULES}\n\n{COVERAGE_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
     )
 
 def extract_code(raw: str) -> str:

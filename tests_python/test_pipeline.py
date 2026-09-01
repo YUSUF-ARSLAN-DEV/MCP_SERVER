@@ -79,6 +79,31 @@ def test_rejects_bare_tag_locator():
     with pytest.raises(SpecError, match='every'):
         validate_python_spec(src, 'https://example.test')
 
+def test_rejects_volatile_id_locator():
+    src = 'def test_x(page, evidence_dir):\n    f = page.locator("#newsletter-email-768180")\n    observation_evidence(page, "f", lambda: expect(f).to_be_visible(), evidence_dir)\n# https://example.test'
+    with pytest.raises(SpecError, match='auto-generated'):
+        validate_python_spec(src, 'https://example.test')
+
+def test_rejects_empty_verify_callback():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    link = page.get_by_role("link", name="Real", exact=True)\n'
+           '    expect(link).to_be_visible()\n'
+           '    observation_evidence(page, "x", lambda: None, evidence_dir)\n# https://example.test')
+    with pytest.raises(SpecError, match='asserts nothing'):
+        validate_python_spec(src, 'https://example.test', _inventory())
+
+def test_region_tags_render_and_order_content_first():
+    from website_test_pipeline.generator import _compact_controls
+    controls = [
+        {"tag": "a", "name": "Privacy", "region": "chrome", "href": "/privacy"},
+        {"tag": "button", "name": "Play episode", "region": "content"},
+        {"tag": "input", "name": "email", "region": "content", "volatile_id": True},
+    ]
+    out = _compact_controls(controls)
+    lines = out.splitlines()
+    assert lines[0].startswith("[content]")           # content sorted first
+    assert "VOLATILE-ID" in out and "[chrome]" in out
+
 def test_accepts_url_regex_and_wait_for_url():
     src = ('import re\n'
            'def test_x(page, evidence_dir):\n'

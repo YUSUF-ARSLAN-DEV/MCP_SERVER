@@ -266,6 +266,12 @@ def _common_prefix(urls: list[str]) -> str:
 
 # ------------------------------------------------------------------------ validate
 
+_BEHAVIOURAL_ASSERT = re.compile(
+    r"to_have_value|to_have_url|to_contain_text|to_have_text|to_be_enabled|to_be_disabled|"
+    r"to_be_checked|to_have_attribute|to_have_class|to_have_count\(\s*[2-9]"
+)
+
+
 def validate_url(report: UrlReport) -> None:
     warnings = report.warnings
     if report.generated_status == "generated" and report.total == 0:
@@ -277,6 +283,15 @@ def validate_url(report: UrlReport) -> None:
             warnings.append(f"{outcome.title}: FAILED with no evidence or trace recorded")
         if outcome.passed and not outcome.assertions:
             warnings.append(f"{outcome.title}: PASSED with no detectable assertion (trivial test)")
+    behavioural = sum(
+        1 for o in report.outcomes
+        if any(_BEHAVIOURAL_ASSERT.search(a) for a in o.assertions)
+    )
+    if report.total >= 4 and behavioural <= report.total // 4:
+        warnings.append(
+            f"{behavioural}/{report.total} tests check behaviour (click/fill/navigate result); "
+            "the rest only assert an element is visible - shallow coverage for this page"
+        )
 
 
 # --------------------------------------------------------------------------- render

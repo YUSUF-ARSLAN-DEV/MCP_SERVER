@@ -34,6 +34,17 @@ def evidence_dir(request) -> Path:
     return directory
 
 
+def pytest_configure(config) -> None:
+    # Give auto-retrying expect() calls longer on JS-heavy pages that render the
+    # asserted element a few seconds after load. Only for pipeline runs.
+    if ACTIVE:
+        try:
+            from playwright.sync_api import expect
+            expect.set_options(timeout=12_000)
+        except Exception:
+            pass
+
+
 def pytest_sessionstart(session) -> None:
     session._collected_results = []
     if ACTIVE:
