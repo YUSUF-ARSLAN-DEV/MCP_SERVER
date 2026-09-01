@@ -69,6 +69,11 @@ def test_rejects_invalid_aria_role():
     with pytest.raises(SpecError, match='ARIA role'):
         validate_python_spec(src, 'https://example.test')
 
+def test_rejects_guessed_to_have_count():
+    src = 'def test_x(page, evidence_dir):\n    observation_evidence(page, "c", lambda: expect(page.get_by_role("link")).to_have_count(15), evidence_dir)\n# https://example.test'
+    with pytest.raises(SpecError, match='count'):
+        validate_python_spec(src, 'https://example.test')
+
 def test_rejects_bare_tag_locator():
     src = 'def test_x(page, evidence_dir):\n    observation_evidence(page, "d", lambda: expect(page.locator("div")).to_contain_text("hi"), evidence_dir)\n# https://example.test'
     with pytest.raises(SpecError, match='every'):

@@ -94,6 +94,9 @@ def _locator_misuse(tree: ast.AST) -> str | None:
                 return ("to_have_url() does not understand globs - use "
                         "expect(page).to_have_url(re.compile(r\"/x\")) for a pattern, or "
                         "page.wait_for_url(\"**/x**\") outside the verify callback")
+        if attr == "to_have_count" and args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, int) and args[0].value >= 2:
+            return (f"expect(...).to_have_count({args[0].value}) hard-codes a guessed element count - assert "
+                    "individual elements (.first .to_be_visible()) or use to_have_count(0)/(1)")
         if attr == "get_by_role" and args and isinstance(args[0], ast.Constant):
             role = str(args[0].value).strip().lower()
             if role and role not in _ARIA_ROLES:
