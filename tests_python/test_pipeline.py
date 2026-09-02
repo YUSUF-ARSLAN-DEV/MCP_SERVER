@@ -206,13 +206,13 @@ def test_merge_extra_urls_adds_same_origin_and_skips_junk(monkeypatch, tmp_path)
 
 # ---------------------------------------------------------- explore interaction probe
 
-from website_test_pipeline.explorer import _probe_interactions
+from website_test_pipeline.explorer import _probe_interactions, _PANEL_SEL, _is_probe_trigger
 from website_test_pipeline.generator import _compact_revealed
 
 
 class _ProbeLocator:
-    def __init__(self, page):
-        self.page = page
+    def __init__(self, page, selector):
+        self.page, self.selector = page, selector
     @property
     def first(self):
         return self
@@ -221,6 +221,8 @@ class _ProbeLocator:
     def is_visible(self):
         return False
     def evaluate_all(self, script, *args):
+        if self.selector == _PANEL_SEL:
+            return self.page._panels()
         return self.page._controls()
     def click(self, **kwargs):
         self.page._do_click()
@@ -229,8 +231,10 @@ class _ProbeLocator:
 
 
 class _ProbePage:
-    def __init__(self, before, after, navigate_to=None):
+    def __init__(self, before, after, navigate_to=None, panels_before=None, panels_after=None):
         self._before, self._after, self._navigate_to = before, after, navigate_to
+        self._panels_before = panels_before or []
+        self._panels_after = panels_after or []
         self._url = "https://site.test/map"
         self._clicked = False
     def goto(self, url, **kwargs):
@@ -246,11 +250,13 @@ class _ProbePage:
     def url(self):
         return self._url
     def locator(self, selector):
-        return _ProbeLocator(self)
+        return _ProbeLocator(self, selector)
     def get_by_role(self, *a, **k):
-        return _ProbeLocator(self)
+        return _ProbeLocator(self, "role")
     def _controls(self):
         return self._after if self._clicked else self._before
+    def _panels(self):
+        return self._panels_after if self._clicked else self._panels_before
     def _do_click(self):
         self._clicked = True
         if self._navigate_to:
@@ -280,9 +286,24 @@ def test_probe_skips_form_and_destructive_triggers():
         {"tag": "button", "name": "Delete account", "region": "content"},
         {"tag": "button", "name": "Search", "region": "content", "in_form": True},
         {"tag": "a", "name": "Some link", "region": "content"},
+        {"tag": "input", "type": "submit", "name": "Send", "region": "content"},
     ]
     page = _ProbePage(triggers, triggers + [{"tag": "div", "name": "new", "region": "content"}])
     assert _probe_interactions(page, "https://site.test/map", triggers, limit=5) == []
+
+def test_probe_clicks_input_type_button_and_reads_panel():
+    trigger = {"tag": "input", "type": "button", "name": "Next", "region": "content", "in_form": True}
+    panel = {"tag": "fieldset", "role": None, "name": "Manual search", "selector": None,
+             "region": "content", "text": "Manual search for Aljazeera frequencies"}
+    page = _ProbePage([trigger], [trigger], panels_before=[], panels_after=[panel])
+    out = _probe_interactions(page, "https://site.test/tune", [trigger], limit=5)
+    assert out == [{"trigger": "Next", "effect": "reveals", "controls": [panel]}]
+
+def test_is_probe_trigger_accepts_role_button_rejects_submit():
+    assert _is_probe_trigger({"tag": "input", "type": "button", "name": "Go", "region": "content"})
+    assert _is_probe_trigger({"tag": "span", "role": "button", "name": "Toggle", "region": "content"})
+    assert not _is_probe_trigger({"tag": "input", "type": "submit", "name": "Go", "region": "content"})
+    assert not _is_probe_trigger({"tag": "button", "name": "Go", "region": "chrome"})
 
 def test_compact_revealed_renders_trigger_and_controls():
     revealed = [
@@ -294,6 +315,72 @@ def test_compact_revealed_renders_trigger_and_controls():
     assert 'click "Show frequencies" -> reveals:' in out
     assert "#freq-list" in out
     assert 'click "Open map" -> navigates to /map/full' in out
+
+def test_rejects_name_defined_in_sibling_test():
+    src = (
+        'def test_a(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    field = page.get_by_label("Name")\n'
+        '    observation_evidence(page, "n", lambda: expect(field).to_be_visible(), evidence_dir)\n'
+        'def test_b(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    observation_evidence(page, "n", lambda: expect(field).to_have_value("x"), evidence_dir)\n'
+    )
+    with pytest.raises(SpecError, match="never defined"):
+        validate_python_spec(src, 'https://example.test')
+
+def test_accepts_locator_defined_in_same_test():
+    src = (
+        'def test_a(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    field = page.get_by_label("Name")\n'
+        '    observation_evidence(page, "n", lambda: expect(field).to_have_value("x"), evidence_dir)\n'
+    )
+    validate_python_spec(src, 'https://example.test')
+
+def test_rejects_ambiguous_role_name_without_first():
+    inv = PageInventory('https://example.test', 'T', controls=[
+        {'name': 'Next', 'tag': 'button', 'ambiguous': True},
+    ])
+    src = (
+        'def test_next(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    button = page.get_by_role("button", name="Next", exact=True)\n'
+        '    observation_evidence(page, "n", lambda: expect(button).to_be_visible(), evidence_dir)\n'
+    )
+    with pytest.raises(SpecError, match="AMBIGUOUS"):
+        validate_python_spec(src, 'https://example.test', inv)
+
+def test_rejects_unscoped_name_attr_locator_without_inventory():
+    src = (
+        'def test_next(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    button = page.locator(\'input[name="next"]\')\n'
+        '    observation_evidence(page, "n", lambda: expect(button).to_be_visible(), evidence_dir)\n'
+    )
+    with pytest.raises(SpecError, match="rarely unique"):
+        validate_python_spec(src, 'https://example.test')
+
+def test_accepts_name_attr_locator_with_first():
+    src = (
+        'def test_next(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    button = page.locator(\'input[name="next"]\').first\n'
+        '    observation_evidence(page, "n", lambda: expect(button).to_be_visible(), evidence_dir)\n'
+    )
+    validate_python_spec(src, 'https://example.test')
+
+def test_accepts_ambiguous_role_name_with_first_on_line():
+    inv = PageInventory('https://example.test', 'T', controls=[
+        {'name': 'Next', 'tag': 'button', 'ambiguous': True},
+    ])
+    src = (
+        'def test_next(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    button = page.get_by_role("button", name="Next", exact=True).first\n'
+        '    observation_evidence(page, "n", lambda: expect(button).to_be_visible(), evidence_dir)\n'
+    )
+    validate_python_spec(src, 'https://example.test', inv)
 
 def test_validator_accepts_locator_from_revealed_inventory():
     inv = PageInventory('https://example.test', 'T',

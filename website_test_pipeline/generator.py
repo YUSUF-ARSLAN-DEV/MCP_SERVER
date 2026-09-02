@@ -60,6 +60,11 @@ LOCATOR_RULES = (
     "has no role; locate a media player by an id/selector or a nearby button you actually observed.\n"
     "A control tagged VOLATILE-ID has an auto-generated id/name that changes on every page load - NEVER use #id "
     "or [name=...] for it; locate it with get_by_role / get_by_placeholder / get_by_label.\n"
+    "A control tagged AMBIGUOUS (or any [name=...] / role+name that the CONTROLS list shows more than once, e.g. a "
+    "wizard with several 'Next' buttons) MUST have .first (or .nth(i)) ON THE SAME LINE as the locator call, or "
+    "Playwright raises a strict-mode violation.\n"
+    "Define every locator variable INSIDE the test function that uses it. Tests never share variables - a name bound "
+    "in one test is not visible in another.\n"
     "A heading tagged HIDDEN exists only for screen readers - assert expect(h).to_have_count(1), never to_be_visible().\n"
     "Before asserting a footer / newsletter / any below-the-fold element, first call "
     "locator.scroll_into_view_if_needed() as a plain statement (not inside a lambda)."
@@ -159,7 +164,11 @@ def _compact_revealed(revealed: list[dict], limit: int = 8) -> str:
             continue
         lines.append(f'click "{trigger}" -> reveals:')
         for control in controls[:8]:
-            lines.append("    " + _control_line(control))
+            line = "    " + _control_line(control)
+            preview = (control.get("text") or "").strip()
+            if preview and preview[:40] not in line:
+                line += f' text="{preview[:80]}"'
+            lines.append(line)
     return "\n".join(lines)
 
 def _compact_headings(headings: list[dict]) -> str:

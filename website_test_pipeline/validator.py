@@ -113,6 +113,118 @@ def _empty_verify(tree: ast.AST) -> str | None:
                     "it must call expect(...) on something")
     return None
 
+# Names always in scope in a generated spec (skeleton imports + pytest fixtures).
+_RUNTIME_NAMES = {
+    "page", "expect", "re", "Path", "Page", "pytest", "URL", "_open",
+    "action_evidence", "observation_evidence", "open_page", "evidence_dir",
+}
+
+def _module_bindings(tree: ast.AST) -> set[str]:
+    bound: set[str] = set()
+    for node in getattr(tree, "body", []):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bound.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name):
+                        bound.add(name.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bound.add(node.name)
+    return bound
+
+def _undefined_names(tree: ast.AST) -> str | None:
+    """Catch a test that reads a name (usually a locator) it never binds - e.g.
+    a variable assigned in a sibling test. Python would raise NameError at run."""
+    import builtins
+    module_scope = _RUNTIME_NAMES | set(dir(builtins)) | _module_bindings(tree)
+    for func in ast.walk(tree):
+        if not (isinstance(func, ast.FunctionDef) and func.name.startswith("test_")):
+            continue
+        bound = set(module_scope)
+        args = func.args
+        for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+            bound.add(arg.arg)
+        if args.vararg:
+            bound.add(args.vararg.arg)
+        if args.kwarg:
+            bound.add(args.kwarg.arg)
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                bound.add(node.id)
+            elif isinstance(node, ast.arg):
+                bound.add(node.arg)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+            elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                bound.update(node.names)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                bound.add(node.name)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    bound.add((alias.asname or alias.name).split(".")[0])
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id not in bound:
+                return (f"{func.name}() uses name {node.id!r} which is never defined - "
+                        "define every locator inside the test that uses it (tests do not share variables)")
+    return None
+
+_FIRST_RE = re.compile(r"\.(?:first|last)\b|\.nth\(")
+_REPEATED_ATTR_SEL = re.compile(r"^[a-z]*\[\s*(?:name|type|value)\s*[*^$|~]?=", re.I)
+
+def _unscoped_attr_locator(tree: ast.AST, source: str) -> str | None:
+    """A page.locator('input[name=...]') with no #id and no .first is a
+    strict-mode violation waiting to happen - [name]/[type] repeat across radio
+    groups, wizard steps and duplicated forms."""
+    lines = source.splitlines()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "locator" and node.args
+                and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            continue
+        literal = node.args[0].value.strip()
+        if "#" in literal or "data-testid" in literal or "data-test-id" in literal:
+            continue
+        if not _REPEATED_ATTR_SEL.match(literal):
+            continue
+        span = "\n".join(lines[(node.lineno - 1):(node.end_lineno or node.lineno) + 1])
+        if not _FIRST_RE.search(span):
+            return (f"page.locator({literal!r}) selects on a [name]/[type] attribute that is rarely unique "
+                    "(radio groups, wizard steps, repeated forms) and has no .first / .nth() - append .first, "
+                    "or use an #id / get_by_role locator")
+    return None
+
+def _ambiguous_without_first(tree: ast.AST, source: str, inventory) -> str | None:
+    ambiguous: set[str] = set()
+    for control in getattr(inventory, "controls", None) or []:
+        if control.get("ambiguous"):
+            for key in ("selector", "id", "field_name", "name"):
+                if control.get(key):
+                    ambiguous.add(_norm(str(control[key])))
+    if not ambiguous:
+        return None
+    lines = source.splitlines()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if node.func.attr not in {"locator", "get_by_role"}:
+            continue
+        segment = ast.get_source_segment(source, node) or ""
+        targets: list[str] = []
+        for match in _ID_FRAGMENT.finditer(segment):
+            targets.append(match.group(1) or match.group(2))
+        for match in re.finditer(r"name\s*=\s*(['\"])([^'\"]+)\1", segment):
+            targets.append(match.group(2))
+        if not any(_norm(t) in ambiguous for t in targets if t):
+            continue
+        span = "\n".join(lines[(node.lineno - 1):(node.end_lineno or node.lineno) + 1])
+        if not _FIRST_RE.search(span):
+            return (f"locator {segment!r} targets a control the inventory marks AMBIGUOUS "
+                    "(same name/selector on several elements) but has no .first / .nth() on its "
+                    "line - Playwright raises a strict-mode violation; append .first")
+    return None
+
 def _locator_misuse(tree: ast.AST) -> str | None:
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
@@ -163,7 +275,16 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     empty = _empty_verify(tree)
     if empty:
         raise SpecError(empty)
+    undefined = _undefined_names(tree)
+    if undefined:
+        raise SpecError(undefined)
+    unscoped = _unscoped_attr_locator(tree, source)
+    if unscoped:
+        raise SpecError(unscoped)
     if inventory is not None:
+        ambiguous = _ambiguous_without_first(tree, source, inventory)
+        if ambiguous:
+            raise SpecError(ambiguous)
         tokens = _allowed_tokens(inventory)
         unknown: list[str] = []
         for literal in _css_locators(source):

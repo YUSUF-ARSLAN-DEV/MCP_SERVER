@@ -206,6 +206,13 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
 - Every test name must identify the page-specific target: the exact heading,
   link, field, picker, button, or resulting state observed on this page.
 - Keep tests independent and self-contained — each test does its own setup.
+- **Define every locator variable inside the test that uses it.** A name bound in
+  one test is invisible in another — the spec is rejected for using an undefined
+  name (Python would raise `NameError`).
+- **`.first` goes on the locator line.** For an `AMBIGUOUS` control, or any
+  `[name=...]` / role+name the CONTROLS list shows more than once (a wizard with
+  several "Next" buttons, a nav rendered twice), put `.first` (or `.nth(i)`) on
+  the same line as the `page.locator(...)` / `get_by_role(...)` call.
 - Use one consistent verb per concept: `test_<thing>_present`, not a mix of
   `_visible` / `_exists` / `_present` for the same kind of check.
 

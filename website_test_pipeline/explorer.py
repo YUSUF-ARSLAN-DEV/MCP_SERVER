@@ -8,6 +8,11 @@ from .pageutils import (
 )
 
 _CONTROL_SEL = 'a,button,input,select,textarea,video,audio,[role]'
+_PANEL_SEL = (
+    '[role="dialog"],[role="region"],[role="tabpanel"],[role="listbox"],[role="menu"],'
+    '[role="grid"],[role="table"],[role="tree"],[role="alert"],[role="status"],'
+    '[aria-modal="true"],dialog,table,fieldset'
+)
 
 # Statements injected at the top of each scrape's arrow-function body.
 _JS_HELPERS = r"""
@@ -82,6 +87,28 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
     });
 }"""
 
+_PANELS_JS = "els => {" + _JS_HELPERS + r"""
+    return els.filter(e => {
+        const s = getComputedStyle(e);
+        const r = e.getBoundingClientRect();
+        return s.display !== 'none' && s.visibility !== 'hidden'
+            && parseFloat(s.opacity) !== 0 && r.width > 1 && r.height > 1;
+    }).slice(0, 40).map(e => {
+        const h = e.querySelector('h1,h2,h3,h4,h5,h6,[role="heading"],legend,caption');
+        const name = e.getAttribute('aria-label')
+            || (h && (h.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80))
+            || (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+        return {
+            tag: e.tagName.toLowerCase(),
+            role: e.getAttribute('role') || null,
+            name: name,
+            selector: e.id ? `#${e.id}` : null,
+            region: regionOf(e),
+            text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 160)
+        };
+    });
+}"""
+
 _FORMS_JS = r"""els => els.map(f => ({
     selector: f.id ? `#${f.id}` : (f.getAttribute('name') ? `form[name="${f.getAttribute('name')}"]` : null),
     action: f.getAttribute('action'),
@@ -109,6 +136,36 @@ def _control_key(control: dict) -> tuple:
     )
 
 
+def _panel_key(panel: dict) -> tuple:
+    return (
+        panel.get("tag"),
+        panel.get("role"),
+        (panel.get("name") or "").strip().lower()[:40],
+        panel.get("selector") or "",
+    )
+
+
+def _is_probe_trigger(control: dict) -> bool:
+    """Buttons the probe may safely click: <button>, <input type=button>, and
+    [role=button] in the content region - excluding submit/reset and anything
+    that reads as destructive or as a checkout / auth step."""
+    if control.get("disabled") or control.get("region") != "content":
+        return False
+    name = (control.get("name") or "").strip()
+    if not name or name.lower() in _PROBE_SKIP_NAMES:
+        return False
+    if any(s in name.lower() for s in _PROBE_SKIP_SUBSTR):
+        return False
+    tag = control.get("tag")
+    typ = (control.get("type") or "").lower()
+    role = (control.get("role") or "").lower()
+    if tag == "input" and typ in {"submit", "reset"}:
+        return False
+    if tag == "button" and typ != "button" and control.get("in_form"):
+        return False  # a bare <button> in a form defaults to type=submit
+    return tag == "button" or (tag == "input" and typ == "button") or role == "button"
+
+
 def _locator_for(page, control: dict):
     selector = control.get("selector")
     if selector:
@@ -123,27 +180,21 @@ def _locator_for(page, control: dict):
         return None
 
 
-def _probe_interactions(page, url: str, baseline: list[dict], limit: int) -> list[dict]:
+def _probe_interactions(page, url: str, baseline: list[dict], limit: int, log=None) -> list[dict]:
     """Click up to ``limit`` [content] triggers and record what each surfaces.
 
     Reloads the page before every probe so each result is isolated. A trigger
     that navigates is recorded as ``navigates``; one that mounts new in-page
-    controls is recorded as ``reveals`` with those controls, giving the generator
+    controls or panels is recorded as ``reveals`` with them, giving the generator
     a real postcondition to assert instead of a bare visibility check.
     """
     if limit <= 0:
         return []
-    known: set[tuple] = {_control_key(c) for c in baseline}
-    triggers = [
-        c for c in baseline
-        if c.get("region") == "content"
-        and c.get("tag") == "button"
-        and not c.get("disabled")
-        and not c.get("in_form")
-        and (c.get("name") or "").strip()
-        and (c.get("name") or "").strip().lower() not in _PROBE_SKIP_NAMES
-        and not any(s in (c.get("name") or "").lower() for s in _PROBE_SKIP_SUBSTR)
-    ]
+    known_ctl: set[tuple] = {_control_key(c) for c in baseline}
+    known_panel: set[tuple] = set()
+    triggers = [c for c in baseline if _is_probe_trigger(c)]
+    if log:
+        log.info("probe: %d candidate trigger(s) on %s", min(len(triggers), limit), url)
     revealed: list[dict] = []
     for trigger in triggers[:limit]:
         name = (trigger.get("name") or "").strip()
@@ -151,42 +202,65 @@ def _probe_interactions(page, url: str, baseline: list[dict], limit: int) -> lis
             page.goto(url, wait_until="domcontentloaded")
             settle_page(page)
             dismiss_overlays(page)
-        except Exception:
+        except Exception as exc:
+            if log:
+                log.info('probe: "%s" -> reload failed (%s)', name, exc)
             break
         try:
-            pre = page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)
+            pre_ctl = page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)
+            pre_pan = page.locator(_PANEL_SEL).evaluate_all(_PANELS_JS)
         except Exception:
-            pre = []
-        pre_keys = known | {_control_key(c) for c in pre}
+            pre_ctl, pre_pan = [], []
+        pre_ctl_keys = known_ctl | {_control_key(c) for c in pre_ctl}
+        pre_pan_keys = known_panel | {_panel_key(p) for p in pre_pan}
         locator = _locator_for(page, trigger)
         if locator is None:
+            if log:
+                log.info('probe: "%s" -> no usable locator', name)
             continue
         before_url = page.url
         try:
             locator.click(timeout=2500)
-            page.wait_for_timeout(700)
-        except Exception:
+            page.wait_for_timeout(800)
+        except Exception as exc:
+            if log:
+                log.info('probe: "%s" -> click failed (%s)', name, str(exc).splitlines()[0][:120])
             continue
         if page.url != before_url:
             revealed.append({"trigger": name, "effect": "navigates", "to": page.url})
+            if log:
+                log.info('probe: "%s" -> navigates to %s', name, page.url)
             continue
         try:
-            after = page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)
+            post_ctl = page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)
+            post_pan = page.locator(_PANEL_SEL).evaluate_all(_PANELS_JS)
         except Exception:
-            after = []
-        fresh = [
-            c for c in after
-            if _control_key(c) not in pre_keys
+            post_ctl, post_pan = [], []
+        fresh_ctl = [
+            c for c in post_ctl
+            if _control_key(c) not in pre_ctl_keys
             and c.get("region") in {"content", "other"}
             and (c.get("name") or c.get("selector") or c.get("id"))
         ][:12]
-        if fresh:
-            revealed.append({"trigger": name, "effect": "reveals", "controls": fresh})
-            known |= {_control_key(c) for c in fresh}
+        fresh_pan = [
+            p for p in post_pan
+            if _panel_key(p) not in pre_pan_keys
+            and p.get("region") in {"content", "other"}
+            and (p.get("name") or "").strip()
+        ][:6]
+        combined = fresh_ctl + fresh_pan
+        if combined:
+            revealed.append({"trigger": name, "effect": "reveals", "controls": combined})
+            known_ctl |= {_control_key(c) for c in fresh_ctl}
+            known_panel |= {_panel_key(p) for p in fresh_pan}
+            if log:
+                log.info('probe: "%s" -> reveals %d element(s)', name, len(combined))
+        elif log:
+            log.info('probe: "%s" -> no visible change', name)
     return revealed
 
 
-def explore(page, url: str, probe_max: int = 5) -> PageInventory:
+def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     settle_page(page)
     dismiss_overlays(page)  # snapshot the real page, not consent / ad overlays
     prime_lazy_content(page)  # mount lazy footers / newsletter widgets before scraping
@@ -214,5 +288,5 @@ def explore(page, url: str, probe_max: int = 5) -> PageInventory:
     )[:9000]
     # Interaction probe last: it navigates away and reloads, so it must run after
     # every static scrape above is done.
-    revealed = _probe_interactions(page, url, controls, probe_max)
+    revealed = _probe_interactions(page, url, controls, probe_max, log)
     return PageInventory(url, title, headings, controls, signals, forms, revealed)

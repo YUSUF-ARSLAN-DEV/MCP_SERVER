@@ -58,7 +58,7 @@ def main() -> int:
         for url in urls:
             log.info('Processing %s', url)
             try:
-                context = browser.new_context(); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max)
+                context = browser.new_context(); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max, log)
                 (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
                 if args.command == 'generate':
                     output = settings.tests_dir/f'{name(url)}_test.py'; generate_spec(client, guide, persona, inventory, output); manifest['urls'][url] = {'status':'generated','spec':str(output)}
