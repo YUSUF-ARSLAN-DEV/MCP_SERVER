@@ -173,10 +173,17 @@ def _undefined_names(tree: ast.AST) -> str | None:
 _FIRST_RE = re.compile(r"\.(?:first|last)\b|\.nth\(")
 _REPEATED_ATTR_SEL = re.compile(r"^[a-z]*\[\s*(?:name|type|value)\s*[*^$|~]?=", re.I)
 
-def _unscoped_attr_locator(tree: ast.AST, source: str) -> str | None:
+def _unscoped_attr_locator(tree: ast.AST, source: str, inventory=None) -> str | None:
     """A page.locator('input[name=...]') with no #id and no .first is a
     strict-mode violation waiting to happen - [name]/[type] repeat across radio
-    groups, wizard steps and duplicated forms."""
+    groups, wizard steps and duplicated forms.
+
+    When an inventory is available, a [name] that maps to exactly one, non-
+    AMBIGUOUS control is fine as-is - the AMBIGUOUS ones are caught by
+    _ambiguous_without_first. This standalone conservative check is for the
+    inventory-less path."""
+    if inventory is not None:
+        return None
     lines = source.splitlines()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
@@ -303,7 +310,7 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     undefined = _undefined_names(tree)
     if undefined:
         raise SpecError(undefined)
-    unscoped = _unscoped_attr_locator(tree, source)
+    unscoped = _unscoped_attr_locator(tree, source, inventory)
     if unscoped:
         raise SpecError(unscoped)
     evidence_misuse = _evidence_misuse(tree)

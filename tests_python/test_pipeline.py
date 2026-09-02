@@ -371,6 +371,29 @@ def test_accepts_name_attr_locator_with_first():
     )
     validate_python_spec(src, 'https://example.test')
 
+def test_name_attr_locator_ok_when_inventory_has_single_control():
+    inv = PageInventory('https://example.test', 'T',
+                        controls=[{'field_name': 'password', 'name': 'Password'}])
+    src = (
+        'def test_pw(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    field = page.locator(\'input[name="password"]\')\n'
+        '    observation_evidence(page, "p", lambda: expect(field).to_be_visible(), evidence_dir)\n'
+    )
+    validate_python_spec(src, 'https://example.test', inv)
+
+def test_name_attr_locator_rejected_when_inventory_marks_ambiguous():
+    inv = PageInventory('https://example.test', 'T',
+                        controls=[{'field_name': 'next', 'name': 'Next', 'ambiguous': True}])
+    src = (
+        'def test_next(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    button = page.locator(\'input[name="next"]\')\n'
+        '    observation_evidence(page, "n", lambda: expect(button).to_be_visible(), evidence_dir)\n'
+    )
+    with pytest.raises(SpecError, match="AMBIGUOUS"):
+        validate_python_spec(src, 'https://example.test', inv)
+
 def test_accepts_ambiguous_role_name_with_first_on_line():
     inv = PageInventory('https://example.test', 'T', controls=[
         {'name': 'Next', 'tag': 'button', 'ambiguous': True},
