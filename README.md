@@ -61,17 +61,29 @@ pytest tests_python -q                          # unit tests for the pipeline it
 | `SEED_URL` | *(empty)* | Entry point for `crawl`; required by that command |
 | `CRAWL_MAX_DEPTH` | `3` | BFS depth from the seed (`0` = seed only) |
 | `CRAWL_MAX_PAGES` | `100` | Hard cap on discovered URLs |
+| `EXTRA_URLS` | *(empty)* | Comma/space-separated same-origin URLs merged into `crawl` output (deep links the BFS can't reach with real params) |
+| `EXPLORE_PROBE_MAX` | `5` | `explore` clicks up to N `[content]` triggers per page and records what each surfaced (`0` disables) |
 | `URLS_FILE` | `urls.txt` | Path to the URL list (`crawl` overwrites it) |
+
+`crawl` also drops URLs whose path holds an unsubstituted placeholder
+(`/-1/`, `/null`, `/undefined`, `/{id}`, `/:slug`, …) — they render empty shells
+and only ever produce shallow visibility tests. Put the real deep links in
+`EXTRA_URLS` or a `seeds.txt` file in the workspace (`runs/<site>/seeds.txt`);
+both are canonicalized, same-origin-filtered, and folded into `urls.txt`.
 
 ## How the pipeline works
 
 0. **`crawl`** (`crawler.py`) — optional. Breadth-first walk from `SEED_URL`,
    following only same-origin `<a href>` links, canonicalized and deduplicated,
-   bounded by `CRAWL_MAX_DEPTH` / `CRAWL_MAX_PAGES`. Overwrites `urls.txt` with
+   bounded by `CRAWL_MAX_DEPTH` / `CRAWL_MAX_PAGES`, with placeholder URLs
+   dropped and `EXTRA_URLS` / `seeds.txt` merged in. Overwrites `urls.txt` with
    the result. Skip it and maintain `urls.txt` by hand if you prefer. No AI.
 1. **`explore`** (`explorer.py`) — loads each page in Chromium and records a
    compact `PageInventory`: title, visible headings, up to 120 interactive
-   controls, and a filtered ARIA snapshot. No AI.
+   controls, and a filtered ARIA snapshot. Then it runs an interaction probe:
+   it clicks up to `EXPLORE_PROBE_MAX` `[content]` buttons and records what each
+   one revealed (new in-page controls) or where it navigated, so `generate` has
+   a real postcondition to assert instead of a bare visibility check. No AI.
 2. **`generate`** (`generator.py` + `llm.py`) — builds a prompt from
    `AI-TEST-GUIDE.md` + `persona.txt` + the page inventory, calls the model,
    and extracts a single Python code block.

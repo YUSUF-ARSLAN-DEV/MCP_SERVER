@@ -10,6 +10,9 @@ class PageInventory:
     controls: list[dict[str, Any]] = field(default_factory=list)
     accessibility: str = ""
     forms: list[dict[str, Any]] = field(default_factory=list)
+    # what clicking a [content] trigger surfaced during the explore probe:
+    # [{"trigger": str, "effect": "reveals"|"navigates", "controls": [...], "to": str}]
+    revealed: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

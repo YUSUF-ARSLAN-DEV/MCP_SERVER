@@ -1,7 +1,7 @@
 from __future__ import annotations
 from collections import deque
 from urllib.parse import urljoin, urlsplit
-from .urls import canonicalize
+from .urls import canonicalize, is_degenerate
 
 
 def _same_origin(a: str, b: str) -> bool:
@@ -44,6 +44,10 @@ def crawl(page, seed: str, max_depth: int, max_pages: int, log=None, nav_timeout
             if candidate in seen or not _same_origin(start, candidate):
                 continue
             seen.add(candidate)
+            if is_degenerate(candidate):
+                if log:
+                    log.info("crawl: dropped placeholder URL %s", candidate)
+                continue
             discovered.append(candidate)
             queue.append((candidate, depth + 1))
             if len(discovered) >= max_pages:

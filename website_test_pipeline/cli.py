@@ -8,7 +8,7 @@ from .crawler import crawl
 from .explorer import explore
 from .generator import generate_spec
 from .llm import ModelClient, diagnose_error
-from .urls import read_urls
+from .urls import merge_extra_urls, read_urls
 
 def name(url: str) -> str: return re.sub(r'[^a-z0-9]+', '-', url.lower()).strip('-')[:100]
 
@@ -32,6 +32,7 @@ def main() -> int:
                 discovered = crawl(page, settings.seed_url, settings.crawl_max_depth, settings.crawl_max_pages, log, settings.navigation_timeout_ms)
             finally:
                 browser.close()
+        discovered = merge_extra_urls(discovered, settings.seed_url, settings.seeds_file, log)
         settings.urls_file.write_text('\n'.join(discovered) + '\n', encoding='utf-8')
         log.info('CRAWL SUMMARY seed=%s discovered=%s file=%s', settings.seed_url, len(discovered), settings.urls_file)
         return 0
@@ -57,7 +58,7 @@ def main() -> int:
         for url in urls:
             log.info('Processing %s', url)
             try:
-                context = browser.new_context(); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url)
+                context = browser.new_context(); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max)
                 (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
                 if args.command == 'generate':
                     output = settings.tests_dir/f'{name(url)}_test.py'; generate_spec(client, guide, persona, inventory, output); manifest['urls'][url] = {'status':'generated','spec':str(output)}

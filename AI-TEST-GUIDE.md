@@ -7,7 +7,9 @@ rule here exists because ignoring it caused real failures.
 ## Task
 
 1. You are given ONE page: its URL, title, observed inventory (headings and
-   interactive controls), and a filtered accessibility snapshot.
+   interactive controls), a filtered accessibility snapshot, and a
+   **REVEALED BY INTERACTION** block listing what the explorer saw appear when it
+   clicked specific `[content]` triggers.
 2. Produce ONE `pytest` module for that page — a set of independent smoke tests
    derived only from what was actually observed.
 3. Return **exactly one complete Python code block** (```python … ```), no prose,
@@ -42,6 +44,13 @@ Each CONTROL and HEADING line is prefixed with tags:
   tests.** A short page-specific file beats a long one padded with chrome checks.
 - **At least half your tests must DO something** (click / fill / select / press)
   and assert the result — not just `expect(x).to_be_visible()`.
+- **Use the REVEALED BY INTERACTION block.** For every `click "<trigger>" ->
+  reveals:` entry, write a test that clicks that trigger via `action_evidence`
+  and asserts one of the listed revealed controls became visible. For a
+  `click "<trigger>" -> navigates to <path>` entry, click via `action_evidence`
+  and assert `expect(page).to_have_url(re.compile(r"<path>"))`. These count as
+  behavioural tests; the trigger names and revealed selectors are already in the
+  observed inventory, so they pass the selector check.
 
 ## Output contract (the pipeline rejects the spec if any of these fail)
 

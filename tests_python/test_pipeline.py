@@ -3,7 +3,7 @@ from pathlib import Path
 from website_test_pipeline.generator import extract_code
 from website_test_pipeline.validator import validate_python_spec, SpecError
 from website_test_pipeline.models import PageInventory
-from website_test_pipeline.urls import canonicalize
+from website_test_pipeline.urls import canonicalize, is_degenerate, merge_extra_urls
 from website_test_pipeline.crawler import crawl
 
 def test_extracts_python_code_block():
@@ -160,3 +160,148 @@ def test_crawl_depth_zero_visits_only_seed():
     page = _FakePage({'https://site.test/a': ['https://site.test/b']})
     found = crawl(page, 'https://site.test/a', max_depth=0, max_pages=10)
     assert found == ['https://site.test/a']
+
+
+# --------------------------------------------------------------- degenerate URLs
+
+@pytest.mark.parametrize("url", [
+    "https://sat.aljazeera.net/en/map-search-results/-1/null",
+    "https://site.test/user/undefined",
+    "https://site.test/p/NaN/detail",
+    "https://site.test/item/{id}",
+    "https://site.test/x/:slug",
+])
+def test_is_degenerate_flags_placeholders(url):
+    assert is_degenerate(url)
+
+@pytest.mark.parametrize("url", [
+    "https://site.test/en/map",
+    "https://site.test/covid-19/latest",
+    "https://site.test/article/12345",
+    "https://site.test/",
+])
+def test_is_degenerate_passes_real_urls(url):
+    assert not is_degenerate(url)
+
+def test_crawl_drops_degenerate_urls():
+    page = _FakePage({'https://site.test/a': [
+        'https://site.test/good',
+        'https://site.test/map-results/-1/null',
+        'https://site.test/user/undefined',
+    ]})
+    found = crawl(page, 'https://site.test/a', max_depth=2, max_pages=10)
+    assert found == ['https://site.test/a', 'https://site.test/good']
+
+def test_merge_extra_urls_adds_same_origin_and_skips_junk(monkeypatch, tmp_path):
+    monkeypatch.setenv("EXTRA_URLS", "https://site.test/deep/1/2 , https://evil.test/x")
+    seeds = tmp_path / "seeds.txt"
+    seeds.write_text("# operator seeds\nhttps://site.test/wizard/step-2\nhttps://site.test/bad/null\n", encoding="utf-8")
+    merged = merge_extra_urls(['https://site.test/a'], 'https://site.test/', seeds)
+    assert merged == [
+        'https://site.test/a',
+        'https://site.test/deep/1/2',
+        'https://site.test/wizard/step-2',
+    ]
+
+
+# ---------------------------------------------------------- explore interaction probe
+
+from website_test_pipeline.explorer import _probe_interactions
+from website_test_pipeline.generator import _compact_revealed
+
+
+class _ProbeLocator:
+    def __init__(self, page):
+        self.page = page
+    @property
+    def first(self):
+        return self
+    def count(self):
+        return 0
+    def is_visible(self):
+        return False
+    def evaluate_all(self, script, *args):
+        return self.page._controls()
+    def click(self, **kwargs):
+        self.page._do_click()
+    def wait_for(self, **kwargs):
+        pass
+
+
+class _ProbePage:
+    def __init__(self, before, after, navigate_to=None):
+        self._before, self._after, self._navigate_to = before, after, navigate_to
+        self._url = "https://site.test/map"
+        self._clicked = False
+    def goto(self, url, **kwargs):
+        self._url = url
+        self._clicked = False
+    def set_default_navigation_timeout(self, ms):
+        pass
+    def wait_for_load_state(self, *a, **k):
+        pass
+    def wait_for_timeout(self, *a, **k):
+        pass
+    @property
+    def url(self):
+        return self._url
+    def locator(self, selector):
+        return _ProbeLocator(self)
+    def get_by_role(self, *a, **k):
+        return _ProbeLocator(self)
+    def _controls(self):
+        return self._after if self._clicked else self._before
+    def _do_click(self):
+        self._clicked = True
+        if self._navigate_to:
+            self._url = self._navigate_to
+
+
+_TRIGGER = {"tag": "button", "name": "Show frequencies", "selector": "#show-freq", "region": "content"}
+
+def test_probe_records_revealed_controls():
+    revealed_ctrl = {"tag": "div", "role": "list", "name": "Frequency results",
+                     "selector": "#freq-list", "region": "content"}
+    page = _ProbePage([_TRIGGER], [_TRIGGER, revealed_ctrl])
+    out = _probe_interactions(page, "https://site.test/map", [_TRIGGER], limit=5)
+    assert out == [{"trigger": "Show frequencies", "effect": "reveals", "controls": [revealed_ctrl]}]
+
+def test_probe_records_navigation():
+    page = _ProbePage([_TRIGGER], [_TRIGGER], navigate_to="https://site.test/map/detail")
+    out = _probe_interactions(page, "https://site.test/map", [_TRIGGER], limit=5)
+    assert out == [{"trigger": "Show frequencies", "effect": "navigates", "to": "https://site.test/map/detail"}]
+
+def test_probe_disabled_by_zero_limit():
+    page = _ProbePage([_TRIGGER], [_TRIGGER, {"tag": "div", "name": "x", "region": "content"}])
+    assert _probe_interactions(page, "https://site.test/map", [_TRIGGER], limit=0) == []
+
+def test_probe_skips_form_and_destructive_triggers():
+    triggers = [
+        {"tag": "button", "name": "Delete account", "region": "content"},
+        {"tag": "button", "name": "Search", "region": "content", "in_form": True},
+        {"tag": "a", "name": "Some link", "region": "content"},
+    ]
+    page = _ProbePage(triggers, triggers + [{"tag": "div", "name": "new", "region": "content"}])
+    assert _probe_interactions(page, "https://site.test/map", triggers, limit=5) == []
+
+def test_compact_revealed_renders_trigger_and_controls():
+    revealed = [
+        {"trigger": "Show frequencies", "effect": "reveals",
+         "controls": [{"tag": "div", "name": "Frequency results", "selector": "#freq-list", "region": "content"}]},
+        {"trigger": "Open map", "effect": "navigates", "to": "https://site.test/map/full?x=1"},
+    ]
+    out = _compact_revealed(revealed)
+    assert 'click "Show frequencies" -> reveals:' in out
+    assert "#freq-list" in out
+    assert 'click "Open map" -> navigates to /map/full' in out
+
+def test_validator_accepts_locator_from_revealed_inventory():
+    inv = PageInventory('https://example.test', 'T',
+                        controls=[{'selector': '#trigger', 'name': 'Reveal'}],
+                        revealed=[{"trigger": "Reveal", "effect": "reveals",
+                                   "controls": [{"selector": "#panel", "name": "Result panel"}]}])
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    panel = page.locator("#panel")\n'
+           '    observation_evidence(page, "panel", lambda: expect(panel).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test', inv)

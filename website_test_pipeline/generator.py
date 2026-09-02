@@ -37,7 +37,11 @@ COVERAGE_RULES = (
     "- If the page exposes only one or two [content] controls, write only one or two tests. A short, page-specific "
     "file beats a long file padded with repeated chrome checks.\n"
     "- At least half of your tests must DO something (click / fill / select / press) and assert the result. A file "
-    "of pure expect(...).to_be_visible() checks has little value."
+    "of pure expect(...).to_be_visible() checks has little value.\n"
+    "- When REVEALED BY INTERACTION lists elements for a trigger, PREFER a test that clicks that trigger through "
+    "action_evidence(...) and asserts one of the revealed elements is visible (or, for 'navigates', asserts a path "
+    "regex with expect(page).to_have_url(re.compile(...))). That is a real behavioural test - write it instead of a "
+    "bare visibility check on the trigger."
 )
 
 LOCATOR_RULES = (
@@ -110,7 +114,7 @@ def _control_line(control: dict) -> str:
 def _href_prefix(href: str) -> str:
     return "/".join(href.split("/")[:4]) if href.startswith("/") and href.count("/") >= 3 else ""
 
-def _compact_controls(controls: list[dict], content_budget: int = 55, chrome_budget: int = 18) -> str:
+def _compact_controls(controls: list[dict], content_budget: int = 75, chrome_budget: int = 16) -> str:
     # content-region first (survives the cap); collapse feed-style link runs; keep a little chrome.
     rank = {"content": 0, "other": 1, "chrome": 2}
     ordered = sorted(controls, key=lambda c: rank.get(c.get("region"), 1))
@@ -140,6 +144,24 @@ def _compact_controls(controls: list[dict], content_budget: int = 55, chrome_bud
             used_content += 1
     return "\n".join(lines)
 
+def _compact_revealed(revealed: list[dict], limit: int = 8) -> str:
+    lines: list[str] = []
+    for entry in revealed[:limit]:
+        trigger = (entry.get("trigger") or "?").strip()[:80]
+        if entry.get("effect") == "navigates":
+            dest = str(entry.get("to") or "")
+            from urllib.parse import urlsplit
+            path = urlsplit(dest).path or dest
+            lines.append(f'click "{trigger}" -> navigates to {path}')
+            continue
+        controls = entry.get("controls") or []
+        if not controls:
+            continue
+        lines.append(f'click "{trigger}" -> reveals:')
+        for control in controls[:8]:
+            lines.append("    " + _control_line(control))
+    return "\n".join(lines)
+
 def _compact_headings(headings: list[dict]) -> str:
     out: list[str] = []
     for h in headings:
@@ -161,6 +183,9 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         f"PAGE URL: {inventory.url}\nPAGE TITLE: {inventory.title}\n\n"
         f"HEADINGS:\n{_compact_headings(inventory.headings)}\n\n"
         f"CONTROLS (one per line; use the id/selector token verbatim when present, else get_by_role with the quoted name; never invent a selector):\n{_compact_controls(inventory.controls)}\n\n"
+        f"REVEALED BY INTERACTION (clicking the named [content] trigger surfaced these during exploration - you MAY "
+        f"click that trigger via action_evidence and assert one of these appeared; treat them as observed):\n"
+        f"{_compact_revealed(inventory.revealed) or '(none - the probe found no state change)'}\n\n"
         f"FORMS:\n{inventory.forms}\n\n"
         f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
         "Generate dynamic, page-specific smoke tests as one pytest module. Only test controls that appear above; skip any marked disabled. "

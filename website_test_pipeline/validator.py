@@ -35,6 +35,13 @@ def _allowed_tokens(inventory) -> set[str]:
             if field: tokens.add(_norm(str(field)))
     for heading in getattr(inventory, "headings", None) or []:
         if heading.get("text"): tokens.add(_norm(str(heading["text"])))
+    # controls surfaced by the explore interaction probe are "observed" too
+    for entry in getattr(inventory, "revealed", None) or []:
+        if entry.get("trigger"): tokens.add(_norm(str(entry["trigger"])))
+        for control in entry.get("controls") or []:
+            for key in ("selector", "testid", "id", "field_name", "name", "href"):
+                value = control.get(key)
+                if value: tokens.add(_norm(str(value)))
     # the aria snapshot is authoritative for accessible names - harvest every quoted name
     for match in re.finditer(r'"([^"\n]+)"', getattr(inventory, "accessibility", "") or ""):
         tokens.add(_norm(match.group(1)))
