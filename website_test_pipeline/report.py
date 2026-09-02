@@ -272,6 +272,26 @@ _BEHAVIOURAL_ASSERT = re.compile(
 )
 
 
+def _title_calls_action(spec_path: Path | None, title: str) -> bool:
+    """True if the test function performs a real action - it calls
+    action_evidence(...) (which does a click/fill/select and then verifies a
+    post-state). Such a test is behavioural regardless of which assertion the
+    verify callback uses."""
+    if not spec_path:
+        return False
+    try:
+        tree = ast.parse(Path(spec_path).read_text(encoding="utf-8"))
+    except (OSError, SyntaxError):
+        return False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == title:
+            return any(
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "action_evidence"
+                for c in ast.walk(node)
+            )
+    return False
+
+
 def validate_url(report: UrlReport) -> None:
     warnings = report.warnings
     if report.generated_status == "generated" and report.total == 0:
@@ -286,10 +306,11 @@ def validate_url(report: UrlReport) -> None:
     behavioural = sum(
         1 for o in report.outcomes
         if any(_BEHAVIOURAL_ASSERT.search(a) for a in o.assertions)
+        or _title_calls_action(report.spec_path, o.title)
     )
     if report.total >= 4 and behavioural <= report.total // 4:
         warnings.append(
-            f"{behavioural}/{report.total} tests check behaviour (click/fill/navigate result); "
+            f"{behavioural}/{report.total} tests exercise behaviour (click/fill/submit/navigate + verify); "
             "the rest only assert an element is visible - shallow coverage for this page"
         )
 

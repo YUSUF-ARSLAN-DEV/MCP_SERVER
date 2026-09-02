@@ -36,12 +36,17 @@ def _allowed_tokens(inventory) -> set[str]:
     for heading in getattr(inventory, "headings", None) or []:
         if heading.get("text"): tokens.add(_norm(str(heading["text"])))
     # controls surfaced by the explore interaction probe are "observed" too
+    has_validation = False
     for entry in getattr(inventory, "revealed", None) or []:
         if entry.get("trigger"): tokens.add(_norm(str(entry["trigger"])))
+        if entry.get("effect") == "validation": has_validation = True
         for control in entry.get("controls") or []:
-            for key in ("selector", "testid", "id", "field_name", "name", "href"):
+            for key in ("selector", "testid", "id", "field_name", "name", "href", "role"):
                 value = control.get(key)
                 if value: tokens.add(_norm(str(value)))
+    if has_validation:
+        # generic error-container selectors the guide tells the model to use
+        tokens.update({"alert", "status", "error", "errors", "aria-invalid", "invalid-feedback", "messages"})
     # the aria snapshot is authoritative for accessible names - harvest every quoted name
     for match in re.finditer(r'"([^"\n]+)"', getattr(inventory, "accessibility", "") or ""):
         tokens.add(_norm(match.group(1)))
@@ -100,7 +105,8 @@ _VOLATILE_ID = re.compile(
 _EVIDENCE_VERIFY_ARG = {"observation_evidence": 2, "action_evidence": 3}
 
 def _empty_verify(tree: ast.AST) -> str | None:
-    """A verify callback that asserts nothing - `lambda: None`, `lambda: True`, ..."""
+    """A verify callback that asserts nothing, or chains asserts with and/or so
+    only the first one runs."""
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
             continue
@@ -111,6 +117,9 @@ def _empty_verify(tree: ast.AST) -> str | None:
         if isinstance(verify, ast.Lambda) and isinstance(verify.body, ast.Constant):
             return (f"{node.func.id}() verify callback asserts nothing (lambda: {verify.body.value!r}) - "
                     "it must call expect(...) on something")
+        if isinstance(verify, ast.Lambda) and isinstance(verify.body, ast.BoolOp):
+            return (f"{node.func.id}() verify callback chains assertions with and/or - only the first runs. "
+                    "Use one assertion per evidence call, or a list: lambda: [expect(a)..., expect(b)...]")
     return None
 
 # Names always in scope in a generated spec (skeleton imports + pytest fixtures).

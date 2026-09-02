@@ -43,8 +43,12 @@ Each CONTROL and HEADING line is prefixed with tags:
   thing that makes this page different.
 - **If the page has only one or two `[content]` controls, write only one or two
   tests.** A short page-specific file beats a long one padded with chrome checks.
-- **At least half your tests must DO something** (click / fill / select / press)
+- **At least half your tests must DO something** (click / fill / select / submit)
   and assert the result — not just `expect(x).to_be_visible()`.
+- **Aim for a mix of behaviours**, not five variations of one: a trigger that
+  reveals a panel; a navigation; **a form submitted with required fields empty →
+  a validation error region appears**; a select-and-search flow → a results region
+  appears. Write only the ones the inventory and the REVEALED block support.
 - **Use the REVEALED BY INTERACTION block.** For every `click "<trigger>" ->
   reveals:` entry, write a test that clicks that trigger via `action_evidence`
   and asserts one of the listed revealed controls became visible. For a
@@ -135,6 +139,27 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
 - Never assume a control, route, success message, language, or business rule
   exists because it is common on other sites. The observed inventory, title,
   URL, and accessibility snapshot are the only source of truth.
+
+## Form validation & error handling
+
+When the page has a form with required fields (see `FORMS` and the `required`
+flag in `CONTROLS`), or `REVEALED` shows a `submit ... -> validation` entry:
+
+- **Submit the form with required fields empty** (wrap the submit click in
+  `action_evidence`) and assert the **error state**, using a selector from the
+  `REVEALED` block:
+  - `expect(page.locator('[role="alert"]')).to_be_visible()`, or
+  - `expect(field).to_have_attribute("aria-invalid", "true")`, or
+  - `expect(page.locator(".error")).to_be_visible()`.
+- **Never assert the error message text** — you did not observe it and copy
+  changes. Assert only that an error *region* / invalid *state* is present.
+- If `REVEALED` shows `submits (no client validation)` the form posts and
+  navigates on an empty submit — do **not** write an empty-submit test; instead
+  fill the observed fields with plausible values and assert the resulting URL or
+  a success region.
+- **Search / filter form** (`<select>` + a search button): select a real listed
+  option, submit via `action_evidence`, assert a results region or heading
+  appeared — never assert individual result rows (they rotate).
 
 ## Assertion rules
 

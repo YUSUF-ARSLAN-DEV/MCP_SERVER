@@ -315,7 +315,16 @@ def test_compact_revealed_renders_trigger_and_controls():
     out = _compact_revealed(revealed)
     assert 'click "Show frequencies" -> reveals:' in out
     assert "#freq-list" in out
-    assert 'click "Open map" -> navigates to /map/full' in out
+    assert '"Open map" -> navigates to /map/full' in out
+
+def test_compact_revealed_renders_form_validation():
+    revealed = [{
+        "trigger": "submit #f with no input", "effect": "validation",
+        "native_invalid_fields": 2,
+        "controls": [{"tag": "div", "role": "alert", "name": "err", "selector": "#e", "region": "content"}],
+    }]
+    out = _compact_revealed(revealed)
+    assert "validation" in out and "#e" in out and ":invalid" in out
 
 def test_rejects_name_defined_in_sibling_test():
     src = (
@@ -439,6 +448,43 @@ def test_accepts_disabled_assertion_when_control_is_disabled():
         '    observation_evidence(page, "x", lambda: expect(b).to_be_disabled(), evidence_dir)\n'
     )
     validate_python_spec(src, 'https://example.test', inv)
+
+def test_rejects_verify_lambda_chaining_asserts_with_and():
+    src = (
+        'def test_x(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    a = page.get_by_role("link", name="A", exact=True).first\n'
+        '    b = page.get_by_role("link", name="B", exact=True).first\n'
+        '    observation_evidence(page, "x",\n'
+        '        lambda: expect(a).to_be_visible() and expect(b).to_be_visible(), evidence_dir)\n'
+    )
+    with pytest.raises(SpecError, match="and/or"):
+        validate_python_spec(src, 'https://example.test')
+
+def test_behavioural_count_credits_action_evidence(tmp_path):
+    from website_test_pipeline.report import validate_url, UrlReport, TestOutcome
+    spec = tmp_path / "s_test.py"
+    spec.write_text(
+        'def test_click_reveals(page, evidence_dir):\n'
+        '    action_evidence(page, "c", lambda: page.locator("#b").click(),\n'
+        '                    lambda: expect(page.locator("#panel")).to_be_visible(), evidence_dir)\n'
+        'def test_just_visible(page, evidence_dir):\n'
+        '    observation_evidence(page, "v", lambda: expect(page.locator("#h")).to_be_visible(), evidence_dir)\n',
+        encoding="utf-8")
+    rep = UrlReport(url="https://x.test", spec_path=str(spec))
+    rep.outcomes = [
+        TestOutcome(nodeid="", title="test_click_reveals", url="https://x.test", status="passed",
+                    duration=0.0, assertions=['expect(page.locator("#panel")).to_be_visible()']),
+        TestOutcome(nodeid="", title="test_just_visible", url="https://x.test", status="passed",
+                    duration=0.0, assertions=['expect(page.locator("#h")).to_be_visible()']),
+    ]
+    validate_url(rep)
+    # 1 of 2 is behavioural (the action_evidence one) -> total 2 < 4 so no warning,
+    # but the point is the click test is not miscounted as pure-visibility.
+    from website_test_pipeline.report import _title_calls_action
+    from pathlib import Path
+    assert _title_calls_action(Path(spec), "test_click_reveals")
+    assert not _title_calls_action(Path(spec), "test_just_visible")
 
 def test_validator_accepts_locator_from_revealed_inventory():
     inv = PageInventory('https://example.test', 'T',

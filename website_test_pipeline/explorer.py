@@ -13,6 +13,10 @@ _PANEL_SEL = (
     '[role="grid"],[role="table"],[role="tree"],[role="alert"],[role="status"],'
     '[aria-modal="true"],dialog,table,fieldset'
 )
+_VALIDATION_SEL = (
+    '[role="alert"],[aria-invalid="true"],.error,.errors,.invalid-feedback,.field-error,'
+    '.form-error,.help-block,.messages,.alert,.parsley-errors-list,[class*="error" i]'
+)
 
 # Statements injected at the top of each scrape's arrow-function body.
 _JS_HELPERS = r"""
@@ -85,6 +89,21 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             options: e.tagName === 'SELECT' ? [...e.options].slice(0,20).map(o => o.value || (o.textContent||'').trim()) : null
         };
     });
+}"""
+
+_VALIDATION_JS = "els => {" + _JS_HELPERS + r"""
+    return els.filter(e => {
+        const s = getComputedStyle(e);
+        return s.display !== 'none' && s.visibility !== 'hidden'
+            && (e.textContent || '').trim().length > 0;
+    }).slice(0, 20).map(e => ({
+        tag: e.tagName.toLowerCase(),
+        role: e.getAttribute('role') || null,
+        name: (e.getAttribute('aria-label') || (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60)),
+        selector: e.id ? `#${e.id}` : null,
+        region: regionOf(e),
+        text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140)
+    }));
 }"""
 
 _PANELS_JS = "els => {" + _JS_HELPERS + r"""
@@ -275,6 +294,84 @@ def _probe_interactions(page, url: str, baseline: list[dict], limit: int, log=No
     return revealed
 
 
+def _form_submit_locator(page, form: dict):
+    selector = form.get("selector")
+    scope = page.locator(selector) if selector else page.locator("form")
+    for candidate in ('button[type="submit"]', 'input[type="submit"]', 'button:not([type])'):
+        try:
+            loc = scope.locator(candidate).first
+            if loc.count():
+                return loc
+        except Exception:
+            continue
+    return None
+
+
+def _probe_forms(page, url: str, forms: list[dict], limit: int, log=None) -> list[dict]:
+    """Submit each form with nothing filled in and record the validation state -
+    error regions that appeared, or how many fields the browser marked :invalid.
+    Gives the generator a real 'submit empty -> errors' postcondition to assert."""
+    if limit <= 0 or not forms:
+        return []
+    out: list[dict] = []
+    for form in forms[:limit]:
+        label = form.get("selector") or form.get("action") or "form"
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            settle_page(page)
+            dismiss_overlays(page)
+        except Exception:
+            break
+        submit = _form_submit_locator(page, form)
+        if submit is None:
+            if log:
+                log.info('probe: form %s -> no submit button found', label)
+            continue
+        try:
+            pre = page.locator(_VALIDATION_SEL).evaluate_all(_VALIDATION_JS)
+        except Exception:
+            pre = []
+        pre_keys = {_panel_key(p) for p in pre}
+        before_url = page.url
+        try:
+            submit.click(timeout=2500)
+            page.wait_for_timeout(900)
+        except Exception as exc:
+            if log:
+                log.info('probe: submit %s -> click failed (%s)', label, str(exc).splitlines()[0][:100])
+            continue
+        if page.url != before_url:
+            out.append({"trigger": f"submit {label} with no input", "effect": "submits-without-validation", "to": page.url})
+            if log:
+                log.info('probe: submit %s -> navigated (no client validation)', label)
+            continue
+        try:
+            post = page.locator(_VALIDATION_SEL).evaluate_all(_VALIDATION_JS)
+        except Exception:
+            post = []
+        try:
+            native_invalid = int(page.evaluate(
+                "document.querySelectorAll('input:invalid, select:invalid, textarea:invalid').length"
+            ))
+        except Exception:
+            native_invalid = 0
+        fresh = [
+            p for p in post
+            if _panel_key(p) not in pre_keys and p.get("region") in {"content", "other"}
+        ][:8]
+        if fresh or native_invalid:
+            entry = {"trigger": f"submit {label} with no input", "effect": "validation", "controls": fresh}
+            if native_invalid:
+                entry["native_invalid_fields"] = native_invalid
+            out.append(entry)
+            if log:
+                log.info('probe: submit %s -> validation (%d error region(s), %d native-invalid field(s))',
+                         label, len(fresh), native_invalid)
+        elif log:
+            log.info('probe: submit %s -> no visible validation', label)
+    return out
+
+
 def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     settle_page(page)
     dismiss_overlays(page)  # snapshot the real page, not consent / ad overlays
@@ -312,4 +409,6 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     # Interaction probe last: it navigates away and reloads, so it must run after
     # every static scrape above is done.
     revealed = _probe_interactions(page, url, controls, probe_max, log)
+    if probe_max > 0:
+        revealed = revealed + _probe_forms(page, url, forms, min(2, probe_max), log)
     return PageInventory(url, title, headings, controls, signals, forms, revealed)

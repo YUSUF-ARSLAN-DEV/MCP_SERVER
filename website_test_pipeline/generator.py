@@ -42,7 +42,27 @@ COVERAGE_RULES = (
     "- When REVEALED BY INTERACTION lists elements for a trigger, PREFER a test that clicks that trigger through "
     "action_evidence(...) and asserts one of the revealed elements is visible (or, for 'navigates', asserts a path "
     "regex with expect(page).to_have_url(re.compile(...))). That is a real behavioural test - write it instead of a "
-    "bare visibility check on the trigger."
+    "bare visibility check on the trigger.\n"
+    "- Aim for a MIX, not just visibility: (a) trigger -> revealed panel/menu appears; (b) navigation -> URL path "
+    "regex; (c) form validation -> submit the form with required fields empty and assert an error region appears "
+    "or a field is invalid; (d) a select/search flow -> choose the observed options, submit, assert the results "
+    "container/heading appears. Only write the ones the inventory + REVEALED block actually support."
+)
+
+VALIDATION_RULES = (
+    "FORM VALIDATION / ERROR HANDLING - when the page has a form with required fields (see FORMS and the required "
+    "flag in CONTROLS), or REVEALED shows a 'submit ... -> validation' entry:\n"
+    "- Write a test that submits the form with required fields left empty (wrap the submit click in action_evidence) "
+    "and asserts the error state: expect(page.locator('[role=\"alert\"]')).to_be_visible(), or "
+    "expect(field).to_have_attribute('aria-invalid', 'true'), or expect(page.locator('.error')).to_be_visible() - "
+    "using an error-container selector from the REVEALED block. NEVER assert the error message text (you did not "
+    "observe it and copy changes).\n"
+    "- If REVEALED says N field(s) marked :invalid, you may also assert expect(field).to_be_visible() then rely on "
+    "the submit being blocked - but the primary assertion is the error region.\n"
+    "- If REVEALED shows 'submits (no client validation)', do NOT write an empty-submit test - the form posts and "
+    "navigates; instead fill the observed fields with plausible values and assert the resulting URL / success region.\n"
+    "- For a search/filter form (a <select> plus a search button), select a real listed option, submit via "
+    "action_evidence, and assert a results region/heading appeared - do not assert specific result rows (they rotate)."
 )
 
 LOCATOR_RULES = (
@@ -150,17 +170,27 @@ def _compact_controls(controls: list[dict], content_budget: int = 75, chrome_bud
             used_content += 1
     return "\n".join(lines)
 
-def _compact_revealed(revealed: list[dict], limit: int = 8) -> str:
+def _compact_revealed(revealed: list[dict], limit: int = 10) -> str:
+    from urllib.parse import urlsplit
     lines: list[str] = []
     for entry in revealed[:limit]:
         trigger = (entry.get("trigger") or "?").strip()[:80]
-        if entry.get("effect") == "navigates":
-            dest = str(entry.get("to") or "")
-            from urllib.parse import urlsplit
-            path = urlsplit(dest).path or dest
-            lines.append(f'click "{trigger}" -> navigates to {path}')
+        effect = entry.get("effect")
+        if effect in {"navigates", "submits-without-validation"}:
+            path = urlsplit(str(entry.get("to") or "")).path or str(entry.get("to") or "")
+            verb = "navigates to" if effect == "navigates" else "submits (no client validation), lands on"
+            lines.append(f'"{trigger}" -> {verb} {path}')
             continue
         controls = entry.get("controls") or []
+        if effect == "validation":
+            native = entry.get("native_invalid_fields")
+            head = f'"{trigger}" -> validation'
+            if native:
+                head += f' ({native} field(s) marked :invalid by the browser)'
+            lines.append(head + (":" if controls else ""))
+            for control in controls[:6]:
+                lines.append("    " + _control_line(control) + (f' text="{(control.get("text") or "").strip()[:80]}"' if control.get("text") else ""))
+            continue
         if not controls:
             continue
         lines.append(f'click "{trigger}" -> reveals:')
@@ -193,8 +223,8 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         f"PAGE URL: {inventory.url}\nPAGE TITLE: {inventory.title}\n\n"
         f"HEADINGS:\n{_compact_headings(inventory.headings)}\n\n"
         f"CONTROLS (one per line; use the id/selector token verbatim when present, else get_by_role with the quoted name; never invent a selector):\n{_compact_controls(inventory.controls)}\n\n"
-        f"REVEALED BY INTERACTION (clicking the named [content] trigger surfaced these during exploration - you MAY "
-        f"click that trigger via action_evidence and assert one of these appeared; treat them as observed):\n"
+        f"REVEALED BY INTERACTION (the explorer clicked the named trigger / submitted the named form and saw these - "
+        f"treat them as observed; click/submit via action_evidence and assert the listed result):\n"
         f"{_compact_revealed(inventory.revealed) or '(none - the probe found no state change)'}\n\n"
         f"FORMS:\n{inventory.forms}\n\n"
         f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
@@ -206,7 +236,7 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         "and footer checks to get_by_role('contentinfo'), then put .first on the LINK, never on the landmark "
         "(the first navigation/contentinfo landmark is often a hidden mobile or skip-link menu): "
         "page.get_by_role('navigation').get_by_role('link', name='News', exact=True).first\n\n"
-        f"{SCOPE_RULES}\n\n{COVERAGE_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
+        f"{SCOPE_RULES}\n\n{COVERAGE_RULES}\n\n{VALIDATION_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
     )
 
 def extract_code(raw: str) -> str:
