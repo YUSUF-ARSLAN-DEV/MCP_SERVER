@@ -302,6 +302,7 @@ def test_probe_clicks_input_type_button_and_reads_panel():
 def test_is_probe_trigger_accepts_role_button_rejects_submit():
     assert _is_probe_trigger({"tag": "input", "type": "button", "name": "Go", "region": "content"})
     assert _is_probe_trigger({"tag": "span", "role": "button", "name": "Toggle", "region": "content"})
+    assert _is_probe_trigger({"tag": "button", "name": "Go", "region": "other"})  # sites without <main>
     assert not _is_probe_trigger({"tag": "input", "type": "submit", "name": "Go", "region": "content"})
     assert not _is_probe_trigger({"tag": "button", "name": "Go", "region": "chrome"})
 
@@ -379,6 +380,40 @@ def test_accepts_ambiguous_role_name_with_first_on_line():
         '    # https://example.test\n'
         '    button = page.get_by_role("button", name="Next", exact=True).first\n'
         '    observation_evidence(page, "n", lambda: expect(button).to_be_visible(), evidence_dir)\n'
+    )
+    validate_python_spec(src, 'https://example.test', inv)
+
+def test_rejects_with_observation_evidence_context_manager():
+    src = (
+        'def test_x(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    h = page.get_by_role("heading", name="Hi", exact=True)\n'
+        '    with observation_evidence(page, "x", lambda: expect(h).to_be_visible(), evidence_dir):\n'
+        '        pass\n'
+    )
+    with pytest.raises(SpecError, match="context manager"):
+        validate_python_spec(src, 'https://example.test')
+
+def test_rejects_guessed_disabled_when_nothing_disabled():
+    inv = PageInventory('https://example.test', 'T',
+                        controls=[{'name': 'Search', 'tag': 'button'}])
+    src = (
+        'def test_x(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    b = page.get_by_role("button", name="Search", exact=True)\n'
+        '    observation_evidence(page, "x", lambda: expect(b).to_be_disabled(), evidence_dir)\n'
+    )
+    with pytest.raises(SpecError, match="disabled"):
+        validate_python_spec(src, 'https://example.test', inv)
+
+def test_accepts_disabled_assertion_when_control_is_disabled():
+    inv = PageInventory('https://example.test', 'T',
+                        controls=[{'name': 'Search', 'tag': 'button', 'disabled': True}])
+    src = (
+        'def test_x(page, evidence_dir):\n'
+        '    # https://example.test\n'
+        '    b = page.get_by_role("button", name="Search", exact=True)\n'
+        '    observation_evidence(page, "x", lambda: expect(b).to_be_disabled(), evidence_dir)\n'
     )
     validate_python_spec(src, 'https://example.test', inv)
 

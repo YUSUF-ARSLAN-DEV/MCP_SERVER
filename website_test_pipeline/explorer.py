@@ -109,6 +109,20 @@ _PANELS_JS = "els => {" + _JS_HELPERS + r"""
     });
 }"""
 
+# Accessible-name frequency across ALL links/buttons - hidden ones included - so
+# a wizard's later-step "Next" buttons (display:none at snapshot) still mark the
+# control AMBIGUOUS and the generator is told to add .first.
+_NAME_FREQ_JS = r"""els => {
+    const norm = e => (
+        e.getAttribute('aria-label')
+        || (e.tagName === 'INPUT' ? (e.value || '') : '')
+        || (e.textContent || '')
+    ).replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 80);
+    const freq = {};
+    els.forEach(e => { const n = norm(e); if (n) freq[n] = (freq[n] || 0) + 1; });
+    return freq;
+}"""
+
 _FORMS_JS = r"""els => els.map(f => ({
     selector: f.id ? `#${f.id}` : (f.getAttribute('name') ? `form[name="${f.getAttribute('name')}"]` : null),
     action: f.getAttribute('action'),
@@ -147,9 +161,10 @@ def _panel_key(panel: dict) -> tuple:
 
 def _is_probe_trigger(control: dict) -> bool:
     """Buttons the probe may safely click: <button>, <input type=button>, and
-    [role=button] in the content region - excluding submit/reset and anything
-    that reads as destructive or as a checkout / auth step."""
-    if control.get("disabled") or control.get("region") != "content":
+    [role=button] anywhere outside the site chrome - excluding submit/reset and
+    anything that reads as destructive or as a checkout / auth step. Many sites
+    never use <main>, so page-specific buttons land in region 'other'."""
+    if control.get("disabled") or control.get("region") == "chrome":
         return False
     name = (control.get("name") or "").strip()
     if not name or name.lower() in _PROBE_SKIP_NAMES:
@@ -274,9 +289,17 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
         key = (control.get("name") or "").strip().lower()
         if key:
             name_counts[key] = name_counts.get(key, 0) + 1
+    try:
+        dom_name_freq = page.locator('a,button,input,[role="button"],[role="link"]').evaluate_all(_NAME_FREQ_JS)
+    except Exception:
+        dom_name_freq = {}
     for control in controls:
         key = (control.get("name") or "").strip().lower()
-        control["ambiguous"] = bool(key) and name_counts.get(key, 0) > 1
+        # ambiguous if the visible snapshot saw the name twice OR the full DOM
+        # (hidden elements included) has more than one - catches wizard steps.
+        control["ambiguous"] = bool(key) and (
+            name_counts.get(key, 0) > 1 or dom_name_freq.get(key[:80], 0) > 1
+        )
     forms = page.locator('form').evaluate_all(_FORMS_JS)
     try:
         accessibility = page.locator('body').aria_snapshot()

@@ -24,7 +24,8 @@ Each CONTROL and HEADING line is prefixed with tags:
 
 - `[content]` — inside `<main>` / `<article>`; specific to **this** page.
 - `[chrome]` — inside the header, nav, or footer; the same on every page of the site.
-- `[other]` — neither.
+- `[other]` — neither. **Many sites never use `<main>`**, so the real page-specific
+  content is tagged `[other]`. Treat `[other]` exactly like `[content]` — test it.
 - headings also carry `[hidden]` (present only for screen readers — never assert
   `to_be_visible`, use `to_have_count(1)`) and `[feed]` (inside an article/feed —
   the text rotates, do not assert it).
@@ -167,6 +168,9 @@ def test_<behavior_specific_to_this_page>(page: Page, evidence_dir: Path) -> Non
   works but only as a plain statement, not inside a `lambda`. Best of all, assert
   a heading/landmark unique to the destination. To confirm the page under test
   loaded, assert its main heading is visible.
+- **Never assert `to_be_disabled()` / `to_be_enabled()`** unless the inventory
+  line for that control literally shows `disabled` — do not guess that a search
+  or submit button starts disabled until a field is filled.
 - **Do not assert a state your own action just changed or removed.** A submit
   button that becomes disabled or relabelled ("Subscribing…") after a click, an
   overlay `_open()` already dismissed, a field that clears on submit — verify the

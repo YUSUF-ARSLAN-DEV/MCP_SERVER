@@ -255,6 +255,31 @@ def _locator_misuse(tree: ast.AST) -> str | None:
                         "locate by get_by_role / get_by_placeholder / get_by_label instead")
     return None
 
+def _evidence_misuse(tree: ast.AST) -> str | None:
+    """`with observation_evidence(...):` - the evidence helpers return a Path, not
+    a context manager, so `with` raises TypeError at run time."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.With):
+            continue
+        for item in node.items:
+            call = item.context_expr
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id in _EVIDENCE_CALLS:
+                return (f"`with {call.func.id}(...)` is invalid - it returns a Path, not a context manager; "
+                        "call it as a plain statement")
+    return None
+
+def _guessed_disabled_state(tree: ast.AST, inventory) -> str | None:
+    """to_be_disabled()/to_be_enabled() when nothing in the observed inventory is
+    disabled - the model is guessing a business rule."""
+    controls = getattr(inventory, "controls", None) or []
+    if any(c.get("disabled") for c in controls):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {"to_be_disabled", "to_be_enabled"}:
+            return (f"expect(...).{node.func.attr}() but no control in the observed inventory is disabled - "
+                    "do not guess a disabled/enabled business rule; assert an observed post-state instead")
+    return None
+
 def validate_python_spec(source: str, url: str, inventory=None) -> None:
     if re.search(r"\.\s*(click|fill|select_option|check|uncheck|press)\s*\(", source) and "action_evidence" not in source:
         raise SpecError("action requires action_evidence")
@@ -281,10 +306,16 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     unscoped = _unscoped_attr_locator(tree, source)
     if unscoped:
         raise SpecError(unscoped)
+    evidence_misuse = _evidence_misuse(tree)
+    if evidence_misuse:
+        raise SpecError(evidence_misuse)
     if inventory is not None:
         ambiguous = _ambiguous_without_first(tree, source, inventory)
         if ambiguous:
             raise SpecError(ambiguous)
+        guessed = _guessed_disabled_state(tree, inventory)
+        if guessed:
+            raise SpecError(guessed)
         tokens = _allowed_tokens(inventory)
         unknown: list[str] = []
         for literal in _css_locators(source):
