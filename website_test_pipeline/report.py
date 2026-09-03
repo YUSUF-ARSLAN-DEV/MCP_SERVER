@@ -77,6 +77,7 @@ class UrlReport:
     generated_status: str | None = None
     outcomes: list[TestOutcome] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    page_actions: int = -1   # interactive controls the inventory observed; -1 = unknown
 
     @property
     def total(self) -> int:
@@ -214,9 +215,41 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "") -> RunReport
         url_reports=[by_url[k] for k in sorted(by_url)],
     )
     for report in run.url_reports:
+        report.page_actions = _count_page_actions(artifacts_dir, report.url)
         validate_url(report)
     return run
 
+
+_ACTION_ROLES = {"button", "checkbox", "radio", "combobox", "tab", "switch", "slider", "menuitem", "menuitemcheckbox"}
+
+def _inv_slug(url: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", url.lower()).strip("-")[:100]
+
+def _count_page_actions(artifacts_dir: Path, url: str) -> int:
+    """How many genuinely interactive things the explorer saw on this page - form
+    controls, buttons, revealed panels, form fields. Lets validate_url tell a thin
+    page (few controls, visibility checks are the honest coverage) from a rich page
+    with lazy tests."""
+    path = artifacts_dir / f"{_inv_slug(url)}.inventory.json"
+    if not path.exists():
+        return -1
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return -1
+    n = 0
+    for c in data.get("controls") or []:
+        if c.get("region") == "chrome" or c.get("hidden"):
+            continue
+        tag, role = c.get("tag"), (c.get("role") or "")
+        if (tag in {"button", "select", "textarea"}
+                or (tag == "input" and (c.get("type") or "text") != "hidden")
+                or role in _ACTION_ROLES):
+            n += 1
+    n += len(data.get("revealed") or [])
+    for f in data.get("forms") or []:
+        n += min(len(f.get("fields") or []), 3)
+    return n
 
 def _maybe_json(path: Path) -> dict[str, Any]:
     try:
@@ -309,10 +342,19 @@ def validate_url(report: UrlReport) -> None:
         or _title_calls_action(report.spec_path, o.title)
     )
     if report.total >= 4 and behavioural <= report.total // 4:
-        warnings.append(
-            f"{behavioural}/{report.total} tests exercise behaviour (click/fill/submit/navigate + verify); "
-            "the rest only assert an element is visible - shallow coverage for this page"
-        )
+        if 0 <= report.page_actions <= 2:
+            # The page genuinely offers almost nothing to interact with - a file of
+            # visibility checks IS the honest coverage here, not a lazy one.
+            warnings.append(
+                f"thin page: only ~{report.page_actions} interactive control(s) observed, so "
+                f"{behavioural}/{report.total} behavioural tests is expected - not a coverage gap"
+            )
+        else:
+            extra = f" (page exposes ~{report.page_actions} interactive controls)" if report.page_actions >= 0 else ""
+            warnings.append(
+                f"{behavioural}/{report.total} tests exercise behaviour (click/fill/submit/navigate + verify); "
+                f"the rest only assert an element is visible - shallow coverage for this page{extra}"
+            )
 
 
 # --------------------------------------------------------------------------- render

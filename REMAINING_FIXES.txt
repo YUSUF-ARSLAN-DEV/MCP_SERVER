@@ -143,11 +143,22 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
    already exists.
 
 ================================================================================
-8. [ ] Report honesty - thin page vs lazy tests
+8. [DONE 2026-09-03] Report honesty - thin page vs lazy tests
 --------------------------------------------------------------------------------
    Distinguish "shallow because the page only has ~2 interactive elements" from
    "shallow because the tests are lazy", so genuinely thin pages (newfrequencies)
    don't read as a pipeline failure.
+
+   DONE:
+   - report.py _count_page_actions(): from the page inventory, counts non-chrome
+     non-hidden form controls + buttons + action roles + revealed panels + form
+     fields (capped 3/form). UrlReport.page_actions holds it (-1 = unknown).
+   - validate_url: when behavioural coverage is low AND page_actions <= 2, emits
+     "thin page: only ~N interactive control(s) ... not a coverage gap" instead
+     of the "shallow coverage" warning. Rich pages with lazy tests still get the
+     shallow warning (now with the control count appended).
+   - tests_python/test_pipeline.py: +3 (thin-page note, rich-page shallow,
+     _count_page_actions reads inventory).
 
 ================================================================================
 9. [ ] Auto-commit the branch

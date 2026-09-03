@@ -502,6 +502,50 @@ def test_behavioural_count_credits_action_evidence(tmp_path):
     assert _title_calls_action(Path(spec), "test_click_reveals")
     assert not _title_calls_action(Path(spec), "test_just_visible")
 
+def _visibility_only_report(page_actions: int):
+    from website_test_pipeline.report import UrlReport, TestOutcome
+    rep = UrlReport(url="https://x.test", spec_path=None, generated_status="generated")
+    rep.page_actions = page_actions
+    rep.outcomes = [
+        TestOutcome(nodeid="", title=f"test_h{i}", url="https://x.test", status="passed",
+                    duration=0.0, assertions=['expect(page.locator("#h")).to_be_visible()'])
+        for i in range(5)
+    ]
+    return rep
+
+def test_thin_page_gets_a_note_not_a_shallow_coverage_warning():
+    from website_test_pipeline.report import validate_url
+    rep = _visibility_only_report(page_actions=1)
+    validate_url(rep)
+    assert any("thin page" in w and "not a coverage gap" in w for w in rep.warnings)
+    assert not any("shallow coverage" in w for w in rep.warnings)
+
+def test_rich_page_with_lazy_tests_still_warns_shallow():
+    from website_test_pipeline.report import validate_url
+    rep = _visibility_only_report(page_actions=12)
+    validate_url(rep)
+    assert any("shallow coverage" in w for w in rep.warnings)
+    assert not any("thin page" in w for w in rep.warnings)
+
+def test_count_page_actions_reads_inventory(tmp_path):
+    from website_test_pipeline.report import _count_page_actions
+    import json as _json
+    art = tmp_path
+    (art / "https-x-test.inventory.json").write_text(_json.dumps({
+        "controls": [
+            {"tag": "button", "name": "Search", "region": "content"},
+            {"tag": "select", "name": "Country", "region": "content"},
+            {"tag": "a", "name": "Privacy", "region": "chrome"},          # chrome - not counted
+            {"tag": "input", "type": "hidden", "name": "token", "region": "content"},  # hidden type - not counted
+            {"tag": "input", "name": "sr", "region": "content", "hidden": True},        # hidden flag - not counted
+        ],
+        "revealed": [{"trigger": "Search", "effect": "reveals", "controls": []}],
+        "forms": [{"fields": ["a", "b", "c", "d"]}],
+    }), encoding="utf-8")
+    # 2 controls + 1 revealed + min(4,3) form fields = 6
+    assert _count_page_actions(art, "https://x.test") == 6
+    assert _count_page_actions(art, "https://missing.test") == -1
+
 def test_validator_accepts_locator_from_revealed_inventory():
     inv = PageInventory('https://example.test', 'T',
                         controls=[{'selector': '#trigger', 'name': 'Reveal'}],
