@@ -419,7 +419,9 @@ def _render_outcome(document, outcome: TestOutcome, *, embed: bool = True, link_
     _status_line(document, outcome)
 
     if outcome.assertions:
-        document.add_heading("Assertions verified", 3)
+        verified = outcome.status == "passed"
+        document.add_heading(
+            "Assertions verified" if verified else "Assertions in this test (test did not pass - see failure detail)", 3)
         for line in outcome.assertions:
             document.add_paragraph(line, style="List Bullet")
 
