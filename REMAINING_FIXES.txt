@@ -43,11 +43,24 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      +test_control_line_marks_hidden, +hidden case in _is_probe_trigger test.
 
 ================================================================================
-3. [ ] Google Maps canvas pages - accept as untestable
+3. [DONE 2026-09-03] Google Maps canvas pages - accept as untestable
 --------------------------------------------------------------------------------
    Affected: /ar/map, /en/map
    Fix: assert only that the #map container is visible; stop trying to drive the
    Google Maps canvas.
+
+   DONE:
+   - models.py PageInventory: new `embeds` field.
+   - explorer.py: _EMBEDS_JS + _EMBED_SEL. From a broad candidate set keeps only
+     real maps (maps <iframe> src, .gm-style, .leaflet-container, or map-ish
+     id/class WITH a <canvas>). Emits best stable selector (#id -> 'iframe' ->
+     class fragment). "sitemap" excluded. explore() calls it, passes to inventory.
+   - generator.py: _compact_embeds(); "PAGE EMBEDS:" prompt block (only when
+     present); EMBED_RULES - map embed + few controls => ONE test asserting the
+     container visible; never click/zoom/enter iframe; iframe.first fallback.
+   - validator.py _allowed_tokens: harvests embed selector + title, adds 'iframe'.
+   - tests_python: +5 (compact_embeds, prompt present/absent, validator accepts
+     #map and iframe fallback).
 
 ================================================================================
 4. [ ] Tighten validator _known substring matching

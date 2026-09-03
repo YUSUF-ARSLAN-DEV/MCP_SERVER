@@ -171,6 +171,55 @@ _FORMS_JS = r"""els => els.map(f => ({
     fields: [...f.elements].map(el => el.getAttribute('name')).filter(Boolean)
 }))"""
 
+# Third-party map embeds (Google Maps JS canvas, Leaflet, a maps <iframe>). These
+# pages have no driveable DOM - the only honest assertion is "the map container
+# rendered". Given a broad candidate set, keep only the ones that really are a map.
+_EMBEDS_JS = "els => {" + _JS_HELPERS + r"""
+    const MAP_SRC = /(google\.[a-z.]+\/maps|maps\.google|\/maps\/embed|openstreetmap\.org|mapbox\.com|api\.mapbox|bing\.com\/maps|arcgis\.com|2gis\.|yandex\.[a-z]+\/map)/i;
+    const seen = new Set();
+    const out = [];
+    for (const e of els) {
+        const cn = (typeof e.className === 'string' ? e.className : '') + ' ' + (e.id || '');
+        let kind = null, provider = null;
+        if (e.tagName === 'IFRAME') {
+            const src = e.getAttribute('src') || e.getAttribute('data-src') || '';
+            if (!MAP_SRC.test(src)) continue;
+            kind = 'map'; provider = (src.match(MAP_SRC) || ['iframe'])[0].toLowerCase();
+        } else if (e.classList.contains('gm-style') || e.querySelector('.gm-style')) {
+            kind = 'map'; provider = 'google-maps-js';
+        } else if (e.classList.contains('leaflet-container') || e.querySelector('.leaflet-container')) {
+            kind = 'map'; provider = 'leaflet';
+        } else if (/(^|[\s_#-])maps?([\s_-]|canvas|container|$)/i.test(cn) && e.querySelector('canvas')) {
+            kind = 'map'; provider = 'canvas';
+        } else {
+            continue;
+        }
+        let selector = null;
+        if (e.id && !volatileId(e.id)) selector = '#' + e.id;
+        else if (e.tagName === 'IFRAME') selector = 'iframe';
+        else {
+            const cls = [...(e.classList || [])]
+                .filter(c => !volatileId(c) && /map|leaflet|gm-style/i.test(c))
+                .slice(0, 2).map(c => '.' + c.replace(/([^\w-])/g, '\\$1'));
+            if (cls.length) selector = cls.join('');
+        }
+        const key = (selector || '') + '|' + provider;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const r = e.getBoundingClientRect();
+        out.push({
+            kind: kind, provider: provider, selector: selector,
+            tag: e.tagName.toLowerCase(),
+            title: e.getAttribute('title') || e.getAttribute('aria-label') || null,
+            region: regionOf(e),
+            big: (r.width * r.height) > 60000
+        });
+    }
+    return out.slice(0, 8);
+}"""
+_EMBED_SEL = ('iframe,.gm-style,.leaflet-container,'
+              '[class*="map"],[class*="Map"],[id*="map"],[id*="Map"]')
+
 
 # Trigger names we never click during the probe: consent/close buttons (already
 # handled by dismiss_overlays) and anything that reads as destructive or as a
@@ -422,6 +471,13 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
         )
     forms = page.locator('form').evaluate_all(_FORMS_JS)
     try:
+        embeds = page.locator(_EMBED_SEL).evaluate_all(_EMBEDS_JS)
+    except Exception:
+        embeds = []
+    if embeds and log:
+        log.info("explore: %d map/media embed(s) on %s (%s)", len(embeds), url,
+                 ", ".join(sorted({e.get("provider") or "?" for e in embeds})))
+    try:
         accessibility = page.locator('body').aria_snapshot()
     except Exception:
         accessibility = ''
@@ -434,4 +490,4 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     revealed = _probe_interactions(page, url, controls, probe_max, log)
     if probe_max > 0:
         revealed = revealed + _probe_forms(page, url, forms, min(2, probe_max), log)
-    return PageInventory(url, title, headings, controls, signals, forms, revealed)
+    return PageInventory(url, title, headings, controls, signals, forms, revealed, embeds)

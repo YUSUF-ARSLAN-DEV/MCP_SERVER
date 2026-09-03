@@ -531,3 +531,47 @@ def test_validator_accepts_class_error_selector_from_revealed_validation():
            '    action_evidence(page, "submit empty", act,\n'
            '        lambda: expect(page.locator(".messages.messages--error")).to_be_visible(), evidence_dir)\n')
     validate_python_spec(src, 'https://example.test', inv)
+
+# ------------------------------------------------------------ map / media embeds
+
+def test_compact_embeds_renders_provider_and_selector():
+    from website_test_pipeline.generator import _compact_embeds
+    out = _compact_embeds([
+        {"kind": "map", "provider": "google-maps-js", "selector": "#map", "region": "other", "big": True},
+        {"kind": "map", "provider": "google.com/maps", "selector": "iframe", "region": "content",
+         "title": "Al Jazeera coverage map"},
+    ])
+    assert "#map" in out and "google-maps-js" in out
+    assert 'title="Al Jazeera coverage map"' in out
+
+def test_prompt_includes_embeds_block_and_rule_when_map_present():
+    from website_test_pipeline.generator import prompt_for
+    inv = PageInventory('https://example.test/map', 'Map',
+                        embeds=[{"kind": "map", "provider": "canvas", "selector": "#map",
+                                 "region": "other", "big": True}])
+    prompt = prompt_for("GUIDE", "persona", inv)
+    assert "PAGE EMBEDS:" in prompt and "#map" in prompt
+    assert "THIRD-PARTY MAP / MEDIA EMBED" in prompt
+
+def test_prompt_omits_embeds_block_when_none():
+    from website_test_pipeline.generator import prompt_for
+    inv = PageInventory('https://example.test', 'T')
+    assert "PAGE EMBEDS:" not in prompt_for("G", "p", inv)
+
+def test_validator_accepts_map_container_selector_from_embeds():
+    inv = PageInventory('https://example.test/map', 'Map',
+                        embeds=[{"kind": "map", "provider": "google-maps-js",
+                                 "selector": "#map", "region": "other"}])
+    src = ('def test_map_renders(page, evidence_dir):\n'
+           '    # https://example.test/map\n'
+           '    observation_evidence(page, "map", lambda: expect(page.locator("#map")).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test/map', inv)
+
+def test_validator_accepts_iframe_fallback_for_selectorless_embed():
+    inv = PageInventory('https://example.test/map', 'Map',
+                        embeds=[{"kind": "map", "provider": "google.com/maps",
+                                 "selector": "iframe", "region": "content"}])
+    src = ('def test_map_iframe(page, evidence_dir):\n'
+           '    # https://example.test/map\n'
+           '    observation_evidence(page, "m", lambda: expect(page.locator("iframe").first).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test/map', inv)

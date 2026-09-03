@@ -13,6 +13,10 @@ class PageInventory:
     # what clicking a [content] trigger surfaced during the explore probe:
     # [{"trigger": str, "effect": "reveals"|"navigates", "controls": [...], "to": str}]
     revealed: list[dict[str, Any]] = field(default_factory=list)
+    # third-party map / media embeds the page is built around (Google Maps canvas,
+    # Leaflet, a maps <iframe>) - not driveable, assert only the container is visible:
+    # [{"kind": "map", "provider": str, "selector": str|None, "region": str, "big": bool}]
+    embeds: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

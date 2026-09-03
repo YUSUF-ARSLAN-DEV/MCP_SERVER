@@ -67,6 +67,15 @@ VALIDATION_RULES = (
     "action_evidence, and assert a results region/heading appeared - do not assert specific result rows (they rotate)."
 )
 
+EMBED_RULES = (
+    "THIRD-PARTY MAP / MEDIA EMBED - if PAGE EMBEDS lists a map (Google Maps canvas, Leaflet, a maps <iframe>) and "
+    "the page has few or no [content] controls, this page is NOT meaningfully testable. Write exactly ONE test: "
+    "expect(page.locator('<the embed selector>')).to_be_visible() wrapped in observation_evidence. Do NOT click the "
+    "map, drag it, zoom it, or assert markers / tiles / pins / info-windows / coordinates - that canvas has no DOM "
+    "you can query and no stable state. Do NOT reach into the iframe. If the embed has no selector, assert "
+    "page.locator('iframe').first is visible. Still write the single [chrome] nav/footer test if the chrome is present.\n"
+)
+
 LOCATOR_RULES = (
     "For a <select> / combobox, ALWAYS locate it by its id or selector token from CONTROLS "
     "(e.g. page.locator('#countrylist')). NEVER use get_by_label or get_by_role(name=...) for a select - "
@@ -211,6 +220,16 @@ def _compact_revealed(revealed: list[dict], limit: int = 10) -> str:
             lines.append(line)
     return "\n".join(lines)
 
+def _compact_embeds(embeds: list[dict]) -> str:
+    lines: list[str] = []
+    for e in embeds[:6]:
+        sel = e.get("selector")
+        loc = f"selector={sel}" if sel else f'{e.get("tag") or "element"} (no stable selector)'
+        title = f' title="{(e.get("title") or "").strip()[:60]}"' if e.get("title") else ""
+        lines.append(f'[{e.get("region") or "other"}] {e.get("kind") or "embed"} '
+                     f'({e.get("provider") or "?"}) {loc}{title}')
+    return "\n".join(lines)
+
 def _compact_headings(headings: list[dict]) -> str:
     out: list[str] = []
     for h in headings:
@@ -236,7 +255,8 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         f"treat them as observed; click/submit via action_evidence and assert the listed result):\n"
         f"{_compact_revealed(inventory.revealed) or '(none - the probe found no state change)'}\n\n"
         f"FORMS:\n{inventory.forms}\n\n"
-        f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
+        + (f"PAGE EMBEDS:\n{_compact_embeds(inventory.embeds)}\n\n" if getattr(inventory, "embeds", None) else "")
+        + f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
         "Generate dynamic, page-specific smoke tests as one pytest module. Only test controls that appear above; skip any marked disabled. "
         "Respect required/checked state and use only the listed select options. Use the pytest-playwright 'page' fixture. Never invent controls or outcomes.\n"
         "Start every test with _open(page); define _open as a one-liner: open_page(page, URL) "
@@ -245,7 +265,7 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         "and footer checks to get_by_role('contentinfo'), then put .first on the LINK, never on the landmark "
         "(the first navigation/contentinfo landmark is often a hidden mobile or skip-link menu): "
         "page.get_by_role('navigation').get_by_role('link', name='News', exact=True).first\n\n"
-        f"{SCOPE_RULES}\n\n{COVERAGE_RULES}\n\n{VALIDATION_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
+        f"{SCOPE_RULES}\n\n{COVERAGE_RULES}\n\n{VALIDATION_RULES}\n\n{EMBED_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
     )
 
 def extract_code(raw: str) -> str:
