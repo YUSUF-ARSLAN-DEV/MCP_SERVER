@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 from .models import PageInventory
 from .validator import validate_python_spec
+from .autorepair import repair_spec
 from .llm import ModelError
 
 SYSTEM = "Return exactly one complete Python pytest code block and no prose. Generate only tests supported by the observed page inventory."
@@ -286,12 +287,16 @@ def _skip_stub(inventory: PageInventory, reason: str) -> str:
         "    pass\n"
     )
 
-def generate_spec(client, guide: str, persona: str, inventory: PageInventory, output: Path, attempts: int = 5) -> None:
+def generate_spec(client, guide: str, persona: str, inventory: PageInventory, output: Path, attempts: int = 5, log=None) -> None:
     last = None
     feedback = ""
     for _ in range(attempts):
         try:
-            code = extract_code(client.generate(prompt_for(guide, persona, inventory, feedback), SYSTEM)); validate_python_spec(code, inventory.url, inventory); output.write_text(code, encoding='utf-8'); return
+            code = extract_code(client.generate(prompt_for(guide, persona, inventory, feedback), SYSTEM))
+            code, repairs = repair_spec(code, inventory)
+            if repairs and log:
+                log.info("autorepair %s: %s", inventory.url, "; ".join(repairs))
+            validate_python_spec(code, inventory.url, inventory); output.write_text(code, encoding='utf-8'); return
         except ModelError as exc:
             last = exc
             if exc.status in {401, 403, 429, 500, 502, 503, 504, 524, 530}:

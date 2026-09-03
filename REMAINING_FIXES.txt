@@ -104,7 +104,7 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      reject hidden-checkbox to_be_checked inline).
 
 ================================================================================
-6. [ ] Auto-repair AST pass
+6. [DONE 2026-09-03] Auto-repair AST pass
 --------------------------------------------------------------------------------
    Also the model-independent insurance for the Arabic-page retry-burn problem.
    A pipeline stage that mechanically rewrites common violations before bouncing
@@ -112,6 +112,28 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      - :has-text(...)              -> get_by_role(...)
      - expect(a) and expect(b)     -> [expect(a), expect(b)]
      - missing .first on multi-match locator -> add .first
+
+   DONE:
+   - new module website_test_pipeline/autorepair.py, repair_spec(source,
+     inventory) -> (rewritten_source, [applied repairs]).
+     * _repair_has_text: regex - .locator("<tag>:has-text('T')") ->
+       .get_by_role("<role>", name="T", exact=True) for tag in
+       button/a/nav/h1-6 or a [role=X] prefix; leaves class-only prefixes and
+       compound selectors alone.
+     * _repair_bool_chain: AST - a lambda whose body is `expect(...) and/or
+       expect(...)` becomes `lambda: [expect(...), expect(...)]` (unparse only
+       the lambda, string-replace, re-parse; loop for multiples).
+     * _repair_missing_first: AST - a .locator/.get_by_role call that targets an
+       inventory-AMBIGUOUS token or a bare [name=]/[type=]/[value=] attr selector
+       and is not already followed by .first/.last/.nth() gets .first appended
+       (works for assignments, expect(...) args, and .click() chains).
+     * whole thing is guarded: if the rewritten source fails to parse, the
+       original is returned untouched and no repairs are reported.
+   - generator.generate_spec: runs repair_spec between extract_code and
+     validate_python_spec; logs "autorepair <url>: <repairs>" when anything fired
+     (new log= param; cli passes it).
+   - tests_python/test_autorepair.py: 14 tests incl. 3 "raw fails validator ->
+     repaired passes" end-to-end checks. Full suite 84 passed.
 
 ================================================================================
 7. [ ] Failure-repair loop
