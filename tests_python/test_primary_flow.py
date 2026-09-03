@@ -4,7 +4,8 @@ from website_test_pipeline.models import PageInventory
 from website_test_pipeline.validator import validate_python_spec, SpecError
 from website_test_pipeline.generator import _compact_primary_flow, prompt_for
 from website_test_pipeline.explorer import (
-    _probe_primary_flow, _PLACEHOLDER_OPT, _ACTION_VERB, _plausible_value,
+    _probe_primary_flow, _probe_search_form, _search_term,
+    _PLACEHOLDER_OPT, _ACTION_VERB, _plausible_value,
 )
 
 _FLOW_RESULTS = {
@@ -113,3 +114,20 @@ def test_probe_returns_none_without_action_button():
 def test_probe_returns_none_without_fillables():
     controls = [{"tag": "button", "role": "button", "name": "Search", "region": "content"}]
     assert _probe_primary_flow(_NoBrowser(), "https://x.test", controls) is None
+
+def test_probe_falls_through_to_search_form_when_no_action_button():
+    # no verb button, no forms -> _probe_search_form returns None without navigating
+    assert _probe_primary_flow(_NoBrowser(), "https://x.test", [], forms=[], headings=[]) is None
+
+def test_search_form_probe_none_when_form_has_no_fields():
+    assert _probe_search_form(_NoBrowser(), "https://x.test", [{"selector": "#f", "fields": []}], [], None) is None
+
+
+# ------------------------------------------------------------------- search term
+
+def test_search_term_prefers_brand():
+    assert _search_term("https://www.malomatia.com/search", []) == "malomatia"
+    assert _search_term("https://acme.io/", []) == "acme"
+
+def test_search_term_falls_back_to_heading_word():
+    assert _search_term("https://x.io/", [{"text": "Enterprise Cloud Platform"}]) == "enterprise"

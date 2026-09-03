@@ -569,7 +569,99 @@ def _pick_multiselect(page, control: dict) -> str | None:
     return None
 
 
-def _probe_primary_flow(page, url: str, controls: list[dict], log=None) -> dict | None:
+def _search_term(url: str, headings: list[dict]) -> str:
+    """A term that will actually return hits: the brand, else a content heading word."""
+    from urllib.parse import urlsplit
+    host = urlsplit(url).hostname or ""
+    brand = re.sub(r"^www\.", "", host).split(".")[0]
+    if len(brand) >= 4:
+        return brand
+    for h in headings or []:
+        for word in re.findall(r"[A-Za-z]{5,}", h.get("text") or ""):
+            return word.lower()
+    return "the"
+
+
+def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], log=None) -> dict | None:
+    """A <form> with a free-text field (WordPress ?s=, site search) - fill it with a
+    real term, submit, and record the results page. The commonest 'primary flow'."""
+    for form in forms or []:
+        fields = [f for f in (form.get("fields") or []) if f]
+        if not fields:
+            continue
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            settle_page(page)
+            dismiss_overlays(page)
+        except Exception:
+            return None
+        scope = page.locator(form.get("selector")) if form.get("selector") else page.locator("form").first
+        field = None
+        for name in fields:
+            cand = scope.locator(f'input[name="{name}"], textarea[name="{name}"]').first
+            try:
+                if cand.count() and (cand.get_attribute("type") or "text") in {"text", "search", None}:
+                    field = cand
+                    break
+            except Exception:
+                continue
+        if field is None:
+            continue
+        term = _search_term(url, headings)
+        try:
+            field.fill(term, timeout=2000)
+        except Exception:
+            continue
+        try:
+            pre = page.locator(_RESULTS_SEL).evaluate_all(_RESULTS_JS)
+        except Exception:
+            pre = []
+        pre_keys = {(p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) for p in pre}
+        before_url = page.url
+        submit = _form_submit_locator(page, form)
+        try:
+            if submit is not None:
+                submit.click(timeout=2500)
+            else:
+                field.press("Enter", timeout=2500)
+            page.wait_for_timeout(2200)
+        except Exception as exc:
+            if log:
+                log.info("primary-flow(search): submit failed (%s)", str(exc).splitlines()[0][:120])
+            return None
+        flow = {"action": f'search for "{term}"',
+                "action_selector": form.get("selector"),
+                "steps": [{"kind": "fill", "selector": f'input[name="{fields[0]}"]',
+                           "name": "search field", "value": term}]}
+        if page.url != before_url:
+            flow["effect"] = "navigates"
+            flow["to"] = page.url
+        try:
+            post = page.locator(_RESULTS_SEL).evaluate_all(_RESULTS_JS)
+        except Exception:
+            post = []
+        fresh = [
+            p for p in post
+            if (p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) not in pre_keys
+            and p.get("region") in {"content", "other"} and (p.get("rows") or 0) >= 2
+        ]
+        if fresh:
+            best = max(fresh, key=lambda p: p.get("rows") or 0)
+            flow.update(effect="results", results_selector=best.get("selector"),
+                        results_role=best.get("role"), row_count=best.get("rows"),
+                        results_text=best.get("text"))
+        elif "effect" not in flow:
+            flow["effect"] = "no-visible-result"
+        if log:
+            tail = (f' -> results in {flow.get("results_selector") or flow.get("results_role")} '
+                    f'({flow.get("row_count")} rows)' if flow["effect"] == "results" else f' -> {flow["effect"]}')
+            log.info('primary-flow(search): "%s"%s', term, tail)
+        return flow
+    return None
+
+
+def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] | None = None,
+                        headings: list[dict] | None = None, log=None) -> dict | None:
     content = [c for c in controls
                if c.get("region") in {"content", "other"} and not c.get("hidden") and not c.get("disabled")]
     action = next(
@@ -578,7 +670,7 @@ def _probe_primary_flow(page, url: str, controls: list[dict], log=None) -> dict 
          and not c.get("href") and _ACTION_VERB.search((c.get("name") or ""))),
         None)
     if action is None:
-        return None
+        return _probe_search_form(page, url, forms or [], headings or [], log)
     selects = [c for c in content if c.get("tag") == "select" and (c.get("options") or [])]
     inputs = [c for c in content
               if c.get("tag") == "input" and (c.get("type") or "text") in
@@ -718,7 +810,7 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     if probe_max > 0:
         revealed = revealed + _probe_forms(page, url, forms, min(2, probe_max), log)
         try:
-            primary_flow = _probe_primary_flow(page, url, controls, log)
+            primary_flow = _probe_primary_flow(page, url, controls, forms, headings, log)
         except Exception as exc:
             if log:
                 log.info("primary-flow: probe errored (%s)", str(exc).splitlines()[0][:150])
