@@ -77,7 +77,8 @@ PRIMARY_FLOW_RULES = (
     "(or select_option(index=1) if the label is long/among many). fill step: page.locator('<selector>').fill('<value>'). "
     "multiselect step: click the named button, then in the menu that opens click the option whose text is the value, "
     "then press Escape - OR page.locator('select[multiple]').select_option(label='<value>').\n"
-    "- Then click the action button (use its selector token, else get_by_role('button', name='<action>', exact=True)).\n"
+    "- submit step: do EXACTLY what the block says - 'press Enter in <sel>' means page.locator('<sel>').press('Enter'); "
+    "'click <sel>' means page.locator('<sel>').first.click(). NEVER click a <form> element itself.\n"
     "- Assert the RESULT the block records:\n"
     "  * 'results appeared in X': expect(page.locator('<X>')).to_be_visible() AND assert it is non-empty - "
     "expect(page.locator('<X> tr, <X> li, <X> [role=\"row\"]').first).to_be_visible(). NEVER assert an exact row count.\n"
@@ -250,11 +251,15 @@ def _compact_revealed(revealed: list[dict], limit: int = 10) -> str:
 def _compact_primary_flow(flow: dict | None) -> str:
     if not flow:
         return ""
-    lines = [f'action button: "{flow.get("action")}"'
-             + (f' selector={flow["action_selector"]}' if flow.get("action_selector") else "")]
+    lines = [f'flow: {flow.get("action")}']
     for i, step in enumerate(flow.get("steps") or [], 1):
         loc = f'selector={step["selector"]}' if step.get("selector") else f'"{step.get("name")}"'
-        lines.append(f'  step {i}: {step.get("kind")} {loc} -> value "{step.get("value")}"')
+        kind = step.get("kind")
+        if kind == "submit":
+            how = ("press Enter in " + loc) if step.get("value") == "press Enter" else ("click " + loc)
+            lines.append(f'  step {i}: submit - {how}')
+        else:
+            lines.append(f'  step {i}: {kind} {loc} -> "{step.get("value")}"')
     from urllib.parse import urlsplit
     effect = flow.get("effect")
     dest = urlsplit(str(flow.get("to") or ""))

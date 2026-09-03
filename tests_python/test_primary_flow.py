@@ -23,10 +23,18 @@ _FLOW_RESULTS = {
 
 def test_compact_primary_flow_results():
     out = _compact_primary_flow(_FLOW_RESULTS)
-    assert 'action button: "Search"' in out
+    assert "flow: Search" in out
     assert "step 1: select selector=#countrylist" in out
     assert "step 2: multiselect" in out
     assert "results appeared in #freq-results (14 item(s))" in out
+
+def test_compact_primary_flow_renders_submit_step():
+    flow = {"action": 'search for "acme"', "steps": [
+        {"kind": "fill", "selector": 'input[name="s"]', "name": "search field", "value": "acme"},
+        {"kind": "submit", "selector": 'input[name="s"]', "name": "search field", "value": "press Enter"},
+    ], "effect": "navigates", "to": "https://acme.io/?s=acme"}
+    out = _compact_primary_flow(flow)
+    assert 'step 2: submit - press Enter in selector=input[name="s"]' in out
 
 def test_compact_primary_flow_navigates():
     out = _compact_primary_flow({"action": "Find", "steps": [{"kind": "fill", "name": "q", "value": "test"}],

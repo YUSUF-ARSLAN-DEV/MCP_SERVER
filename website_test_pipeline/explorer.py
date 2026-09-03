@@ -631,10 +631,19 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
             pre = []
         pre_keys = {(p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) for p in pre}
         before_url = page.url
-        submit = _form_submit_locator(page, form)
+        field_sel = f'input[name="{fields[0]}"]'
+        submit_sel = None
+        for cand in ('button[type="submit"]', 'input[type="submit"]', 'button:not([type])'):
+            probe_sel = f'{form["selector"]} {cand}' if form.get("selector") else f'form {cand}'
+            try:
+                if page.locator(probe_sel).first.count():
+                    submit_sel = probe_sel
+                    break
+            except Exception:
+                continue
         try:
-            if submit is not None:
-                submit.click(timeout=2500)
+            if submit_sel:
+                page.locator(submit_sel).first.click(timeout=2500)
             else:
                 field.press("Enter", timeout=2500)
             page.wait_for_timeout(2200)
@@ -642,10 +651,13 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
             if log:
                 log.info("primary-flow(search): submit failed (%s)", str(exc).splitlines()[0][:120])
             return None
+        submit_step = ({"kind": "submit", "selector": submit_sel, "name": "submit button", "value": "click"}
+                       if submit_sel else
+                       {"kind": "submit", "selector": field_sel, "name": "search field", "value": "press Enter"})
         flow = {"action": f'search for "{term}"',
-                "action_selector": form.get("selector"),
-                "steps": [{"kind": "fill", "selector": f'input[name="{fields[0]}"]',
-                           "name": "search field", "value": term}]}
+                "action_selector": submit_sel,
+                "steps": [{"kind": "fill", "selector": field_sel, "name": "search field", "value": term},
+                          submit_step]}
         if page.url != before_url:
             flow["effect"] = "navigates"
             flow["to"] = page.url
