@@ -631,7 +631,9 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
             page.goto(url, wait_until="domcontentloaded")
             settle_page(page)
             dismiss_overlays(page)
-        except Exception:
+        except Exception as exc:
+            if log:
+                log.info("primary-flow(search): navigation to %s failed (%s)", url, str(exc).splitlines()[0][:120])
             return None
         scope = page.locator(form.get("selector")) if form.get("selector") else page.locator("form").first
         field = None
@@ -693,6 +695,8 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
                     f'({flow.get("row_count")} rows)' if flow["effect"] == "results" else f' -> {flow["effect"]}')
             log.info('primary-flow(search): "%s"%s', term, tail)
         return flow
+    if log and (forms or []):
+        log.info("primary-flow(search): no usable free-text field in %d form(s)", len(forms or []))
     return None
 
 
@@ -706,6 +710,8 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
          and not c.get("href") and _ACTION_VERB.search((c.get("name") or ""))),
         None)
     if action is None:
+        if log and not (forms or []):
+            log.info("primary-flow: no verb-named action button and no form on %s - skipping", url)
         return _probe_search_form(page, url, forms or [], headings or [], log)
     selects = [c for c in content if c.get("tag") == "select" and (c.get("options") or [])]
     inputs = [c for c in content
@@ -715,12 +721,17 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
                   if (c.get("tag") == "button" or c.get("role") == "button")
                   and c is not action and _MS_HINT.search((c.get("name") or ""))]
     if not (selects or inputs or ms_buttons):
+        if log:
+            log.info('primary-flow: action "%s" found but no fillable select/input/multiselect - skipping',
+                     action.get("name"))
         return None
     try:
         page.goto(url, wait_until="domcontentloaded")
         settle_page(page)
         dismiss_overlays(page)
-    except Exception:
+    except Exception as exc:
+        if log:
+            log.info("primary-flow: navigation to %s failed (%s)", url, str(exc).splitlines()[0][:120])
         return None
 
     steps: list[dict] = []
@@ -749,6 +760,9 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
             steps.append({"kind": "multiselect", "selector": control.get("selector"),
                           "name": control.get("name"), "value": picked})
     if not steps:
+        if log:
+            log.info('primary-flow: "%s" - could not fill any of %d select / %d input / %d multiselect control(s)',
+                     action.get("name"), len(selects), len(inputs), len(ms_buttons))
         return None
 
     try:
@@ -760,6 +774,8 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
 
     act_loc = _flow_locator(page, action)
     if act_loc is None:
+        if log:
+            log.info('primary-flow: action locator for "%s" did not resolve', action.get("name"))
         return None
     try:
         act_loc.click(timeout=2500)
