@@ -122,12 +122,14 @@ def _repair_missing_first(source: str, inventory) -> tuple[str, int]:
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                     and node.func.attr in _LOCATOR_ATTRS):
                 continue
-            segment = ast.get_source_segment(source, node)
+            segment = ast.get_source_segment(source, node)  # handles utf-8 byte offsets
             if not segment or not _targets_strictmode(segment, ambiguous):
                 continue
-            tail = source[_seg_end(source, node):][:16]
-            if re.match(r"\s*\.\s*(?:first|last)\b|\s*\.\s*nth\s*\(", tail):
-                continue  # already scoped
+            # already scoped? (offset-free check - ast col_offsets are utf-8 bytes and
+            # break on non-ASCII source, so match on the segment text instead)
+            if re.search(re.escape(segment) + r"\s*\.\s*(?:first|last)\b|"
+                         + re.escape(segment) + r"\s*\.\s*nth\s*\(", source):
+                continue
             hit = segment
             break
         if hit is None:
@@ -138,12 +140,6 @@ def _repair_missing_first(source: str, inventory) -> tuple[str, int]:
         source = updated
         count += 1
     return source, count
-
-
-def _seg_end(source: str, node: ast.AST) -> int:
-    lines = source.splitlines(keepends=True)
-    offset = sum(len(l) for l in lines[: (node.end_lineno or 1) - 1])
-    return offset + (node.end_col_offset or 0)
 
 
 def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:

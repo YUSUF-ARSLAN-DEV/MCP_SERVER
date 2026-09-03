@@ -112,6 +112,20 @@ def test_does_not_double_up_first():
     out, applied = repair_spec(src, _amb_inv())
     assert out == src and applied == []
 
+def test_does_not_double_up_first_with_non_ascii_name():
+    # ast col_offsets are utf-8 byte offsets; the "already has .first?" check must
+    # not misfire on Arabic text and produce `.first.first`.
+    inv = PageInventory('https://example.test', 'T', controls=[
+        {'name': 'التالي', 'tag': 'button', 'ambiguous': True},
+    ])
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    nxt = page.get_by_role("button", name="التالي", exact=True).first\n'
+           '    observation_evidence(page, "n", lambda: expect(nxt).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src, inv)
+    assert out == src and applied == []
+    assert ".first.first" not in out
+
 def test_adds_first_before_click_chain():
     src = ('def test_x(page, evidence_dir):\n'
            '    # https://example.test\n'
