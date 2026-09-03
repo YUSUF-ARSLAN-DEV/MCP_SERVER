@@ -496,3 +496,22 @@ def test_validator_accepts_locator_from_revealed_inventory():
            '    panel = page.locator("#panel")\n'
            '    observation_evidence(page, "panel", lambda: expect(panel).to_be_visible(), evidence_dir)\n')
     validate_python_spec(src, 'https://example.test', inv)
+
+def test_validator_accepts_class_error_selector_from_revealed_validation():
+    # Drupal's error block has no id; explorer emits a class selector like
+    # '.messages--error' - the model must be free to use it verbatim.
+    inv = PageInventory('https://example.test', 'T',
+                        controls=[{'field_name': 'email', 'name': 'Email', 'required': True}],
+                        forms=[{'selector': 'form#subscribe', 'fields': ['email']}],
+                        revealed=[{"trigger": "submit form#subscribe with no input",
+                                   "effect": "validation",
+                                   "controls": [{"tag": "div", "role": None, "name": "error",
+                                                 "selector": ".messages.messages--error",
+                                                 "region": "content"}]}])
+    src = ('def test_subscribe_requires_email(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    def act():\n'
+           '        page.locator(\'form#subscribe button[type="submit"]\').first.click()\n'
+           '    action_evidence(page, "submit empty", act,\n'
+           '        lambda: expect(page.locator(".messages.messages--error")).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test', inv)

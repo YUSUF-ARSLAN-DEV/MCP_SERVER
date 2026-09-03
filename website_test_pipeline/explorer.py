@@ -29,6 +29,18 @@ _JS_HELPERS = r"""
         || /^[a-f0-9]{8,}$/i.test(v)                         // hex blob
         || /[-_][a-f0-9]{6,}$/i.test(v)                      // trailing hex chunk
     );
+    // A stable CSS selector: prefer #id, else a class selector built from the
+    // element's error/validation-ish classes (Drupal's <div class="messages messages--error">
+    // has no id, so without this the model is left guessing [role=alert]).
+    const MEANINGFUL_CLS = /(^|[-_])(error|errors|invalid|warning|alert|danger|message|messages|feedback|help-block)($|[-_])/i;
+    const classSelector = e => {
+        const picks = [...(e.classList || [])]
+            .filter(c => MEANINGFUL_CLS.test(c) && !volatileId(c))
+            .slice(0, 3)
+            .map(c => '.' + c.replace(/([^\w-])/g, '\\$1'));
+        return picks.length ? picks.join('') : null;
+    };
+    const stableSelector = e => (e.id && !volatileId(e.id)) ? ('#' + e.id) : classSelector(e);
 """
 
 _HEADINGS_JS = "els => {" + _JS_HELPERS + r"""
@@ -100,7 +112,7 @@ _VALIDATION_JS = "els => {" + _JS_HELPERS + r"""
         tag: e.tagName.toLowerCase(),
         role: e.getAttribute('role') || null,
         name: (e.getAttribute('aria-label') || (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60)),
-        selector: e.id ? `#${e.id}` : null,
+        selector: stableSelector(e),
         region: regionOf(e),
         text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140)
     }));

@@ -5,12 +5,22 @@ Created 2026-09-03. Session: https://claude.ai/code/session_01RTPme2eCSRZoR8RaCk
 Status legend: [ ] todo   [WIP] in progress   [DONE] complete
 
 ================================================================================
-1. [ ] Drupal error block has no id
+1. [DONE 2026-09-03] Drupal error block has no id
 --------------------------------------------------------------------------------
    Symptom: /en/subscribe test fails because the model guesses [role=alert] for
    the validation error region.
    Fix: explorer _VALIDATION_JS should emit a class selector (e.g. ".messages.error")
    when the matched element's id is empty, instead of leaving the model to guess.
+
+   DONE:
+   - explorer.py _JS_HELPERS: classSelector()/stableSelector(). classSelector
+     builds a "."-joined selector from the element's error/validation-ish classes
+     (MEANINGFUL_CLS), skipping volatile/hex classes, max 3, CSS-escaped.
+     stableSelector prefers #id, falls back to classSelector.
+   - explorer.py _VALIDATION_JS: selector = stableSelector(e).
+   - generator.py VALIDATION_RULES: use the REVEALED validation entry's selector
+     VERBATIM; stop suggesting [role=alert]/.error first.
+   - tests_python: +test_validator_accepts_class_error_selector_from_revealed_validation
 
 ================================================================================
 2. [ ] jQuery-UI multiselect - hidden checkboxes / menu intercepts clicks
