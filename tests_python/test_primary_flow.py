@@ -49,6 +49,15 @@ def test_compact_primary_flow_navigates():
 def test_compact_primary_flow_none():
     assert _compact_primary_flow(None) == ""
 
+def test_compact_primary_flow_no_visible_result_warns_against_submit_and_value():
+    flow = {"action": "Search", "steps": [
+        {"kind": "select", "selector": "#countrylist", "name": "Country", "value": "Egypt"},
+    ], "effect": "no-visible-result"}
+    out = _compact_primary_flow(flow)
+    assert "NOT a confirmed end-to-end flow" in out
+    assert "do NOT click a final submit" in out
+    assert "<select> value / id" in out
+
 
 # ------------------------------------------------------------------- prompt
 
