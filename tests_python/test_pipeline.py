@@ -532,6 +532,36 @@ def test_validator_accepts_class_error_selector_from_revealed_validation():
            '        lambda: expect(page.locator(".messages.messages--error")).to_be_visible(), evidence_dir)\n')
     validate_python_spec(src, 'https://example.test', inv)
 
+# ------------------------------------------- reject to_be_visible on hidden element
+
+def _sr_only_inv():
+    return PageInventory('https://example.test', 'T',
+        headings=[{'level': 'H1', 'text': 'Al Jazeera Media Network', 'hidden': True}],
+        controls=[{'tag': 'input', 'type': 'checkbox', 'name': 'BBC One',
+                   'selector': '#chan-bbc', 'hidden': True}])
+
+def test_rejects_to_be_visible_on_sr_only_heading():
+    src = ('def test_h1(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    h = page.get_by_role("heading", name="Al Jazeera Media Network", exact=True)\n'
+           '    observation_evidence(page, "h", lambda: expect(h).to_be_visible(), evidence_dir)\n')
+    with pytest.raises(SpecError, match='HIDDEN'):
+        validate_python_spec(src, 'https://example.test', _sr_only_inv())
+
+def test_accepts_to_have_count_on_sr_only_heading():
+    src = ('def test_h1(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    h = page.get_by_role("heading", name="Al Jazeera Media Network", exact=True)\n'
+           '    observation_evidence(page, "h", lambda: expect(h).to_have_count(1), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test', _sr_only_inv())
+
+def test_rejects_to_be_checked_on_hidden_checkbox_inline():
+    src = ('def test_c(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    observation_evidence(page, "c", lambda: expect(page.locator("#chan-bbc")).to_be_checked(), evidence_dir)\n')
+    with pytest.raises(SpecError, match='HIDDEN'):
+        validate_python_spec(src, 'https://example.test', _sr_only_inv())
+
 # --------------------------------------------------- strict get_by_role name match
 
 def _footer_inv():

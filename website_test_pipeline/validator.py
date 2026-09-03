@@ -304,6 +304,48 @@ def _evidence_misuse(tree: ast.AST) -> str | None:
                         "call it as a plain statement")
     return None
 
+_VISIBILITY_ASSERTS = {"to_be_visible", "to_be_in_viewport", "to_be_checked"}
+
+def _visible_assert_on_hidden(tree: ast.AST, source: str, inventory) -> str | None:
+    """to_be_visible() / to_be_checked() on an element the explorer marked hidden
+    (sr-only heading, 1px jQuery-UI multiselect checkbox) - it is in the DOM but
+    not on screen, so the assertion always fails. The model should use
+    to_have_count(1)."""
+    hidden: set[str] = set()
+    for heading in getattr(inventory, "headings", None) or []:
+        text = _norm(str(heading.get("text") or ""))
+        if heading.get("hidden") and len(text) >= 8:  # long enough to be unambiguous
+            hidden.add(text)
+    for control in getattr(inventory, "controls", None) or []:
+        if control.get("hidden"):
+            for key in ("selector", "id", "field_name", "name"):
+                value = control.get(key)
+                if not value:
+                    continue
+                hidden.add(_norm(str(value)))
+                hidden.update(_norm(f) for f in _selector_fragments(str(value)))  # "#x" -> "x"
+    if not hidden:
+        return None
+    assigned: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            assigned[node.targets[0].id] = ast.get_source_segment(source, node.value) or ""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _VISIBILITY_ASSERTS):
+            continue
+        haystack = ast.get_source_segment(source, node.func.value) or ""
+        bare = re.fullmatch(r"expect\(\s*([A-Za-z_]\w*)\s*\)", haystack.strip())
+        if bare and bare.group(1) in assigned:
+            haystack = assigned[bare.group(1)]
+        targets = [m.group(1) or m.group(2) for m in _ID_FRAGMENT.finditer(haystack)]
+        targets += [m.group(2) for m in re.finditer(r"name\s*=\s*(['\"])([^'\"]+)\1", haystack)]
+        if any(_norm(t) in hidden for t in targets if t):
+            return (f"expect(...).{node.func.attr}() targets an element the inventory marks HIDDEN "
+                    "(screen-reader-only / 1px offscreen) - it never renders on screen; "
+                    "assert expect(x).to_have_count(1) instead")
+    return None
+
 def _guessed_disabled_state(tree: ast.AST, inventory) -> str | None:
     """to_be_disabled()/to_be_enabled() when nothing in the observed inventory is
     disabled - the model is guessing a business rule."""
@@ -352,6 +394,9 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
         guessed = _guessed_disabled_state(tree, inventory)
         if guessed:
             raise SpecError(guessed)
+        hidden_assert = _visible_assert_on_hidden(tree, source, inventory)
+        if hidden_assert:
+            raise SpecError(hidden_assert)
         tokens = _allowed_tokens(inventory)
         unknown: list[str] = []
         for literal in _css_locators(source):

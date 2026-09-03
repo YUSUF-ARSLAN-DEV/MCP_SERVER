@@ -85,11 +85,23 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      get_by_label substring still ok).
 
 ================================================================================
-5. [ ] Explorer records element visibility
+5. [DONE 2026-09-03] Explorer records element visibility
 --------------------------------------------------------------------------------
    Symptom: model asserts to_be_visible on visually-hidden (sr-only) H1s.
    Fix: explorer captures a visibility flag per element; generator told not to
    assert visibility on hidden elements.
+
+   DONE (recording was mostly in place - _HEADINGS_JS already had `hidden`,
+   Fix 2 added it to _CONTROLS_JS; this fix adds ENFORCEMENT):
+   - validator.py _visible_assert_on_hidden(): rejects to_be_visible /
+     to_be_in_viewport / to_be_checked on an inventory-hidden element - matched
+     by control selector/id/field_name/name (+ #id fragments) or by sr-only
+     heading text (>= 8 chars). Resolves `h = page.get_by_role(...)` then
+     `expect(h)...` via a local assignment map. Message -> to_have_count(1).
+   - wired into validate_python_spec after _guessed_disabled_state.
+   - generator LOCATOR_RULES already covers it (Fix 2).
+   - tests_python: +3 (reject sr-only heading visible, accept to_have_count(1),
+     reject hidden-checkbox to_be_checked inline).
 
 ================================================================================
 6. [ ] Auto-repair AST pass
