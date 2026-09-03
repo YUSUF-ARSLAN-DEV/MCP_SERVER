@@ -60,11 +60,27 @@ def _allowed_tokens(inventory) -> set[str]:
 def _css_locators(source: str) -> list[str]:
     return [m.group(2) for m in re.finditer(r"\.locator\(\s*(['\"])([^'\"\n]+)\1", source)]
 
-# get_by_* helpers keyed on user-visible text / labels - high hallucination risk
-def _text_locators(source: str) -> list[str]:
-    out = [m.group(2) for m in re.finditer(r"\.get_by_(?:label|placeholder|test_id|alt_text|title)\(\s*(['\"])([^'\"\n]+)\1", source)]
-    out += [m.group(2) for m in re.finditer(r"\.get_by_role\(\s*['\"][^'\"\n]+['\"][^)\n]*?\bname\s*=\s*(['\"])([^'\"\n]+)\1", source)]
-    return out
+# get_by_label / placeholder / test_id / alt_text / title - Playwright matches these
+# as a substring by default, so a loose _known() check is right for them.
+def _attr_text_locators(source: str) -> list[str]:
+    return [m.group(2) for m in re.finditer(r"\.get_by_(?:label|placeholder|test_id|alt_text|title)\(\s*(['\"])([^'\"\n]+)\1", source)]
+
+# get_by_role(..., name=...) - the guide mandates exact=True, so the name must be a
+# WHOLE observed accessible name. A loose substring match here lets hallucinated
+# footer links ("About" for "About Al Jazeera", "Connect" for "Connect With Us") through.
+def _role_name_locators(source: str) -> list[str]:
+    return [m.group(2) for m in re.finditer(r"\.get_by_role\(\s*['\"][^'\"\n]+['\"][^)\n]*?\bname\s*=\s*(['\"])([^'\"\n]+)\1", source)]
+
+_NAME_EDGE = " \t\"'.,:;!?|>»«–—- ​–—"
+
+def _known_name(literal: str, tokens: set[str]) -> bool:
+    """Strict: the name must equal a full observed accessible name (after trimming
+    surrounding punctuation / whitespace on both sides). No substring credit."""
+    normalized = _norm(literal)
+    if not normalized:
+        return True
+    variants = {normalized, normalized.strip(_NAME_EDGE)}
+    return any(token.strip(_NAME_EDGE) in variants or token in variants for token in tokens)
 
 # identifying fragments inside a CSS selector: #id and [attr=value]; a selector with none is purely structural
 _ID_FRAGMENT = re.compile(r"#([A-Za-z0-9_-]+)|\[[A-Za-z-]+\s*[*^$|~]?=\s*['\"]?([^'\"\]]+)")
@@ -342,8 +358,12 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
             fragments = _selector_fragments(literal)
             if fragments and not any(_known(fragment, tokens) for fragment in fragments):
                 unknown.append(literal)
-        for literal in _text_locators(source):
+        for literal in _attr_text_locators(source):
             if not _known(literal, tokens):
                 unknown.append(literal)
+        for literal in _role_name_locators(source):
+            if not _known_name(literal, tokens):
+                unknown.append(literal)
         if unknown:
-            raise SpecError(f"selector not in observed inventory: {unknown[0]!r}")
+            raise SpecError(f"selector / name not in observed inventory: {unknown[0]!r} "
+                            "(get_by_role name must be a WHOLE observed accessible name)")

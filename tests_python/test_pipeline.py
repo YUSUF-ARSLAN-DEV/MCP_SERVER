@@ -532,6 +532,47 @@ def test_validator_accepts_class_error_selector_from_revealed_validation():
            '        lambda: expect(page.locator(".messages.messages--error")).to_be_visible(), evidence_dir)\n')
     validate_python_spec(src, 'https://example.test', inv)
 
+# --------------------------------------------------- strict get_by_role name match
+
+def _footer_inv():
+    return PageInventory('https://example.test', 'T',
+        headings=[{'level': 'H1', 'text': 'Welcome'}],
+        controls=[
+            {'tag': 'a', 'name': 'About Al Jazeera', 'href': '/about', 'region': 'chrome'},
+            {'tag': 'a', 'name': 'Connect With Us', 'href': '/connect', 'region': 'chrome'},
+            {'tag': 'input', 'field_name': 'email', 'name': 'Email address', 'placeholder': 'Email address'},
+        ])
+
+def test_rejects_truncated_role_name_hallucinated_footer_link():
+    src = ('def test_footer(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    link = page.get_by_role("link", name="About", exact=True).first\n'
+           '    observation_evidence(page, "a", lambda: expect(link).to_be_visible(), evidence_dir)\n')
+    with pytest.raises(SpecError, match='not in observed inventory'):
+        validate_python_spec(src, 'https://example.test', _footer_inv())
+
+def test_accepts_full_role_name():
+    src = ('def test_footer(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    link = page.get_by_role("link", name="About Al Jazeera", exact=True).first\n'
+           '    observation_evidence(page, "a", lambda: expect(link).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test', _footer_inv())
+
+def test_accepts_full_role_name_with_trailing_punctuation():
+    src = ('def test_footer(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    link = page.get_by_role("link", name="Connect With Us:", exact=True).first\n'
+           '    observation_evidence(page, "c", lambda: expect(link).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test', _footer_inv())
+
+def test_get_by_label_still_allows_substring_match():
+    # Playwright get_by_label matches as a substring - "Email" is fine for "Email address".
+    src = ('def test_form(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    field = page.get_by_label("Email")\n'
+           '    observation_evidence(page, "e", lambda: expect(field).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test', _footer_inv())
+
 # ------------------------------------------------------------ map / media embeds
 
 def test_compact_embeds_renders_provider_and_selector():

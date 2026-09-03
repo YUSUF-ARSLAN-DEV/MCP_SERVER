@@ -63,12 +63,26 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      #map and iframe fallback).
 
 ================================================================================
-4. [ ] Tighten validator _known substring matching
+4. [DONE 2026-09-03] Tighten validator _known substring matching
 --------------------------------------------------------------------------------
    Symptom: hallucinated footer links ("About", "Connect") pass validation
    because they substring-match some unrelated inventory token.
    Fix: make the inventory-token match stricter (word-boundary / full-token,
    not loose >=3-char substring).
+
+   DONE:
+   - validator.py: split _text_locators into _attr_text_locators (get_by_label/
+     placeholder/... - Playwright substring-matches, KEEP loose _known()) and
+     _role_name_locators (get_by_role name=...).
+   - _known_name(): strict - the name must equal a WHOLE observed accessible
+     name after trimming surrounding punctuation/whitespace. No substring credit.
+     get_by_role(name="About") rejected when only "about al jazeera" observed;
+     name="About Al Jazeera" ok; "Connect With Us:" (trailing colon) ok.
+   - SpecError: "selector / name not in observed inventory: ... (get_by_role
+     name must be a WHOLE observed accessible name)".
+   - generator LOCATOR_RULES: "don't shorten the accessible name" rule.
+   - tests_python: +4 (reject truncated, accept full, accept trailing punct,
+     get_by_label substring still ok).
 
 ================================================================================
 5. [ ] Explorer records element visibility
