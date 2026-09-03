@@ -322,6 +322,19 @@ def test_control_line_marks_hidden():
     line = _control_line({"tag": "input", "name": "BBC One", "region": "content", "hidden": True})
     assert "HIDDEN" in line
 
+def test_control_line_hides_opaque_numeric_select_options():
+    from website_test_pipeline.generator import _control_line
+    line = _control_line({"tag": "select", "selector": "#countrylist", "region": "content",
+                          "options": ["-1", "37", "285", "38", "20"]})
+    assert "37" not in line and "285" not in line
+    assert "opaque numeric ids" in line and "never assert to_have_value" in line
+
+def test_control_line_keeps_real_text_select_options():
+    from website_test_pipeline.generator import _control_line
+    line = _control_line({"tag": "select", "selector": "#freq", "region": "content",
+                          "options": ["Daily", "Weekly", "Monthly"]})
+    assert "Weekly" in line
+
 def test_compact_revealed_renders_trigger_and_controls():
     revealed = [
         {"trigger": "Show frequencies", "effect": "reveals",

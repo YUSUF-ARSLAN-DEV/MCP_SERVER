@@ -136,6 +136,49 @@ def test_adds_first_before_click_chain():
     assert 'name="Next", exact=True).first.click()' in out
 
 
+# ----------------------------------------------- opaque <select> value assertions
+
+def test_downgrades_select_value_assert_in_action_evidence():
+    src = ('def test_flow(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    def act():\n'
+           '        page.locator("#countrylist").select_option(label="Egypt")\n'
+           '    action_evidence(page, "01-country", act,\n'
+           '        lambda: expect(page.locator("#countrylist")).to_have_value("37"), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert '.not_to_have_value("")' in out
+    assert 'to_have_value("37")' not in out
+    assert applied and "select-value" in applied[-1]
+    assert _parses(out)
+
+def test_downgrades_select_value_assert_via_variable():
+    src = ('def test_flow(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    sel = page.locator("#c")\n'
+           '    sel.select_option(label="Egypt")\n'
+           '    observation_evidence(page, "c", lambda: expect(sel).to_have_value("-16"), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert 'expect(sel).not_to_have_value("")' in out
+    assert applied
+
+def test_leaves_input_fill_value_assert_alone():
+    # a real, passing pattern: fill a number field then assert it - no select_option, untouched
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    page.locator("#qty").fill("1")\n'
+           '    observation_evidence(page, "q", lambda: expect(page.locator("#qty")).to_have_value("1"), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert out == src and applied == []
+
+def test_leaves_non_numeric_select_value_assert_alone():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    page.locator("#c").select_option(label="Weekly")\n'
+           '    observation_evidence(page, "c", lambda: expect(page.locator("#c")).to_have_value("weekly"), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert out == src and applied == []
+
+
 # --------------------------------------------------------------- safety
 
 def _map_inv():

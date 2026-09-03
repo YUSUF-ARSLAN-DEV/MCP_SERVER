@@ -85,7 +85,10 @@ PRIMARY_FLOW_RULES = (
     "NEVER assert an exact row count.\n"
     "  * 'search landed on <url>': expect(page).to_have_url(re.compile(r'<distinctive part>')) plus one heading "
     "visible - that IS the smoke test; do not invent a results element.\n"
-    "  * 'no visible results region': assert the last step's value stuck (a select still shows your choice).\n"
+    "  * 'no visible results region': the probe completed the steps but observed no results and no navigation - do "
+    "NOT treat this as a working end-to-end flow. Fill the fields, assert each control is visible and that a TEXT "
+    "input holds the value you typed (expect(field).to_have_value('<text>')); do NOT click a final submit and do NOT "
+    "assert a <select>'s value or any downstream state.\n"
     "- If the block gives no results selector, locate the results region by role or by a heading observed above it.\n"
 )
 
@@ -146,6 +149,10 @@ ASSERTION_RULES = (
     "Never assert a state that the action you just performed changes or removes: a submit button that becomes "
     "disabled or relabelled after click, an overlay that _open() already dismissed, a field that clears on submit. "
     "Verify the genuine post-state (a value you set, a panel that appeared, a URL glob).\n"
+    "A <select>'s option 'value' is an internal id you cannot know from the page. select_option(label=...) already "
+    "fails if the label is missing, so NEVER follow it with expect(sel).to_have_value('<number>'). If you must "
+    "confirm a choice was made use expect(sel).not_to_have_value(''); otherwise move to the next step and assert the "
+    "visible outcome.\n"
     "Never assert exact copy you did not observe (no guessed success/error messages). Do not assert the exact "
     "text of a heading tagged [feed] or any individual article/news headline - that content rotates between "
     "crawl and run. Assert only stable structural headings and labels.\n"
@@ -174,7 +181,12 @@ def _control_line(control: dict) -> str:
     if control.get("type"):
         parts.append(f"type={control['type']}")
     if control.get("options"):
-        parts.append(f"options={list(control['options'])[:15]}")
+        opts = [str(o) for o in control["options"]]
+        ids_only = len(opts) >= 2 and sum(bool(re.fullmatch(r"-?\d+", o.strip())) for o in opts) >= len(opts) - 1
+        if ids_only:
+            parts.append(f"options=<{len(opts)}+ opaque numeric ids; pick by visible label, never assert to_have_value>")
+        else:
+            parts.append(f"options={opts[:15]}")
     for flag in ("required", "disabled"):
         if control.get(flag):
             parts.append(flag)
@@ -284,7 +296,9 @@ def _compact_primary_flow(flow: dict | None) -> str:
     elif effect == "navigates":
         lines.append(f'  RESULT: navigated to {dest_str or flow.get("to")} - assert the URL matches')
     else:
-        lines.append('  RESULT: no visible results region appeared - assert the step values stuck, not a result element')
+        lines.append('  RESULT: no results region and no navigation were observed after the steps - this is NOT a '
+                     'confirmed end-to-end flow. Assert the fields are visible and any TEXT input holds the value you '
+                     'filled; do NOT click a final submit or assert a <select> value / id.')
     return "\n".join(lines)
 
 def _compact_embeds(embeds: list[dict]) -> str:

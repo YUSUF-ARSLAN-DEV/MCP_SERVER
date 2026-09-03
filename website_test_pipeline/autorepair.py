@@ -142,6 +142,68 @@ def _repair_missing_first(source: str, inventory) -> tuple[str, int]:
     return source, count
 
 
+_INT_LITERAL = re.compile(r"^-?\d+$")
+
+
+def _loc_key(segment: str) -> str:
+    """Normalise a locator expression for comparison - drop all whitespace and a
+    trailing .first / .last / .nth(...)."""
+    s = re.sub(r"\s+", "", segment)
+    s = re.sub(r"\.(?:first|last)$", "", s)
+    return re.sub(r"\.nth\([^)]*\)$", "", s)
+
+
+def _repair_select_value_assert(source: str) -> tuple[str, int]:
+    """`select_option(label=/text=...)` already fails loudly if the option is
+    missing, so a following `expect(sel).to_have_value("<n>")` adds no signal and
+    breaks the instant the option's opaque id differs from the crawl snapshot
+    (Drupal / WP term ids are environment-specific). Downgrade it to
+    `not_to_have_value("")` - a real 'something got selected' check."""
+    count = 0
+    for _ in range(20):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        select_locs: set[str] = set()
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "select_option"
+                    and any(k.arg in {"label", "text"} for k in node.keywords)):
+                seg = ast.get_source_segment(source, node.func.value)
+                if seg:
+                    select_locs.add(_loc_key(seg))
+        if not select_locs:
+            break
+        hit = None
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "to_have_value" and len(node.args) == 1
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                    and _INT_LITERAL.match(node.args[0].value.strip())):
+                continue
+            expect_call = node.func.value
+            if not (isinstance(expect_call, ast.Call) and isinstance(expect_call.func, ast.Name)
+                    and expect_call.func.id == "expect" and expect_call.args):
+                continue
+            recv = ast.get_source_segment(source, expect_call.args[0])
+            if not recv or _loc_key(recv) not in select_locs:
+                continue
+            old = ast.get_source_segment(source, node)
+            if old:
+                hit = (old, old.rsplit(".to_have_value", 1)[0] + '.not_to_have_value("")')
+            break
+        if hit is None or hit[0] == hit[1]:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
 _MAP_CONTENT = re.compile(r"\.(?:gm-style|leaflet-container)\b|canvas['\"]\s*\)")
 
 def _repair_map_settle(source: str, inventory) -> tuple[str, int]:
@@ -191,6 +253,9 @@ def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
         source, n = _repair_bool_chain(source)
         if n:
             applied.append(f"rewrote {n} and/or assertion chain(s) to a list")
+        source, n = _repair_select_value_assert(source)
+        if n:
+            applied.append(f"downgraded {n} opaque select-value assertion(s) to not_to_have_value('')")
         source, n = _repair_missing_first(source, inventory)
         if n:
             applied.append(f"added .first to {n} strict-mode locator(s)")
