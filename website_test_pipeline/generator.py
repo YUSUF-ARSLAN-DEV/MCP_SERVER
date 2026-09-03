@@ -255,16 +255,20 @@ def _compact_primary_flow(flow: dict | None) -> str:
     for i, step in enumerate(flow.get("steps") or [], 1):
         loc = f'selector={step["selector"]}' if step.get("selector") else f'"{step.get("name")}"'
         lines.append(f'  step {i}: {step.get("kind")} {loc} -> value "{step.get("value")}"')
+    from urllib.parse import urlsplit
     effect = flow.get("effect")
+    dest = urlsplit(str(flow.get("to") or ""))
+    dest_str = (dest.path + (("?" + dest.query) if dest.query else "")) or ""
     if effect == "results":
-        where = flow.get("results_selector") or f'role={flow.get("results_role")}'
-        lines.append(f'  RESULT: results appeared in {where} ({flow.get("row_count")} rows); '
-                     f'first text "{(flow.get("results_text") or "").strip()[:80]}"')
+        where = flow.get("results_selector") or (f'role={flow.get("results_role")}' if flow.get("results_role") else "the main content area")
+        url_note = f' at URL {dest_str}' if dest_str else ""
+        lines.append(f'  RESULT: results appeared in {where} ({flow.get("row_count")} item(s)){url_note}. '
+                     f'Assert that container is visible and has >=1 item; if it has no selector assert the URL '
+                     f'and that an <article>/result heading is visible.')
     elif effect == "navigates":
-        from urllib.parse import urlsplit
-        lines.append(f'  RESULT: navigated to {urlsplit(str(flow.get("to") or "")).path}')
+        lines.append(f'  RESULT: navigated to {dest_str or flow.get("to")} - assert the URL matches')
     else:
-        lines.append('  RESULT: no visible results region appeared (assert the steps completed, not a result)')
+        lines.append('  RESULT: no visible results region appeared - assert the step values stuck, not a result element')
     return "\n".join(lines)
 
 def _compact_embeds(embeds: list[dict]) -> str:

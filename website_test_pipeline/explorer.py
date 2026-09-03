@@ -474,20 +474,33 @@ _PLACEHOLDER_VAL = {"", "-1", "0", "null", "none", "all", "any", "undefined"}
 _MS_HINT = re.compile(r"select|choose|channel|category|option|type|brand|make|model|topic", re.I)
 
 _RESULTS_SEL = (
-    'table,[role="table"],[role="grid"],[role="list"],[role="feed"],[aria-live],'
-    'ul,ol,[class*="result" i],[class*="listing" i],[class*="frequenc" i],[id*="result" i]'
+    'main,[role="main"],#content,#main,.site-main,article,[role="feed"],[aria-live],'
+    'table,[role="table"],[role="grid"],[role="list"],'
+    '[class*="result" i],[class*="listing" i],[class*="search-res" i],[class*="posts" i],[id*="result" i]'
 )
 _RESULTS_JS = "els => {" + _JS_HELPERS + r"""
+    const CHROME_SEL = 'header, nav, footer, [role="banner"], [role="contentinfo"], [role="navigation"], [class*="menu" i], [class*="nav" i]';
+    const looksLikeCode = t => /[.#][\w-]+\s*\{|@media|function\s*\(|;\s*\}/.test(t.slice(0, 200));
     return els.filter(e => {
+        if (e.closest(CHROME_SEL)) return false;
+        if (['STYLE', 'SCRIPT', 'NAV', 'HEADER', 'FOOTER'].includes(e.tagName)) return false;
         const s = getComputedStyle(e); const r = e.getBoundingClientRect();
+        const txt = (e.textContent || '').trim();
         return s.display !== 'none' && s.visibility !== 'hidden'
-            && r.width > 1 && r.height > 24 && (e.textContent || '').trim().length > 12;
+            && r.width > 40 && r.height > 40 && txt.length > 30 && !looksLikeCode(txt);
     }).slice(0, 40).map(e => {
-        const rows = e.querySelectorAll('tr, li, [role="row"], [role="listitem"], [role="article"]').length;
+        // count things that read as result items, not menu links
+        const rows = e.querySelectorAll(
+            'article, [class*="result" i], [class*="post" i]:not([class*="poster" i]), '
+            + 'li:not(nav li):not([class*="menu" i] li), tr, [role="row"], [role="listitem"], [role="article"]'
+        ).length;
         return {
             tag: e.tagName.toLowerCase(),
             role: e.getAttribute('role') || null,
             selector: (e.id && !volatileId(e.id)) ? ('#' + e.id) : null,
+            klass: (typeof e.className === 'string'
+                ? '.' + e.className.trim().split(/\s+/).filter(c => c && !volatileId(c)).slice(0, 2).join('.')
+                : null),
             region: regionOf(e),
             rows: rows,
             text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120)
@@ -646,8 +659,10 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
             and p.get("region") in {"content", "other"} and (p.get("rows") or 0) >= 2
         ]
         if fresh:
-            best = max(fresh, key=lambda p: p.get("rows") or 0)
-            flow.update(effect="results", results_selector=best.get("selector"),
+            # most specific container: prefer one with a selector/class, then fewest rows
+            best = min(fresh, key=lambda p: (not (p.get("selector") or p.get("klass")), p.get("rows") or 999))
+            flow.update(effect="results",
+                        results_selector=best.get("selector") or best.get("klass"),
                         results_role=best.get("role"), row_count=best.get("rows"),
                         results_text=best.get("text"))
         elif "effect" not in flow:
@@ -748,8 +763,10 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
             and p.get("region") in {"content", "other"} and (p.get("rows") or 0) >= 2
         ]
         if fresh:
-            best = max(fresh, key=lambda p: p.get("rows") or 0)
-            flow.update(effect="results", results_selector=best.get("selector"),
+            # most specific container: prefer one with a selector/class, then fewest rows
+            best = min(fresh, key=lambda p: (not (p.get("selector") or p.get("klass")), p.get("rows") or 999))
+            flow.update(effect="results",
+                        results_selector=best.get("selector") or best.get("klass"),
                         results_role=best.get("role"), row_count=best.get("rows"),
                         results_text=best.get("text"))
         else:

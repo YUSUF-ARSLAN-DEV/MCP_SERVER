@@ -26,12 +26,12 @@ def test_compact_primary_flow_results():
     assert 'action button: "Search"' in out
     assert "step 1: select selector=#countrylist" in out
     assert "step 2: multiselect" in out
-    assert "results appeared in #freq-results (14 rows)" in out
+    assert "results appeared in #freq-results (14 item(s))" in out
 
 def test_compact_primary_flow_navigates():
     out = _compact_primary_flow({"action": "Find", "steps": [{"kind": "fill", "name": "q", "value": "test"}],
                                  "effect": "navigates", "to": "https://x.test/search?q=test"})
-    assert "navigated to /search" in out
+    assert "navigated to /search?q=test" in out
 
 def test_compact_primary_flow_none():
     assert _compact_primary_flow(None) == ""
