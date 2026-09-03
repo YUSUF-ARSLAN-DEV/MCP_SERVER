@@ -77,7 +77,7 @@ class UrlReport:
     generated_status: str | None = None
     outcomes: list[TestOutcome] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
-    page_actions: int = -1   # interactive controls the inventory observed; -1 = unknown
+    coverage_ceiling: str | None = None  # set when behavioural coverage is legitimately capped (captcha / embed / thin)
 
     @property
     def total(self) -> int:
@@ -215,28 +215,29 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "") -> RunReport
         url_reports=[by_url[k] for k in sorted(by_url)],
     )
     for report in run.url_reports:
-        report.page_actions = _count_page_actions(artifacts_dir, report.url)
+        report.coverage_ceiling = _behaviour_ceiling(_load_inventory(artifacts_dir, report.url))
         validate_url(report)
     return run
 
 
 _ACTION_ROLES = {"button", "checkbox", "radio", "combobox", "tab", "switch", "slider", "menuitem", "menuitemcheckbox"}
+_CAPTCHA_RE = re.compile(r"captcha|recaptcha|hcaptcha|are you human|prove you|robot", re.I)
 
 def _inv_slug(url: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", url.lower()).strip("-")[:100]
 
-def _count_page_actions(artifacts_dir: Path, url: str) -> int:
-    """How many genuinely interactive things the explorer saw on this page - form
-    controls, buttons, revealed panels, form fields. Lets validate_url tell a thin
-    page (few controls, visibility checks are the honest coverage) from a rich page
-    with lazy tests."""
+def _load_inventory(artifacts_dir: Path, url: str) -> dict | None:
     path = artifacts_dir / f"{_inv_slug(url)}.inventory.json"
     if not path.exists():
-        return -1
+        return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return -1
+        return None
+
+def _count_page_actions(data: dict) -> int:
+    """How many genuinely interactive things the explorer saw - form controls,
+    buttons, revealed panels, form fields."""
     n = 0
     for c in data.get("controls") or []:
         if c.get("region") == "chrome" or c.get("hidden"):
@@ -250,6 +251,23 @@ def _count_page_actions(artifacts_dir: Path, url: str) -> int:
     for f in data.get("forms") or []:
         n += min(len(f.get("fields") or []), 3)
     return n
+
+def _behaviour_ceiling(data: dict | None) -> str | None:
+    """A reason the page's behavioural coverage is legitimately capped - so a file
+    of mostly visibility checks is honest, not lazy. None means no excuse."""
+    if data is None:
+        return None
+    haystack = json.dumps(data.get("controls") or [], ensure_ascii=False) + " " \
+        + json.dumps(data.get("forms") or [], ensure_ascii=False) + " " \
+        + (data.get("accessibility") or "")
+    if _CAPTCHA_RE.search(haystack):
+        return "the form is CAPTCHA-protected, so a real end-to-end submit cannot be automated"
+    if data.get("embeds") and _count_page_actions(data) <= 3:
+        return "the page is built around a third-party embed (map / media) with no driveable DOM"
+    actions = _count_page_actions(data)
+    if actions <= 2:
+        return f"only ~{actions} interactive control(s) observed"
+    return None
 
 def _maybe_json(path: Path) -> dict[str, Any]:
     try:
@@ -342,18 +360,17 @@ def validate_url(report: UrlReport) -> None:
         or _title_calls_action(report.spec_path, o.title)
     )
     if report.total >= 4 and behavioural <= report.total // 4:
-        if 0 <= report.page_actions <= 2:
-            # The page genuinely offers almost nothing to interact with - a file of
-            # visibility checks IS the honest coverage here, not a lazy one.
+        if report.coverage_ceiling:
+            # The page legitimately can't be driven further - a file of visibility
+            # checks IS the honest coverage here, not a lazy one.
             warnings.append(
-                f"thin page: only ~{report.page_actions} interactive control(s) observed, so "
-                f"{behavioural}/{report.total} behavioural tests is expected - not a coverage gap"
+                f"limited coverage is expected here: {report.coverage_ceiling} "
+                f"({behavioural}/{report.total} behavioural) - not a coverage gap"
             )
         else:
-            extra = f" (page exposes ~{report.page_actions} interactive controls)" if report.page_actions >= 0 else ""
             warnings.append(
                 f"{behavioural}/{report.total} tests exercise behaviour (click/fill/submit/navigate + verify); "
-                f"the rest only assert an element is visible - shallow coverage for this page{extra}"
+                "the rest only assert an element is visible - shallow coverage for this page"
             )
 
 
