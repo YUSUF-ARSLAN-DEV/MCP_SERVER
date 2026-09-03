@@ -70,17 +70,15 @@ VALIDATION_RULES = (
 
 EMBED_RULES = (
     "THIRD-PARTY MAP / MEDIA EMBED - if PAGE EMBEDS lists a map (Google Maps canvas, Leaflet, a maps <iframe>) and "
-    "the page has few or no [content] controls, this page is NOT meaningfully testable. Write exactly ONE test:\n"
-    "- The map renders ASYNCHRONOUSLY - the container is in the DOM long before the tiles paint, so a screenshot "
-    "taken right after asserting the bare container shows a blank grey box. To avoid that: when PAGE EMBEDS gives a "
-    "`content=<selector>` token, assert THAT - expect(page.locator('<content selector>')).to_be_visible() - it only "
-    "passes once the map has actually drawn. Then, as a plain statement before the evidence call, "
-    "page.wait_for_timeout(2500) so the tiles finish loading in the screenshot.\n"
-    "- If there is no content token (a maps <iframe>), do page.wait_for_timeout(3000) as a plain statement first, "
-    "then assert page.locator('iframe').first is visible.\n"
-    "- Wrap the assertion in observation_evidence. Do NOT click / drag / zoom the map or assert markers / tiles / "
-    "pins / info-windows / coordinates, and do NOT reach into the iframe. Still write the single [chrome] nav/footer "
-    "test if the chrome is present.\n"
+    "the page has few or no [content] controls, this page is NOT meaningfully testable. Write exactly ONE map test:\n"
+    "- The map renders ASYNCHRONOUSLY - the container is in the DOM seconds before the tiles paint, so a screenshot "
+    "taken too early is a blank grey box. So the map test's body MUST be, in this order: _open(page); then "
+    "page.wait_for_timeout(3000) as a plain statement; then the evidence call.\n"
+    "- Assert the `content=<selector>` token from PAGE EMBEDS, not the bare container: "
+    "observation_evidence(page, 'map', lambda: expect(page.locator('<content selector>')).to_be_visible(), evidence_dir). "
+    "If there is no content token (a maps <iframe>), assert page.locator('iframe').first is visible instead.\n"
+    "- Do NOT click / drag / zoom the map or assert markers / tiles / pins / info-windows / coordinates, and do NOT "
+    "reach into the iframe. Still write the single [chrome] nav/footer test if the chrome is present.\n"
 )
 
 LOCATOR_RULES = (

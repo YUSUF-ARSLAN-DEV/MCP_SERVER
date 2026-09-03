@@ -213,7 +213,10 @@ F2. [DONE 2026-09-03] Map screenshot taken before the map paints
    expect(#map).to_be_visible() passes immediately and the screenshot is a grey
    box.
    FIX: _EMBEDS_JS emits a `content_selector` (#map .gm-style / .leaflet-container
-   / <base> canvas; null for an iframe). EMBED_RULES tells the model to assert the
-   content selector (waits for real paint) then page.wait_for_timeout(2500) as a
-   plain statement before the evidence call; iframe embeds get wait_for_timeout
-   (3000) first. validator + _compact_embeds updated. tests_python +3.
+   / <base> canvas; null for an iframe). EMBED_RULES: the map test body must be
+   _open(page) -> page.wait_for_timeout(3000) -> evidence call asserting the
+   content selector. validator + _compact_embeds updated.
+   Belt-and-braces: autorepair._repair_map_settle injects
+   page.wait_for_timeout(3000) after _open(page) if the model asserts a map
+   content selector (.gm-style/.leaflet-container/canvas) with no wait and the
+   inventory has a map embed. tests_python +6.

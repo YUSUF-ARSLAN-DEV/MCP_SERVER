@@ -138,6 +138,36 @@ def test_adds_first_before_click_chain():
 
 # --------------------------------------------------------------- safety
 
+def _map_inv():
+    return PageInventory('https://x.test/map', 'Map',
+                         embeds=[{"kind": "map", "provider": "google-maps-js",
+                                  "selector": "#map", "content_selector": "#map .gm-style"}])
+
+def test_injects_map_settle_when_missing():
+    src = ('def test_map(page, evidence_dir):\n'
+           '    _open(page)\n'
+           '    observation_evidence(page, "m", lambda: expect(page.locator("#map .gm-style")).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src, _map_inv())
+    assert "page.wait_for_timeout(3000)" in out
+    assert out.index("wait_for_timeout") < out.index("observation_evidence")
+    assert applied and "map settle" in applied[-1]
+    assert _parses(out)
+
+def test_does_not_add_map_settle_when_already_present():
+    src = ('def test_map(page, evidence_dir):\n'
+           '    _open(page)\n'
+           '    page.wait_for_timeout(5000)\n'
+           '    observation_evidence(page, "m", lambda: expect(page.locator("#map .gm-style")).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src, _map_inv())
+    assert out == src and applied == []
+
+def test_no_map_settle_without_map_embed():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    _open(page)\n'
+           '    observation_evidence(page, "c", lambda: expect(page.locator("#thing canvas")).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src, PageInventory('https://x.test', 'T'))
+    assert out == src and applied == []
+
 def test_no_repairs_leaves_source_identical():
     src = 'def test_x(page):\n    expect(page).to_have_title("Hi")\n'
     out, applied = repair_spec(src)

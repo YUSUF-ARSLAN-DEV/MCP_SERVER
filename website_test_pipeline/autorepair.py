@@ -142,6 +142,43 @@ def _repair_missing_first(source: str, inventory) -> tuple[str, int]:
     return source, count
 
 
+_MAP_CONTENT = re.compile(r"\.(?:gm-style|leaflet-container)\b|canvas['\"]\s*\)")
+
+def _repair_map_settle(source: str, inventory) -> tuple[str, int]:
+    """A test that asserts a map's rendered content (.gm-style / .leaflet-container
+    / canvas) needs a settle before the screenshot or it captures a blank grey
+    box. Inject page.wait_for_timeout(3000) after _open(page) when the model left
+    it out."""
+    if not any((e or {}).get("kind") == "map" for e in (getattr(inventory, "embeds", None) or [])):
+        return source, 0
+    count = 0
+    for _ in range(10):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        hit = None
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.FunctionDef) and node.name.startswith("test_")):
+                continue
+            seg = ast.get_source_segment(source, node) or ""
+            if "wait_for_timeout" in seg or not _MAP_CONTENT.search(seg):
+                continue
+            m = re.search(r"\n([ \t]+)_open\(page\)[^\n]*", seg)
+            if not m:
+                continue
+            hit = (seg, seg[:m.end()] + f"\n{m.group(1)}page.wait_for_timeout(3000)" + seg[m.end():])
+            break
+        if hit is None:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
 def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
     """Return (possibly rewritten source, list of human-readable repairs applied).
     On any parse failure of the rewritten source, return the original untouched."""
@@ -157,6 +194,9 @@ def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
         source, n = _repair_missing_first(source, inventory)
         if n:
             applied.append(f"added .first to {n} strict-mode locator(s)")
+        source, n = _repair_map_settle(source, inventory)
+        if n:
+            applied.append(f"added a map settle wait to {n} test(s)")
         if applied:
             ast.parse(source)
     except Exception:
