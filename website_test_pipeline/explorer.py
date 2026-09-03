@@ -1,3 +1,5 @@
+import re
+
 from .models import PageInventory
 from .pageutils import (
     _ACCEPT_NAMES,
@@ -457,6 +459,217 @@ def _probe_forms(page, url: str, forms: list[dict], limit: int, log=None) -> lis
     return out
 
 
+# -------------------------------------------------------------- primary-flow probe
+# The page's MAIN interaction is often a search / filter widget that is NOT a
+# <form> (a <select> + a button wired by JS). _probe_forms never sees it. This
+# probe finds that widget, fills it with real values, submits it, and records the
+# result - giving the generator the ONE test that is an actual smoke test.
+
+_ACTION_VERB = re.compile(
+    r"\b(search|find|look\s?up|filter|apply|show(?:\s+results?)?|go|submit|"
+    r"see\s+results?|get\s+results?|explore|check|calculate)\b", re.I)
+_PLACEHOLDER_OPT = re.compile(
+    r"^\s*(-+\s*$|please\s+(?:select|choose)|select\s|choose\s|--|all\b|any\b|none\b|n/?a\b)", re.I)
+_PLACEHOLDER_VAL = {"", "-1", "0", "null", "none", "all", "any", "undefined"}
+_MS_HINT = re.compile(r"select|choose|channel|category|option|type|brand|make|model|topic", re.I)
+
+_RESULTS_SEL = (
+    'table,[role="table"],[role="grid"],[role="list"],[role="feed"],[aria-live],'
+    'ul,ol,[class*="result" i],[class*="listing" i],[class*="frequenc" i],[id*="result" i]'
+)
+_RESULTS_JS = "els => {" + _JS_HELPERS + r"""
+    return els.filter(e => {
+        const s = getComputedStyle(e); const r = e.getBoundingClientRect();
+        return s.display !== 'none' && s.visibility !== 'hidden'
+            && r.width > 1 && r.height > 24 && (e.textContent || '').trim().length > 12;
+    }).slice(0, 40).map(e => {
+        const rows = e.querySelectorAll('tr, li, [role="row"], [role="listitem"], [role="article"]').length;
+        return {
+            tag: e.tagName.toLowerCase(),
+            role: e.getAttribute('role') || null,
+            selector: (e.id && !volatileId(e.id)) ? ('#' + e.id) : null,
+            region: regionOf(e),
+            rows: rows,
+            text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120)
+        };
+    });
+}"""
+
+
+def _flow_locator(page, control: dict):
+    selector = control.get("selector")
+    if selector:
+        try:
+            return page.locator(selector).first
+        except Exception:
+            return None
+    name = (control.get("name") or "").strip()
+    if not name:
+        return None
+    role = control.get("role") or ("button" if control.get("tag") == "button" else None)
+    if not role:
+        return None
+    try:
+        return page.get_by_role(role, name=name, exact=True).first
+    except Exception:
+        return None
+
+
+def _select_first_real(loc):
+    """Pick the first non-placeholder option of a <select>; return its label."""
+    try:
+        opts = loc.evaluate("el => [...el.options].map(o => ({v: o.value, t: (o.textContent||'').trim()}))")
+    except Exception:
+        return None
+    for opt in opts:
+        value, text = (opt.get("v") or ""), (opt.get("t") or "")
+        if value.strip().lower() in _PLACEHOLDER_VAL or _PLACEHOLDER_OPT.match(text):
+            continue
+        try:
+            loc.select_option(value=value, timeout=1500)
+            return text or value
+        except Exception:
+            return None
+    return None
+
+
+def _plausible_value(control: dict) -> str:
+    typ = (control.get("type") or "text").lower()
+    return {
+        "email": "test@example.com", "tel": "0123456789", "number": "1",
+        "date": "2025-01-01", "search": "a",
+    }.get(typ, "test")
+
+
+def _pick_multiselect(page, control: dict) -> str | None:
+    """Open the widget and take its first real option; fall back to the underlying
+    <select multiple> so a menu that won't open on a synthetic click still works."""
+    loc = _flow_locator(page, control)
+    if loc is not None:
+        try:
+            loc.click(timeout=2000)
+            page.wait_for_timeout(700)
+            menu = page.locator('.ui-multiselect-menu:visible, .select2-results:visible, [class*="dropdown-menu"]:visible').first
+            option = menu.locator('li label, li [role="option"], li a').first
+            if option.count():
+                label = (option.inner_text(timeout=1000) or "").strip()
+                option.click(timeout=1500)
+                page.keyboard.press("Escape")
+                return label[:80] or "first option"
+        except Exception:
+            pass
+    try:
+        sel = page.locator('select[multiple]').first
+        if sel.count():
+            picked = _select_first_real(sel)
+            if picked:
+                return picked
+    except Exception:
+        pass
+    return None
+
+
+def _probe_primary_flow(page, url: str, controls: list[dict], log=None) -> dict | None:
+    content = [c for c in controls
+               if c.get("region") in {"content", "other"} and not c.get("hidden") and not c.get("disabled")]
+    action = next(
+        (c for c in content
+         if (c.get("tag") == "button" or c.get("role") == "button")
+         and not c.get("href") and _ACTION_VERB.search((c.get("name") or ""))),
+        None)
+    if action is None:
+        return None
+    selects = [c for c in content if c.get("tag") == "select" and (c.get("options") or [])]
+    inputs = [c for c in content
+              if c.get("tag") == "input" and (c.get("type") or "text") in
+              {"text", "search", "tel", "email", "number", "date"}]
+    ms_buttons = [c for c in content
+                  if (c.get("tag") == "button" or c.get("role") == "button")
+                  and c is not action and _MS_HINT.search((c.get("name") or ""))]
+    if not (selects or inputs or ms_buttons):
+        return None
+    try:
+        page.goto(url, wait_until="domcontentloaded")
+        settle_page(page)
+        dismiss_overlays(page)
+    except Exception:
+        return None
+
+    steps: list[dict] = []
+    for control in selects[:4]:
+        loc = _flow_locator(page, control)
+        if loc is None:
+            continue
+        picked = _select_first_real(loc)
+        if picked is not None:
+            steps.append({"kind": "select", "selector": control.get("selector"),
+                          "name": control.get("name"), "value": picked})
+    for control in inputs[:3]:
+        loc = _flow_locator(page, control)
+        if loc is None:
+            continue
+        value = _plausible_value(control)
+        try:
+            loc.fill(value, timeout=1500)
+            steps.append({"kind": "fill", "selector": control.get("selector"),
+                          "name": control.get("name"), "value": value})
+        except Exception:
+            pass
+    for control in ms_buttons[:1]:
+        picked = _pick_multiselect(page, control)
+        if picked:
+            steps.append({"kind": "multiselect", "selector": control.get("selector"),
+                          "name": control.get("name"), "value": picked})
+    if not steps:
+        return None
+
+    try:
+        pre = page.locator(_RESULTS_SEL).evaluate_all(_RESULTS_JS)
+    except Exception:
+        pre = []
+    pre_keys = {(p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) for p in pre}
+    before_url = page.url
+
+    act_loc = _flow_locator(page, action)
+    if act_loc is None:
+        return None
+    try:
+        act_loc.click(timeout=2500)
+        page.wait_for_timeout(2200)
+    except Exception as exc:
+        if log:
+            log.info('primary-flow: "%s" click failed (%s)', action.get("name"), str(exc).splitlines()[0][:120])
+        return None
+
+    flow = {"action": action.get("name"), "action_selector": action.get("selector"), "steps": steps}
+    if page.url != before_url:
+        flow["effect"] = "navigates"
+        flow["to"] = page.url
+    else:
+        try:
+            post = page.locator(_RESULTS_SEL).evaluate_all(_RESULTS_JS)
+        except Exception:
+            post = []
+        fresh = [
+            p for p in post
+            if (p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) not in pre_keys
+            and p.get("region") in {"content", "other"} and (p.get("rows") or 0) >= 2
+        ]
+        if fresh:
+            best = max(fresh, key=lambda p: p.get("rows") or 0)
+            flow.update(effect="results", results_selector=best.get("selector"),
+                        results_role=best.get("role"), row_count=best.get("rows"),
+                        results_text=best.get("text"))
+        else:
+            flow["effect"] = "no-visible-result"
+    if log:
+        tail = (f' -> results in {flow.get("results_selector") or flow.get("results_role")} '
+                f'({flow.get("row_count")} rows)' if flow["effect"] == "results"
+                else f' -> {flow["effect"]}')
+        log.info('primary-flow: "%s" + %d step(s)%s', action.get("name"), len(steps), tail)
+    return flow
+
+
 def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     settle_page(page)
     dismiss_overlays(page)  # snapshot the real page, not consent / ad overlays
@@ -501,6 +714,12 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     # Interaction probe last: it navigates away and reloads, so it must run after
     # every static scrape above is done.
     revealed = _probe_interactions(page, url, controls, probe_max, log)
+    primary_flow = None
     if probe_max > 0:
         revealed = revealed + _probe_forms(page, url, forms, min(2, probe_max), log)
-    return PageInventory(url, title, headings, controls, signals, forms, revealed, embeds)
+        try:
+            primary_flow = _probe_primary_flow(page, url, controls, log)
+        except Exception as exc:
+            if log:
+                log.info("primary-flow: probe errored (%s)", str(exc).splitlines()[0][:150])
+    return PageInventory(url, title, headings, controls, signals, forms, revealed, embeds, primary_flow)

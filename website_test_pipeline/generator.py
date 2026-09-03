@@ -68,6 +68,25 @@ VALIDATION_RULES = (
     "action_evidence, and assert a results region/heading appeared - do not assert specific result rows (they rotate)."
 )
 
+PRIMARY_FLOW_RULES = (
+    "PRIMARY FLOW - when the PRIMARY FLOW block is present, it is THIS PAGE'S SMOKE TEST. Write it as the FIRST test "
+    "and make it the centrepiece; the rest of the file stays short.\n"
+    "- One test that performs EVERY listed step in order, each wrapped in action_evidence with a kebab step label "
+    "('01-select-country', '02-pick-channel', '03-search').\n"
+    "- select step: page.locator('<selector>').select_option(label='<the value from the block>') "
+    "(or select_option(index=1) if the label is long/among many). fill step: page.locator('<selector>').fill('<value>'). "
+    "multiselect step: click the named button, then in the menu that opens click the option whose text is the value, "
+    "then press Escape - OR page.locator('select[multiple]').select_option(label='<value>').\n"
+    "- Then click the action button (use its selector token, else get_by_role('button', name='<action>', exact=True)).\n"
+    "- Assert the RESULT the block records:\n"
+    "  * 'results appeared in X': expect(page.locator('<X>')).to_be_visible() AND assert it is non-empty - "
+    "expect(page.locator('<X> tr, <X> li, <X> [role=\"row\"]').first).to_be_visible(). NEVER assert an exact row count.\n"
+    "  * 'navigated to <path>': expect(page).to_have_url(re.compile(r'<path>')).\n"
+    "  * 'no visible results region': just assert the last step's value stuck (a select still shows your choice) - "
+    "do not invent a results element.\n"
+    "- If the block gives no results selector, locate the results region by role or by a heading observed above it.\n"
+)
+
 EMBED_RULES = (
     "THIRD-PARTY MAP / MEDIA EMBED - if PAGE EMBEDS lists a map (Google Maps canvas, Leaflet, a maps <iframe>) and "
     "the page has few or no [content] controls, this page is NOT meaningfully testable. Write exactly ONE map test:\n"
@@ -228,6 +247,26 @@ def _compact_revealed(revealed: list[dict], limit: int = 10) -> str:
             lines.append(line)
     return "\n".join(lines)
 
+def _compact_primary_flow(flow: dict | None) -> str:
+    if not flow:
+        return ""
+    lines = [f'action button: "{flow.get("action")}"'
+             + (f' selector={flow["action_selector"]}' if flow.get("action_selector") else "")]
+    for i, step in enumerate(flow.get("steps") or [], 1):
+        loc = f'selector={step["selector"]}' if step.get("selector") else f'"{step.get("name")}"'
+        lines.append(f'  step {i}: {step.get("kind")} {loc} -> value "{step.get("value")}"')
+    effect = flow.get("effect")
+    if effect == "results":
+        where = flow.get("results_selector") or f'role={flow.get("results_role")}'
+        lines.append(f'  RESULT: results appeared in {where} ({flow.get("row_count")} rows); '
+                     f'first text "{(flow.get("results_text") or "").strip()[:80]}"')
+    elif effect == "navigates":
+        from urllib.parse import urlsplit
+        lines.append(f'  RESULT: navigated to {urlsplit(str(flow.get("to") or "")).path}')
+    else:
+        lines.append('  RESULT: no visible results region appeared (assert the steps completed, not a result)')
+    return "\n".join(lines)
+
 def _compact_embeds(embeds: list[dict]) -> str:
     lines: list[str] = []
     for e in embeds[:6]:
@@ -264,6 +303,8 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         f"treat them as observed; click/submit via action_evidence and assert the listed result):\n"
         f"{_compact_revealed(inventory.revealed) or '(none - the probe found no state change)'}\n\n"
         f"FORMS:\n{inventory.forms}\n\n"
+        + (f"PRIMARY FLOW (the explorer completed this page's main interaction end to end - reproduce it as test #1):\n"
+           f"{_compact_primary_flow(inventory.primary_flow)}\n\n" if getattr(inventory, "primary_flow", None) else "")
         + (f"PAGE EMBEDS:\n{_compact_embeds(inventory.embeds)}\n\n" if getattr(inventory, "embeds", None) else "")
         + f"ACCESSIBILITY SIGNALS:\n{inventory.accessibility[:6000]}\n\n"
         "Generate dynamic, page-specific smoke tests as one pytest module. Only test controls that appear above; skip any marked disabled. "
@@ -274,7 +315,7 @@ def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str
         "and footer checks to get_by_role('contentinfo'), then put .first on the LINK, never on the landmark "
         "(the first navigation/contentinfo landmark is often a hidden mobile or skip-link menu): "
         "page.get_by_role('navigation').get_by_role('link', name='News', exact=True).first\n\n"
-        f"{SCOPE_RULES}\n\n{COVERAGE_RULES}\n\n{VALIDATION_RULES}\n\n{EMBED_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
+        f"{SCOPE_RULES}\n\n{COVERAGE_RULES}\n\n{PRIMARY_FLOW_RULES}\n\n{VALIDATION_RULES}\n\n{EMBED_RULES}\n\n{LOCATOR_RULES}\n\n{ASSERTION_RULES}\n\n{EVIDENCE_RULES}{correction}"
     )
 
 def extract_code(raw: str) -> str:

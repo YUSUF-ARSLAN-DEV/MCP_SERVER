@@ -207,6 +207,27 @@ F1. [DONE 2026-09-03] jQuery-UI multiselect probe never fires
    .dropdown-menu / MuiMenu / -listbox so the opened menu itself is recorded as a
    revealed panel. Post-click settle 800ms -> 1200ms for widgets that animate.
 
+F3. [DONE 2026-09-03] Pipeline tests components, not journeys (the big one)
+--------------------------------------------------------------------------------
+   The site's core function (pick country + channel, Search, see your frequency)
+   is a JS/AJAX widget with NO <form> tag, so _probe_forms never saw it, the
+   probe clicked "Search" empty -> "no visible change", and the generator wrote
+   "assert the Search button is visible". Component coverage, not a smoke test.
+   FIX: explorer._probe_primary_flow - finds an action button (verb-named:
+   search/find/filter/apply/go/submit/...) + a cluster of fillable controls
+   (selects with real options, text/tel/email/number/date inputs, a multiselect
+   button), fills them with real values (first non-placeholder option;
+   _plausible_value by input type; multiselect via its menu or the underlying
+   <select multiple>), clicks the action, and diffs a results-ish selector set
+   (_RESULTS_SEL / _RESULTS_JS with row counts) to capture the outcome
+   (results/navigates/no-visible-result). Recorded on PageInventory.primary_flow.
+   generator: PRIMARY FLOW prompt block + PRIMARY_FLOW_RULES ("this IS the page's
+   smoke test, write it first: every step via action_evidence, then assert the
+   results container is visible and non-empty; never a guessed row count").
+   validator harvests the flow's selectors/values. tests_python/test_primary_flow.py
+   (18 tests). Heuristics are DOM-shape-based, no site-specific tokens - to be
+   regression-checked against malomatia.com.
+
 F2. [DONE 2026-09-03] Map screenshot taken before the map paints
 --------------------------------------------------------------------------------
    The #map div is in the DOM long before Google Maps draws tiles, so

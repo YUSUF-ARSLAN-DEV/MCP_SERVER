@@ -53,6 +53,14 @@ def _allowed_tokens(inventory) -> set[str]:
         if embed.get("title"): tokens.add(_norm(str(embed["title"])))
         tokens.add("iframe")  # the guide's fallback for a selector-less embed
         tokens.update({"gm-style", "leaflet-container", "canvas"})  # rendered-content selectors
+    flow = getattr(inventory, "primary_flow", None)
+    if flow:
+        for key in ("action", "action_selector", "results_selector", "results_role", "results_text"):
+            if flow.get(key): tokens.add(_norm(str(flow[key])))
+        for step in flow.get("steps") or []:
+            for key in ("selector", "name", "value"):
+                if step.get(key): tokens.add(_norm(str(step[key])))
+        tokens.update({"tr", "li", "row", "listitem", "select[multiple]"})  # generic results-row locators
     # the aria snapshot is authoritative for accessible names - harvest every quoted name
     for match in re.finditer(r'"([^"\n]+)"', getattr(inventory, "accessibility", "") or ""):
         tokens.add(_norm(match.group(1)))

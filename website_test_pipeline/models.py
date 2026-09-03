@@ -17,6 +17,12 @@ class PageInventory:
     # Leaflet, a maps <iframe>) - not driveable, assert only the container is visible:
     # [{"kind": "map", "provider": str, "selector": str|None, "region": str, "big": bool}]
     embeds: list[dict[str, Any]] = field(default_factory=list)
+    # the page's MAIN interaction, completed end-to-end by the explorer (a search /
+    # filter widget that may not be a <form>): {"action": str, "action_selector": str|None,
+    # "steps": [{"kind": "select"|"fill"|"multiselect", "selector": str|None, "name": str, "value": str}],
+    # "effect": "results"|"navigates"|"no-visible-result", "results_selector"/"results_role"/
+    # "row_count"/"results_text" or "to"}
+    primary_flow: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
