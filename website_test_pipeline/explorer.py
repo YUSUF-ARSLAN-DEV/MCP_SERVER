@@ -69,6 +69,15 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
     }).slice(0, 150).map(e => {
         const isInputButton = e.tagName === 'INPUT' && ['button','submit','reset'].includes((e.type||'').toLowerCase());
         const isMedia = e.tagName === 'VIDEO' || e.tagName === 'AUDIO';
+        // Visually-hidden but DOM-present: sr-only fields, and (the case that bites us)
+        // jQuery-UI multiselect's .ui-helper-hidden-accessible checkboxes that a menu
+        // click "reveals" - the model then asserts to_be_visible() on a 1px offscreen node.
+        const r = e.getBoundingClientRect();
+        const cs = getComputedStyle(e);
+        const hidden = r.width <= 1 || r.height <= 1
+            || parseFloat(cs.opacity) === 0
+            || r.bottom < 0 || r.right < 0
+            || r.left > (window.innerWidth || 10000) + 1500;
         const label = e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].textContent) || e.getAttribute('placeholder') || (isInputButton ? e.value : '') || (isMedia ? e.tagName.toLowerCase() + ' player' : '') || (e.textContent||'').trim().replace(/\s+/g,' ').slice(0,120);
         const testid = (e.dataset && e.dataset.testid) || null;
         const rawId = e.id || null;
@@ -89,6 +98,7 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             id: idOk ? rawId : null,
             field_name: nameOk ? rawName : null,
             volatile_id: !testid && ((!!rawId && !idOk) || (!!rawName && !nameOk)),
+            hidden: hidden,
             region: regionOf(e),
             type: e.getAttribute('type'),
             href: e.getAttribute('href'),
@@ -195,7 +205,7 @@ def _is_probe_trigger(control: dict) -> bool:
     [role=button] anywhere outside the site chrome - excluding submit/reset and
     anything that reads as destructive or as a checkout / auth step. Many sites
     never use <main>, so page-specific buttons land in region 'other'."""
-    if control.get("disabled") or control.get("region") == "chrome":
+    if control.get("disabled") or control.get("hidden") or control.get("region") == "chrome":
         return False
     name = (control.get("name") or "").strip()
     if not name or name.lower() in _PROBE_SKIP_NAMES:
@@ -286,6 +296,7 @@ def _probe_interactions(page, url: str, baseline: list[dict], limit: int, log=No
             c for c in post_ctl
             if _control_key(c) not in pre_ctl_keys
             and c.get("region") in {"content", "other"}
+            and not c.get("hidden")  # skip 1px sr-only nodes (jQuery-UI multiselect checkboxes)
             and (c.get("name") or c.get("selector") or c.get("id"))
         ][:12]
         fresh_pan = [

@@ -305,6 +305,22 @@ def test_is_probe_trigger_accepts_role_button_rejects_submit():
     assert _is_probe_trigger({"tag": "button", "name": "Go", "region": "other"})  # sites without <main>
     assert not _is_probe_trigger({"tag": "input", "type": "submit", "name": "Go", "region": "content"})
     assert not _is_probe_trigger({"tag": "button", "name": "Go", "region": "chrome"})
+    assert not _is_probe_trigger({"tag": "button", "name": "Go", "region": "content", "hidden": True})
+
+def test_probe_drops_hidden_revealed_controls():
+    # jQuery-UI multiselect: opening the menu "reveals" 1px sr-only checkboxes.
+    visible_ctrl = {"tag": "div", "role": "list", "name": "Channel list",
+                    "selector": "#chan-list", "region": "content"}
+    hidden_ctrl = {"tag": "input", "type": "checkbox", "name": "BBC One",
+                   "selector": None, "region": "content", "hidden": True}
+    page = _ProbePage([_TRIGGER], [_TRIGGER, visible_ctrl, hidden_ctrl])
+    out = _probe_interactions(page, "https://site.test/map", [_TRIGGER], limit=5)
+    assert out == [{"trigger": "Show frequencies", "effect": "reveals", "controls": [visible_ctrl]}]
+
+def test_control_line_marks_hidden():
+    from website_test_pipeline.generator import _control_line
+    line = _control_line({"tag": "input", "name": "BBC One", "region": "content", "hidden": True})
+    assert "HIDDEN" in line
 
 def test_compact_revealed_renders_trigger_and_controls():
     revealed = [

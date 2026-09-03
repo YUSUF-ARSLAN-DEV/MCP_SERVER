@@ -23,13 +23,24 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
    - tests_python: +test_validator_accepts_class_error_selector_from_revealed_validation
 
 ================================================================================
-2. [ ] jQuery-UI multiselect - hidden checkboxes / menu intercepts clicks
+2. [DONE 2026-09-03] jQuery-UI multiselect - hidden checkboxes / menu intercepts clicks
 --------------------------------------------------------------------------------
    Affected: /en/frequency-search, /en
    Symptom: hidden checkboxes asserted visible; an open menu intercepts the next
    click.
    Fix: filter revealed controls to visible-only (bounding rect > 1px); add
    generator guidance to close a dropdown before the next action.
+
+   DONE:
+   - explorer _CONTROLS_JS: each control carries `hidden` (<=1px / opacity0 /
+     offscreen).
+   - explorer _probe_interactions: fresh_ctl drops hidden controls.
+   - explorer _is_probe_trigger: refuses hidden controls.
+   - generator _control_line: renders HIDDEN(...).
+   - generator LOCATOR_RULES: HIDDEN covers controls too; new rule - close a
+     menu/dropdown/listbox before the next click; prefer one widget per test.
+   - tests_python: +test_probe_drops_hidden_revealed_controls,
+     +test_control_line_marks_hidden, +hidden case in _is_probe_trigger test.
 
 ================================================================================
 3. [ ] Google Maps canvas pages - accept as untestable

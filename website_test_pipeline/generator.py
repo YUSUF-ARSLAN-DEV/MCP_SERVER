@@ -88,7 +88,12 @@ LOCATOR_RULES = (
     "Playwright raises a strict-mode violation.\n"
     "Define every locator variable INSIDE the test function that uses it. Tests never share variables - a name bound "
     "in one test is not visible in another.\n"
-    "A heading tagged HIDDEN exists only for screen readers - assert expect(h).to_have_count(1), never to_be_visible().\n"
+    "A heading OR control tagged HIDDEN exists only for screen readers (sr-only, or a 1px offscreen node like a "
+    "jQuery-UI multiselect checkbox) - assert expect(x).to_have_count(1), never to_be_visible() / to_be_checked().\n"
+    "A widget that opens a menu/dropdown/listbox (multiselect, combobox, date picker) leaves it OPEN and covering the "
+    "page. Within one test, after interacting with such a widget, close it (press Escape, or click its trigger again) "
+    "BEFORE the next click elsewhere - an open menu intercepts pointer events and the next action times out. Prefer "
+    "one widget interaction per test.\n"
     "Before asserting a footer / newsletter / any below-the-fold element, first call "
     "locator.scroll_into_view_if_needed() as a plain statement (not inside a lambda)."
 )
@@ -131,6 +136,8 @@ def _control_line(control: dict) -> str:
     for flag in ("required", "disabled"):
         if control.get(flag):
             parts.append(flag)
+    if control.get("hidden"):
+        parts.append("HIDDEN(sr-only / 1px - assert to_have_count(1), never to_be_visible)")
     if control.get("volatile_id"):
         parts.append("VOLATILE-ID(no stable selector - use role/name/placeholder)")
     if control.get("ambiguous"):
