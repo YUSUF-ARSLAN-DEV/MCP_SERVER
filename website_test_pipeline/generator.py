@@ -249,7 +249,7 @@ def _compact_headings(headings: list[dict]) -> str:
     return "\n".join(out)
 
 def prompt_for(guide: str, persona: str, inventory: PageInventory, feedback: str = "") -> str:
-    correction = f"\n\nYOUR PREVIOUS ATTEMPT WAS REJECTED: {feedback}\nFix exactly that problem and return a corrected module." if feedback else ""
+    correction = f"\n\nA PREVIOUS ATTEMPT WAS REJECTED OR FAILED: {feedback}\nFix exactly that problem and return a corrected module." if feedback else ""
     return (
         f"{guide}\n\nPERSONA:\n{persona}\n\n"
         f"PAGE URL: {inventory.url}\nPAGE TITLE: {inventory.title}\n\n"
@@ -287,9 +287,10 @@ def _skip_stub(inventory: PageInventory, reason: str) -> str:
         "    pass\n"
     )
 
-def generate_spec(client, guide: str, persona: str, inventory: PageInventory, output: Path, attempts: int = 5, log=None) -> None:
+def generate_spec(client, guide: str, persona: str, inventory: PageInventory, output: Path,
+                  attempts: int = 5, log=None, seed_feedback: str = "") -> None:
     last = None
-    feedback = ""
+    feedback = seed_feedback
     for _ in range(attempts):
         try:
             code = extract_code(client.generate(prompt_for(guide, persona, inventory, feedback), SYSTEM))

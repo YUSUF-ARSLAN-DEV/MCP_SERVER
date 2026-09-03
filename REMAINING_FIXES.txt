@@ -136,11 +136,25 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      repaired passes" end-to-end checks. Full suite 84 passed.
 
 ================================================================================
-7. [ ] Failure-repair loop
+7. [DONE 2026-09-03] Failure-repair loop
 --------------------------------------------------------------------------------
    On execution (pytest) failure, feed the error back to the model and
    regenerate - mirroring the generation-time validator feedback loop that
    already exists.
+
+   DONE:
+   - new module website_test_pipeline/failrepair.py:
+     * failing_by_url(artifacts_dir): {url: ["<test>: <trimmed error>"]} from
+       test_results.json (failed/error rows only).
+     * _inventory_for(): rebuilds PageInventory from <slug>.inventory.json.
+     * repair_failures(): for each failing url, regenerate that one module with
+       generate_spec(seed_feedback=<the pytest errors>), attempts=3.
+   - generator.generate_spec: new seed_feedback param (primes the feedback var
+     before attempt 1); prompt_for wording generalised ("REJECTED OR FAILED").
+   - cli.py report: new --repair flag. Runs pytest, then repair_failures, then
+     (if anything regenerated) pytest again, then builds the report.
+   - tests_python/test_failrepair.py: 5 tests (grouping/trim, empty, inventory
+     round-trip, slug parity with cli.name).
 
 ================================================================================
 8. [DONE 2026-09-03] Report honesty - thin page vs lazy tests

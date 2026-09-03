@@ -18,6 +18,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
     parser.add_argument('command', choices=['crawl','generate','explore','execute','report'], nargs='?', default='generate')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
+    parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     args = parser.parse_args()
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
     log.info('WORKSPACE site=%s dir=%s', settings.site, settings.workspace)
@@ -43,7 +44,17 @@ def main() -> int:
     if args.command == 'report':
         from . import report as report_mod
         pw_out = settings.artifacts_dir/'pw'
-        result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}'], cwd=settings.root, env=pytest_env)
+        pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}']
+        result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
+        if args.repair:
+            from .failrepair import repair_failures
+            manifest = json.loads((settings.artifacts_dir/'run.json').read_text(encoding='utf-8')) if (settings.artifacts_dir/'run.json').exists() else {'urls': {}}
+            guide = (settings.root/'AI-TEST-GUIDE.md').read_text(encoding='utf-8') if (settings.root/'AI-TEST-GUIDE.md').exists() else ''
+            persona = (settings.root/'persona.txt').read_text(encoding='utf-8') if (settings.root/'persona.txt').exists() else ''
+            n = repair_failures(settings.artifacts_dir, settings.tests_dir, manifest, ModelClient(settings, log), guide, persona, log)
+            if n:
+                log.info('REPAIR regenerated %s page(s); re-running', n)
+                result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
         run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined)
         log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
         for warning in run.warnings:
@@ -67,6 +78,7 @@ def main() -> int:
             except Exception as exc:
                 diagnosis = diagnose_error(getattr(exc, 'status', None), getattr(exc, 'body', ''), str(exc)); log.error('ROOT CAUSE url=%s diagnosis=%s', url, diagnosis); manifest['urls'][url] = {'status':'failed','error':str(exc),'diagnosis':diagnosis}
         browser.close()
-    manifest['finished_at'] = datetime.now(timezone.utc).isoformat(); manifest['summary'] = {'total':len(urls), 'generated':sum(x['status']=='generated' for x in manifest['urls'].values()), 'failed':sum(x['status']=='failed' for x in manifest['urls'].values())}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8'); summary = manifest['summary']; log.info('RUN SUMMARY total=%s generated=%s failed=%s', summary['total'], summary['generated'], summary['failed']); return 1 if summary['failed'] else 0
+    manifest['finished_at'] = datetime.now(timezone.utc).isoformat(); manifest['summary'] = {'total':len(urls), 'generated':sum(x['status']=='generated' for x in manifest['urls'].values()), 'failed':sum(x['status']=='failed' for x in manifest['urls'].values())}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8'); summary = manifest['summary']; log.info('RUN SUMMARY total=%s generated=%s failed=%s', summary['total'], summary['generated'], summary['failed'])
+    return 1 if summary['failed'] else 0
 
 if __name__ == '__main__': raise SystemExit(main())
