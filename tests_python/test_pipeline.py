@@ -679,3 +679,19 @@ def test_validator_accepts_iframe_fallback_for_selectorless_embed():
            '    # https://example.test/map\n'
            '    observation_evidence(page, "m", lambda: expect(page.locator("iframe").first).to_be_visible(), evidence_dir)\n')
     validate_python_spec(src, 'https://example.test/map', inv)
+
+def test_validator_accepts_map_content_selector_and_wait():
+    inv = PageInventory('https://example.test/map', 'Map',
+                        embeds=[{"kind": "map", "provider": "google-maps-js", "selector": "#map",
+                                 "content_selector": "#map .gm-style", "region": "other"}])
+    src = ('def test_map_renders(page, evidence_dir):\n'
+           '    # https://example.test/map\n'
+           '    page.wait_for_timeout(2500)\n'
+           '    observation_evidence(page, "map", lambda: expect(page.locator("#map .gm-style")).to_be_visible(), evidence_dir)\n')
+    validate_python_spec(src, 'https://example.test/map', inv)
+
+def test_compact_embeds_shows_content_selector():
+    from website_test_pipeline.generator import _compact_embeds
+    out = _compact_embeds([{"kind": "map", "provider": "google-maps-js", "selector": "#map",
+                            "content_selector": "#map .gm-style", "region": "other"}])
+    assert "content=#map .gm-style" in out

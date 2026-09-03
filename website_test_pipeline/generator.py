@@ -70,11 +70,17 @@ VALIDATION_RULES = (
 
 EMBED_RULES = (
     "THIRD-PARTY MAP / MEDIA EMBED - if PAGE EMBEDS lists a map (Google Maps canvas, Leaflet, a maps <iframe>) and "
-    "the page has few or no [content] controls, this page is NOT meaningfully testable. Write exactly ONE test: "
-    "expect(page.locator('<the embed selector>')).to_be_visible() wrapped in observation_evidence. Do NOT click the "
-    "map, drag it, zoom it, or assert markers / tiles / pins / info-windows / coordinates - that canvas has no DOM "
-    "you can query and no stable state. Do NOT reach into the iframe. If the embed has no selector, assert "
-    "page.locator('iframe').first is visible. Still write the single [chrome] nav/footer test if the chrome is present.\n"
+    "the page has few or no [content] controls, this page is NOT meaningfully testable. Write exactly ONE test:\n"
+    "- The map renders ASYNCHRONOUSLY - the container is in the DOM long before the tiles paint, so a screenshot "
+    "taken right after asserting the bare container shows a blank grey box. To avoid that: when PAGE EMBEDS gives a "
+    "`content=<selector>` token, assert THAT - expect(page.locator('<content selector>')).to_be_visible() - it only "
+    "passes once the map has actually drawn. Then, as a plain statement before the evidence call, "
+    "page.wait_for_timeout(2500) so the tiles finish loading in the screenshot.\n"
+    "- If there is no content token (a maps <iframe>), do page.wait_for_timeout(3000) as a plain statement first, "
+    "then assert page.locator('iframe').first is visible.\n"
+    "- Wrap the assertion in observation_evidence. Do NOT click / drag / zoom the map or assert markers / tiles / "
+    "pins / info-windows / coordinates, and do NOT reach into the iframe. Still write the single [chrome] nav/footer "
+    "test if the chrome is present.\n"
 )
 
 LOCATOR_RULES = (
@@ -229,9 +235,10 @@ def _compact_embeds(embeds: list[dict]) -> str:
     for e in embeds[:6]:
         sel = e.get("selector")
         loc = f"selector={sel}" if sel else f'{e.get("tag") or "element"} (no stable selector)'
+        content = f' content={e["content_selector"]}' if e.get("content_selector") else ""
         title = f' title="{(e.get("title") or "").strip()[:60]}"' if e.get("title") else ""
         lines.append(f'[{e.get("region") or "other"}] {e.get("kind") or "embed"} '
-                     f'({e.get("provider") or "?"}) {loc}{title}')
+                     f'({e.get("provider") or "?"}) {loc}{content}{title}')
     return "\n".join(lines)
 
 def _compact_headings(headings: list[dict]) -> str:

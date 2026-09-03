@@ -49,8 +49,10 @@ def _allowed_tokens(inventory) -> set[str]:
         tokens.update({"alert", "status", "error", "errors", "aria-invalid", "invalid-feedback", "messages"})
     for embed in getattr(inventory, "embeds", None) or []:
         if embed.get("selector"): tokens.add(_norm(str(embed["selector"])))
+        if embed.get("content_selector"): tokens.add(_norm(str(embed["content_selector"])))
         if embed.get("title"): tokens.add(_norm(str(embed["title"])))
         tokens.add("iframe")  # the guide's fallback for a selector-less embed
+        tokens.update({"gm-style", "leaflet-container", "canvas"})  # rendered-content selectors
     # the aria snapshot is authoritative for accessible names - harvest every quoted name
     for match in re.finditer(r'"([^"\n]+)"', getattr(inventory, "accessibility", "") or ""):
         tokens.add(_norm(match.group(1)))

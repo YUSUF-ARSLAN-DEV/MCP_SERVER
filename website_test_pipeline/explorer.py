@@ -11,7 +11,12 @@ _CONTROL_SEL = 'a,button,input,select,textarea,video,audio,[role]'
 _PANEL_SEL = (
     '[role="dialog"],[role="region"],[role="tabpanel"],[role="listbox"],[role="menu"],'
     '[role="grid"],[role="table"],[role="tree"],[role="alert"],[role="status"],'
-    '[aria-modal="true"],dialog,table,fieldset'
+    '[aria-modal="true"],dialog,table,fieldset,'
+    # widget dropdowns that carry no ARIA role - jQuery-UI multiselect, select2,
+    # chosen, MUI, generic .dropdown-menu - so "click opens the channel picker"
+    # is recorded even though the options inside it are 1px sr-only nodes.
+    '.ui-multiselect-menu,.ui-menu,.select2-dropdown,.select2-results,.chosen-drop,'
+    '[class*="dropdown-menu"],[class*="multiselect__content"],[class*="MuiMenu-"],[class*="-listbox"]'
 )
 _VALIDATION_SEL = (
     '[role="alert"],[aria-invalid="true"],.error,.errors,.invalid-feedback,.field-error,'
@@ -207,8 +212,16 @@ _EMBEDS_JS = "els => {" + _JS_HELPERS + r"""
         if (seen.has(key)) continue;
         seen.add(key);
         const r = e.getBoundingClientRect();
+        // A selector for the RENDERED content, not just the container - asserting
+        // this waits for the map to actually paint before the screenshot.
+        const under = (selector && selector[0] === '#') ? selector + ' ' : '';
+        let content_selector = null;
+        if (provider === 'google-maps-js') content_selector = under + '.gm-style';
+        else if (provider === 'leaflet') content_selector = under + '.leaflet-container';
+        else if (provider === 'canvas') content_selector = under + 'canvas';
         out.push({
             kind: kind, provider: provider, selector: selector,
+            content_selector: content_selector,
             tag: e.tagName.toLowerCase(),
             title: e.getAttribute('title') || e.getAttribute('aria-label') || null,
             region: regionOf(e),
@@ -326,7 +339,7 @@ def _probe_interactions(page, url: str, baseline: list[dict], limit: int, log=No
         before_url = page.url
         try:
             locator.click(timeout=2500)
-            page.wait_for_timeout(800)
+            page.wait_for_timeout(1200)  # widgets that animate a dropdown open
         except Exception as exc:
             if log:
                 log.info('probe: "%s" -> click failed (%s)', name, str(exc).splitlines()[0][:120])

@@ -192,3 +192,28 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      (commits after the doc is written).
    - .gitignore: comment pointing at the flag.
    Opt-in, not automatic - avoids a flood of untracked run dirs in git status.
+
+
+================================================================================
+FOLLOW-UPS (found after 1-9, not on the original list)
+================================================================================
+F1. [DONE 2026-09-03] jQuery-UI multiselect probe never fires
+--------------------------------------------------------------------------------
+   The channel picker ("Please select a channel" / "اختر قناة") returned
+   "no visible change" on every run. Two causes: the opened .ui-multiselect-menu
+   carries no ARIA role so _PANEL_SEL missed it, and Fix 2 now filters its 1px
+   checkboxes so nothing was left to report.
+   FIX: _PANEL_SEL gained .ui-multiselect-menu / .ui-menu / select2 / chosen /
+   .dropdown-menu / MuiMenu / -listbox so the opened menu itself is recorded as a
+   revealed panel. Post-click settle 800ms -> 1200ms for widgets that animate.
+
+F2. [DONE 2026-09-03] Map screenshot taken before the map paints
+--------------------------------------------------------------------------------
+   The #map div is in the DOM long before Google Maps draws tiles, so
+   expect(#map).to_be_visible() passes immediately and the screenshot is a grey
+   box.
+   FIX: _EMBEDS_JS emits a `content_selector` (#map .gm-style / .leaflet-container
+   / <base> canvas; null for an iframe). EMBED_RULES tells the model to assert the
+   content selector (waits for real paint) then page.wait_for_timeout(2500) as a
+   plain statement before the evidence call; iframe embeds get wait_for_timeout
+   (3000) first. validator + _compact_embeds updated. tests_python +3.
