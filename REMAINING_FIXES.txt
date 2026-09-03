@@ -1,0 +1,73 @@
+REMAINING FIXES - website_test_pipeline (branch anton/word-report)
+Model-independent issues. Numbered in working order.
+Created 2026-09-03. Session: https://claude.ai/code/session_01RTPme2eCSRZoR8RaCkRcen
+
+Status legend: [ ] todo   [WIP] in progress   [DONE] complete
+
+================================================================================
+1. [ ] Drupal error block has no id
+--------------------------------------------------------------------------------
+   Symptom: /en/subscribe test fails because the model guesses [role=alert] for
+   the validation error region.
+   Fix: explorer _VALIDATION_JS should emit a class selector (e.g. ".messages.error")
+   when the matched element's id is empty, instead of leaving the model to guess.
+
+================================================================================
+2. [ ] jQuery-UI multiselect - hidden checkboxes / menu intercepts clicks
+--------------------------------------------------------------------------------
+   Affected: /en/frequency-search, /en
+   Symptom: hidden checkboxes asserted visible; an open menu intercepts the next
+   click.
+   Fix: filter revealed controls to visible-only (bounding rect > 1px); add
+   generator guidance to close a dropdown before the next action.
+
+================================================================================
+3. [ ] Google Maps canvas pages - accept as untestable
+--------------------------------------------------------------------------------
+   Affected: /ar/map, /en/map
+   Fix: assert only that the #map container is visible; stop trying to drive the
+   Google Maps canvas.
+
+================================================================================
+4. [ ] Tighten validator _known substring matching
+--------------------------------------------------------------------------------
+   Symptom: hallucinated footer links ("About", "Connect") pass validation
+   because they substring-match some unrelated inventory token.
+   Fix: make the inventory-token match stricter (word-boundary / full-token,
+   not loose >=3-char substring).
+
+================================================================================
+5. [ ] Explorer records element visibility
+--------------------------------------------------------------------------------
+   Symptom: model asserts to_be_visible on visually-hidden (sr-only) H1s.
+   Fix: explorer captures a visibility flag per element; generator told not to
+   assert visibility on hidden elements.
+
+================================================================================
+6. [ ] Auto-repair AST pass
+--------------------------------------------------------------------------------
+   Also the model-independent insurance for the Arabic-page retry-burn problem.
+   A pipeline stage that mechanically rewrites common violations before bouncing
+   back to the model:
+     - :has-text(...)              -> get_by_role(...)
+     - expect(a) and expect(b)     -> [expect(a), expect(b)]
+     - missing .first on multi-match locator -> add .first
+
+================================================================================
+7. [ ] Failure-repair loop
+--------------------------------------------------------------------------------
+   On execution (pytest) failure, feed the error back to the model and
+   regenerate - mirroring the generation-time validator feedback loop that
+   already exists.
+
+================================================================================
+8. [ ] Report honesty - thin page vs lazy tests
+--------------------------------------------------------------------------------
+   Distinguish "shallow because the page only has ~2 interactive elements" from
+   "shallow because the tests are lazy", so genuinely thin pages (newfrequencies)
+   don't read as a pipeline failure.
+
+================================================================================
+9. [ ] Auto-commit the branch
+--------------------------------------------------------------------------------
+   Minor workflow gap - nothing commits generated tests / artifacts to the branch.
