@@ -175,6 +175,15 @@ Status legend: [ ] todo   [WIP] in progress   [DONE] complete
      _count_page_actions reads inventory).
 
 ================================================================================
-9. [ ] Auto-commit the branch
+9. [DONE 2026-09-03] Auto-commit the branch
 --------------------------------------------------------------------------------
    Minor workflow gap - nothing commits generated tests / artifacts to the branch.
+
+   DONE:
+   - cli.py _commit_site(): git add -f runs/<site>/tests + urls.txt (force-adds
+     past .gitignore so runs/ stays ignored by default), then commits
+     "tests(<site>): <verb> N spec(s)" if anything is staged.
+   - --commit flag on `generate` (commits after RUN SUMMARY) and `report`
+     (commits after the doc is written).
+   - .gitignore: comment pointing at the flag.
+   Opt-in, not automatic - avoids a flood of untracked run dirs in git status.

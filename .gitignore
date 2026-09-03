@@ -3,7 +3,9 @@
 .env.*
 !.env.example
 
-# Per-site workspaces: generated specs, evidence, artifacts, reports
+# Per-site workspaces: generated specs, evidence, artifacts, reports.
+# `website-tests generate --commit` / `report --commit` force-adds
+# runs/<site>/tests + urls.txt past this rule when you want a run tracked.
 runs/
 python_tests/
 python_artifacts/
