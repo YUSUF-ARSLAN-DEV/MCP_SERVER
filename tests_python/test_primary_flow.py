@@ -26,7 +26,12 @@ def test_compact_primary_flow_results():
     assert "flow: Search" in out
     assert "step 1: select selector=#countrylist" in out
     assert "step 2: multiselect" in out
-    assert "results appeared in #freq-results (14 item(s))" in out
+    assert "a results region appeared: #freq-results (14 item(s))" in out
+
+def test_compact_primary_flow_results_without_selector_tells_model_to_assert_url():
+    flow = dict(_FLOW_RESULTS, results_selector=None, results_role=None, to="https://x.io/?s=q")
+    out = _compact_primary_flow(flow)
+    assert "search landed on /?s=q" in out and "to_have_url" in out
 
 def test_compact_primary_flow_renders_submit_step():
     flow = {"action": 'search for "acme"', "steps": [
@@ -114,6 +119,25 @@ def test_plausible_value_by_type():
 
 class _NoBrowser:
     def goto(self, *a, **k): raise AssertionError("should not navigate")
+
+def test_flow_result_requires_in_main_container():
+    from website_test_pipeline.explorer import _flow_result
+    sidebar = [{"selector": ".archive-listing", "text": "latest news x", "rows": 90,
+                "region": "other", "in_main": False}]
+    # sidebar widget -> not results; falls back to navigates because the url changed
+    assert _flow_result(sidebar, set(), "https://x.io/?s=q") == {"effect": "navigates", "to": "https://x.io/?s=q"}
+    real = [{"selector": ".search-results", "klass": ".search-results", "text": "found 5 things", "rows": 5,
+             "region": "content", "in_main": True}]
+    got = _flow_result(real, set(), "https://x.io/?s=q")
+    assert got["effect"] == "results" and got["results_selector"] == ".search-results"
+
+def test_validator_rejects_long_heading_name():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    h = page.get_by_role("heading", name="Discover how we help organizations achieve their goals through practical people focused technology", exact=True)\n'
+           '    observation_evidence(page, "h", lambda: expect(h).to_be_visible(), evidence_dir)\n')
+    with pytest.raises(SpecError, match="fragile"):
+        validate_python_spec(src, "https://x.test")
 
 def test_probe_returns_none_without_action_button():
     controls = [{"tag": "select", "name": "Country", "region": "content", "options": ["1", "2"]}]

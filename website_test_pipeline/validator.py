@@ -289,6 +289,14 @@ def _locator_misuse(tree: ast.AST) -> str | None:
             role = str(args[0].value).strip().lower()
             if role and role not in _ARIA_ROLES:
                 return f"{role!r} is not a valid ARIA role for get_by_role - use a real role or an id/attribute locator"
+            if role == "heading":
+                for kw in node.keywords:
+                    if (kw.arg == "name" and isinstance(kw.value, ast.Constant)
+                            and isinstance(kw.value.value, str)
+                            and (len(kw.value.value.split()) > 8 or len(kw.value.value) > 70)):
+                        return ("get_by_role('heading', name=<long sentence>) is fragile - whitespace / "
+                                "line-break drift between the crawl snapshot and the live page breaks the exact "
+                                "match; use name=re.compile(r'<one distinctive word>') or target a short heading")
         if attr.startswith("get_by_") and attr[len("get_by_"):] not in _GET_BY and attr != "get_by_text":
             return f"page.{attr}() is not a Playwright locator method - use get_by_role / get_by_label / a selector"
         if attr == "locator" and args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str):

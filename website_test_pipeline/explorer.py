@@ -479,11 +479,12 @@ _RESULTS_SEL = (
     '[class*="result" i],[class*="listing" i],[class*="search-res" i],[class*="posts" i],[id*="result" i]'
 )
 _RESULTS_JS = "els => {" + _JS_HELPERS + r"""
-    const CHROME_SEL = 'header, nav, footer, [role="banner"], [role="contentinfo"], [role="navigation"], [class*="menu" i], [class*="nav" i]';
+    const CHROME_SEL = 'header, nav, footer, aside, [role="banner"], [role="contentinfo"], [role="navigation"], [role="complementary"], [class*="menu" i], [class*="nav" i], [class*="sidebar" i], [class*="widget" i]';
+    const MAIN_SEL = 'main, [role="main"], #content, #main, .site-main, article, .entry-content, [class*="search-res" i]';
     const looksLikeCode = t => /[.#][\w-]+\s*\{|@media|function\s*\(|;\s*\}/.test(t.slice(0, 200));
     return els.filter(e => {
         if (e.closest(CHROME_SEL)) return false;
-        if (['STYLE', 'SCRIPT', 'NAV', 'HEADER', 'FOOTER'].includes(e.tagName)) return false;
+        if (['STYLE', 'SCRIPT', 'NAV', 'HEADER', 'FOOTER', 'ASIDE'].includes(e.tagName)) return false;
         const s = getComputedStyle(e); const r = e.getBoundingClientRect();
         const txt = (e.textContent || '').trim();
         return s.display !== 'none' && s.visibility !== 'hidden'
@@ -502,11 +503,35 @@ _RESULTS_JS = "els => {" + _JS_HELPERS + r"""
                 ? '.' + e.className.trim().split(/\s+/).filter(c => c && !volatileId(c)).slice(0, 2).join('.')
                 : null),
             region: regionOf(e),
+            in_main: !!(e.closest(MAIN_SEL) || e.matches(MAIN_SEL)),
             rows: rows,
             text: (e.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 120)
         };
     });
 }"""
+
+
+def _flow_result(post: list[dict], pre_keys: set, to_url: str | None) -> dict:
+    """Classify what a submitted flow produced: a real in-main results container,
+    a navigation, or nothing visible."""
+    fresh = [
+        p for p in post
+        if (p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) not in pre_keys
+        and p.get("region") in {"content", "other"} and p.get("in_main")
+        and (p.get("rows") or 0) >= 3
+    ]
+    if fresh:
+        best = min(fresh, key=lambda p: (not (p.get("selector") or p.get("klass")), p.get("rows") or 999))
+        out = {"effect": "results",
+               "results_selector": best.get("selector") or best.get("klass"),
+               "results_role": best.get("role"), "row_count": best.get("rows"),
+               "results_text": best.get("text")}
+        if to_url:
+            out["to"] = to_url
+        return out
+    if to_url:
+        return {"effect": "navigates", "to": to_url}
+    return {"effect": "no-visible-result"}
 
 
 def _flow_locator(page, control: dict):
@@ -658,27 +683,11 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
                 "action_selector": submit_sel,
                 "steps": [{"kind": "fill", "selector": field_sel, "name": "search field", "value": term},
                           submit_step]}
-        if page.url != before_url:
-            flow["effect"] = "navigates"
-            flow["to"] = page.url
         try:
             post = page.locator(_RESULTS_SEL).evaluate_all(_RESULTS_JS)
         except Exception:
             post = []
-        fresh = [
-            p for p in post
-            if (p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) not in pre_keys
-            and p.get("region") in {"content", "other"} and (p.get("rows") or 0) >= 2
-        ]
-        if fresh:
-            # most specific container: prefer one with a selector/class, then fewest rows
-            best = min(fresh, key=lambda p: (not (p.get("selector") or p.get("klass")), p.get("rows") or 999))
-            flow.update(effect="results",
-                        results_selector=best.get("selector") or best.get("klass"),
-                        results_role=best.get("role"), row_count=best.get("rows"),
-                        results_text=best.get("text"))
-        elif "effect" not in flow:
-            flow["effect"] = "no-visible-result"
+        flow.update(_flow_result(post, pre_keys, page.url if page.url != before_url else None))
         if log:
             tail = (f' -> results in {flow.get("results_selector") or flow.get("results_role")} '
                     f'({flow.get("row_count")} rows)' if flow["effect"] == "results" else f' -> {flow["effect"]}')
@@ -761,28 +770,11 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
         return None
 
     flow = {"action": action.get("name"), "action_selector": action.get("selector"), "steps": steps}
-    if page.url != before_url:
-        flow["effect"] = "navigates"
-        flow["to"] = page.url
-    else:
-        try:
-            post = page.locator(_RESULTS_SEL).evaluate_all(_RESULTS_JS)
-        except Exception:
-            post = []
-        fresh = [
-            p for p in post
-            if (p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) not in pre_keys
-            and p.get("region") in {"content", "other"} and (p.get("rows") or 0) >= 2
-        ]
-        if fresh:
-            # most specific container: prefer one with a selector/class, then fewest rows
-            best = min(fresh, key=lambda p: (not (p.get("selector") or p.get("klass")), p.get("rows") or 999))
-            flow.update(effect="results",
-                        results_selector=best.get("selector") or best.get("klass"),
-                        results_role=best.get("role"), row_count=best.get("rows"),
-                        results_text=best.get("text"))
-        else:
-            flow["effect"] = "no-visible-result"
+    try:
+        post = page.locator(_RESULTS_SEL).evaluate_all(_RESULTS_JS)
+    except Exception:
+        post = []
+    flow.update(_flow_result(post, pre_keys, page.url if page.url != before_url else None))
     if log:
         tail = (f' -> results in {flow.get("results_selector") or flow.get("results_role")} '
                 f'({flow.get("row_count")} rows)' if flow["effect"] == "results"

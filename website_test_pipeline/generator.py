@@ -80,11 +80,12 @@ PRIMARY_FLOW_RULES = (
     "- submit step: do EXACTLY what the block says - 'press Enter in <sel>' means page.locator('<sel>').press('Enter'); "
     "'click <sel>' means page.locator('<sel>').first.click(). NEVER click a <form> element itself.\n"
     "- Assert the RESULT the block records:\n"
-    "  * 'results appeared in X': expect(page.locator('<X>')).to_be_visible() AND assert it is non-empty - "
-    "expect(page.locator('<X> tr, <X> li, <X> [role=\"row\"]').first).to_be_visible(). NEVER assert an exact row count.\n"
-    "  * 'navigated to <path>': expect(page).to_have_url(re.compile(r'<path>')).\n"
-    "  * 'no visible results region': just assert the last step's value stuck (a select still shows your choice) - "
-    "do not invent a results element.\n"
+    "  * 'a results region appeared: X': expect(page.locator('<X>')).to_be_visible(). Do NOT assume it contains "
+    "<article> or <tr> - if you assert an item, use '<X> > *' first child, or just assert the container has text. "
+    "NEVER assert an exact row count.\n"
+    "  * 'search landed on <url>': expect(page).to_have_url(re.compile(r'<distinctive part>')) plus one heading "
+    "visible - that IS the smoke test; do not invent a results element.\n"
+    "  * 'no visible results region': assert the last step's value stuck (a select still shows your choice).\n"
     "- If the block gives no results selector, locate the results region by role or by a heading observed above it.\n"
 )
 
@@ -148,6 +149,10 @@ ASSERTION_RULES = (
     "Never assert exact copy you did not observe (no guessed success/error messages). Do not assert the exact "
     "text of a heading tagged [feed] or any individual article/news headline - that content rotates between "
     "crawl and run. Assert only stable structural headings and labels.\n"
+    "get_by_role('heading', name=...) MUST use a SHORT heading (<= 6 words) exactly as it appears in HEADINGS. "
+    "Do NOT assert a long sentence-style / marketing heading exact - whitespace and line breaks differ between the "
+    "crawl snapshot and the live render (e.g. 'through practical' becomes 'throughpractical'). For a long heading "
+    "use get_by_role('heading', name=re.compile(r'<one distinctive word>')) or skip it.\n"
     "Language switch: the 'English' / 'العربية' toggle usually points to a different domain. Assert only that the "
     "toggle link is visible - never assert the URL after clicking it, and prefer not to test it at all.\n"
     "Never assert on page.locator('div'/'span'/'a'/'p') with no id, attribute, or role qualifier - it matches "
@@ -265,11 +270,17 @@ def _compact_primary_flow(flow: dict | None) -> str:
     dest = urlsplit(str(flow.get("to") or ""))
     dest_str = (dest.path + (("?" + dest.query) if dest.query else "")) or ""
     if effect == "results":
-        where = flow.get("results_selector") or (f'role={flow.get("results_role")}' if flow.get("results_role") else "the main content area")
-        url_note = f' at URL {dest_str}' if dest_str else ""
-        lines.append(f'  RESULT: results appeared in {where} ({flow.get("row_count")} item(s)){url_note}. '
-                     f'Assert that container is visible and has >=1 item; if it has no selector assert the URL '
-                     f'and that an <article>/result heading is visible.')
+        where = flow.get("results_selector") or (f'role={flow.get("results_role")}' if flow.get("results_role") else None)
+        url_note = f'; landed on {dest_str}' if dest_str else ""
+        if where:
+            lines.append(f'  RESULT: a results region appeared: {where} ({flow.get("row_count")} item(s)){url_note}. '
+                         f'Assert expect(page.locator("{where}")).to_be_visible() and that it contains visible text '
+                         f'(expect(page.locator("{where}")).not_to_be_empty() or its .first child is visible). '
+                         f'Do NOT hard-code a child tag like <article> unless you saw it.')
+        else:
+            lines.append(f'  RESULT: search landed on {dest_str} - assert the URL with '
+                         f'expect(page).to_have_url(re.compile(...)); no clean results container was found, '
+                         f'so also assert the page body has content (a heading is visible).')
     elif effect == "navigates":
         lines.append(f'  RESULT: navigated to {dest_str or flow.get("to")} - assert the URL matches')
     else:
