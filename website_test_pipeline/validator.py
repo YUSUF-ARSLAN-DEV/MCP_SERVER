@@ -29,6 +29,8 @@ def _allowed_tokens(inventory) -> set[str]:
         for key in ("selector", "testid", "id", "field_name", "name", "href"):
             value = control.get(key)
             if value: tokens.add(_norm(str(value)))
+        for option in control.get("options") or []:
+            if option: tokens.add(_norm(str(option)))
     for form in getattr(inventory, "forms", None) or []:
         if form.get("selector"): tokens.add(_norm(str(form["selector"])))
         for field in form.get("fields") or []:
@@ -66,9 +68,11 @@ def _allowed_tokens(inventory) -> set[str]:
         tokens.add(_norm(match.group(1)))
     return {token for token in tokens if token}
 
-# .locator("...") - CSS/text selector strings (single string literal, no line crossing)
+# .locator("...") - CSS/text selector strings (single string literal, no line crossing).
+# The inner group matches up to the SAME closing quote, so a mixed-quote selector
+# like "div[role='listbox']" is captured whole (an [^'"] class stopped at the ').
 def _css_locators(source: str) -> list[str]:
-    return [m.group(2) for m in re.finditer(r"\.locator\(\s*(['\"])([^'\"\n]+)\1", source)]
+    return [m.group(2) for m in re.finditer(r"\.locator\(\s*(['\"])((?:(?!\1)[^\n])*)\1", source)]
 
 # get_by_label / placeholder / test_id / alt_text / title - Playwright matches these
 # as a substring by default, so a loose _known() check is right for them.
@@ -293,7 +297,7 @@ def _locator_misuse(tree: ast.AST) -> str | None:
                 for kw in node.keywords:
                     if (kw.arg == "name" and isinstance(kw.value, ast.Constant)
                             and isinstance(kw.value.value, str)
-                            and (len(kw.value.value.split()) > 8 or len(kw.value.value) > 70)):
+                            and (len(kw.value.value.split()) > 6 or len(kw.value.value) > 70)):
                         return ("get_by_role('heading', name=<long sentence>) is fragile - whitespace / "
                                 "line-break drift between the crawl snapshot and the live page breaks the exact "
                                 "match; use name=re.compile(r'<one distinctive word>') or target a short heading")
@@ -364,6 +368,48 @@ def _visible_assert_on_hidden(tree: ast.AST, source: str, inventory) -> str | No
                     "assert expect(x).to_have_count(1) instead")
     return None
 
+def _readonly_tokens(inventory) -> set[str]:
+    tokens: set[str] = set()
+    groups = [getattr(inventory, "controls", None) or []]
+    for entry in getattr(inventory, "revealed", None) or []:
+        groups.append(entry.get("controls") or [])
+    for group in groups:
+        for control in group:
+            if not control.get("readonly"):
+                continue
+            for key in ("selector", "id", "field_name", "name"):
+                if control.get(key):
+                    tokens.add(_norm(str(control[key])))
+                    tokens.update(_norm(f) for f in _selector_fragments(str(control[key])))
+    return {t for t in tokens if t}
+
+def _fill_on_readonly(tree: ast.AST, source: str, inventory) -> str | None:
+    """`.fill(...)` / `to_have_value(...)` targeting a control the page marks
+    readonly - a display-only field (a generated code, a computed total, the
+    wizard's default-password box). Playwright times out 'element is not
+    editable'; the value assertion is meaningless."""
+    readonly = _readonly_tokens(inventory)
+    if not readonly:
+        return None
+    assigned: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            assigned[node.targets[0].id] = ast.get_source_segment(source, node.value) or ""
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in {"fill", "type"}):
+            continue
+        recv = ast.get_source_segment(source, node.func.value) or ""
+        bare = re.fullmatch(r"\s*([A-Za-z_]\w*)\s*", recv)
+        if bare and bare.group(1) in assigned:
+            recv += " " + assigned[bare.group(1)]
+        targets = [m.group(1) or m.group(2) for m in _ID_FRAGMENT.finditer(recv)]
+        targets += [m.group(2) for m in re.finditer(r"name\s*=\s*(['\"])([^'\"]+)\1", recv)]
+        if any(_norm(t) in readonly for t in targets if t):
+            return (f"{node.func.attr}() targets a control the inventory marks READONLY (display-only) - "
+                    "it cannot be filled; assert it is visible instead")
+    return None
+
 def _guessed_disabled_state(tree: ast.AST, inventory) -> str | None:
     """to_be_disabled()/to_be_enabled() when nothing in the observed inventory is
     disabled - the model is guessing a business rule."""
@@ -412,6 +458,9 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
         guessed = _guessed_disabled_state(tree, inventory)
         if guessed:
             raise SpecError(guessed)
+        readonly_fill = _fill_on_readonly(tree, source, inventory)
+        if readonly_fill:
+            raise SpecError(readonly_fill)
         hidden_assert = _visible_assert_on_hidden(tree, source, inventory)
         if hidden_assert:
             raise SpecError(hidden_assert)

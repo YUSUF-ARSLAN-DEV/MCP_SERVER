@@ -113,9 +113,14 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             placeholder: e.getAttribute('placeholder') || null,
             required: e.required || e.getAttribute('aria-required') === 'true',
             disabled: e.disabled || e.hasAttribute('disabled'),
+            readonly: !!e.readOnly || e.hasAttribute('readonly'),
             checked: (e.type === 'checkbox' || e.type === 'radio') ? e.checked : null,
             in_form: !!e.closest('form'),
-            options: e.tagName === 'SELECT' ? [...e.options].slice(0,20).map(o => o.value || (o.textContent||'').trim()) : null
+            // visible label first: the model picks options by label, and a bare
+            // value list is often opaque Drupal/WP term ids it then can't match
+            // (or hallucinates a label for). Fall back to the value when an
+            // <option> has no text.
+            options: e.tagName === 'SELECT' ? [...e.options].slice(0,25).map(o => (o.textContent||'').trim().slice(0,60) || o.value) : null
         };
     });
 }"""
@@ -467,7 +472,9 @@ def _probe_forms(page, url: str, forms: list[dict], limit: int, log=None) -> lis
 
 _ACTION_VERB = re.compile(
     r"\b(search|find|look\s?up|filter|apply|show(?:\s+results?)?|go|submit|"
-    r"see\s+results?|get\s+results?|explore|check|calculate)\b", re.I)
+    r"see\s+results?|get\s+results?|explore|check|calculate)\b"
+    # Arabic: بحث / ابحث / أبحث / إبحث (search), عرض / اعرض (show), تطبيق (apply)
+    r"|[أإا]?بح[ثت]|ا?عرض|تطبيق", re.I)
 _PLACEHOLDER_OPT = re.compile(
     r"^\s*(-+\s*$|please\s+(?:select|choose)|select\s|choose\s|--|all\b|any\b|none\b|n/?a\b)", re.I)
 _PLACEHOLDER_VAL = {"", "-1", "0", "null", "none", "all", "any", "undefined"}

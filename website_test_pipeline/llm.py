@@ -20,6 +20,7 @@ def diagnose_error(status: int | None, body: str = "", message: str = "") -> str
     if status in {524, 504}: return 'UPSTREAM TIMEOUT: the gateway connected, but the model server did not respond before its deadline.'
     if status in {530, 502, 503, 500}: return 'UPSTREAM AVAILABILITY FAILURE: the gateway/model service is unavailable or its tunnel is unhealthy.'
     if 'context' in text or 'token' in text and 'limit' in text: return 'REQUEST TOO LARGE: prompt or requested output exceeds the model context limit.'
+    if 'reasoning without final content' in text: return 'RESPONSE CONTRACT FAILURE: the model returned reasoning but no final answer; thinking mode should be disabled.'
     if 'no usable content' in text or 'non-json' in text: return 'RESPONSE CONTRACT FAILURE: the server responded, but not with usable model output.'
     return 'UNCLASSIFIED MODEL FAILURE: inspect the bounded response body and request metadata.'
 
@@ -30,7 +31,7 @@ class ModelClient:
     def generate(self, prompt: str, system: str) -> str:
         if not self.s.api_key and self.s.api_url.startswith("https://llm-1.d4done.com"):
             raise ModelError("API_KEY is required for the configured model endpoint")
-        payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt}], "temperature": 0.1, "max_tokens": 3072, "stream": False}).encode()
+        payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt}], "temperature": 0.1, "max_tokens": 3072, "stream": False, "chat_template_kwargs": {"enable_thinking": False}}).encode()
         for attempt in range(1, self.s.model_retries + 2):
             request_id = uuid.uuid4().hex[:10]; started = time.monotonic()
             req = urllib.request.Request(self.s.api_url, data=payload, headers={"Content-Type":"application/json", "User-Agent":"website-test-pipeline/0.1", **({"Authorization": f"Bearer {self.s.api_key}"} if self.s.api_key else {})})
@@ -42,7 +43,12 @@ class ModelClient:
                 try: data = json.loads(raw)
                 except json.JSONDecodeError as exc: raise ModelError("API returned non-JSON success response", body=raw[:1000]) from exc
                 if data.get("error"): raise ModelError(f"Model error: {str(data['error'])[:500]}", body=raw[:1000])
-                content = ((data.get("choices") or [{}])[0].get("message") or {}).get("content") or data.get("output_text") or data.get("response") or data.get("content")
+                choice = (data.get("choices") or [{}])[0]
+                message = choice.get("message") or {}
+                self.log.info("model choice fields request=%s fields=%s message_fields=%s", request_id, list(choice), list(message))
+                content = message.get("content")
+                if not content and (message.get("reasoning") or message.get("reasoning_content")):
+                    raise ModelError("Model returned reasoning without final content", body=raw[:1000])
                 if isinstance(content, list): content = "".join(x if isinstance(x, str) else x.get("text", "") for x in content)
                 if not isinstance(content, str) or not content.strip(): raise ModelError(f"Model response had no usable content; keys={','.join(data.keys())}", body=raw[:1000])
                 return content

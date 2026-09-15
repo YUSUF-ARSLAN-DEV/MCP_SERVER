@@ -170,11 +170,92 @@ def test_leaves_input_fill_value_assert_alone():
     out, applied = repair_spec(src)
     assert out == src and applied == []
 
-def test_leaves_non_numeric_select_value_assert_alone():
+def test_downgrades_non_numeric_select_value_assert():
+    # select_option(label="Weekly") -> the value attr may be "3", "weekly", anything;
+    # it is unknowable from the page, so any to_have_value assert is downgraded.
     src = ('def test_x(page, evidence_dir):\n'
            '    # https://x.test\n'
            '    page.locator("#c").select_option(label="Weekly")\n'
            '    observation_evidence(page, "c", lambda: expect(page.locator("#c")).to_have_value("weekly"), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert 'not_to_have_value("")' in out and 'to_have_value("weekly")' not in out
+    assert applied
+
+def test_downgrades_select_label_value_assert_matching_label_text():
+    # the regression: option text is now shown to the model, so it writes
+    # to_have_value("<label>") - but the <option value> is a numeric id.
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    c = page.locator("#countrylist")\n'
+           '    c.select_option(label="Aruba")\n'
+           '    observation_evidence(page, "c", lambda: expect(c).to_have_value("Aruba"), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert 'not_to_have_value("")' in out and 'to_have_value("Aruba")' not in out
+
+def test_leaves_input_value_assert_alone_still():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    page.locator("#qty").fill("5")\n'
+           '    observation_evidence(page, "q", lambda: expect(page.locator("#qty")).to_have_value("5"), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert out == src and applied == []
+
+
+# ----------------------------------------------- sr-only multiselect option asserts
+
+def test_downgrades_multiselect_option_visibility():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    opt = page.locator("#ui-multiselect-channellist-option-1")\n'
+           '    observation_evidence(page, "o", lambda: expect(opt).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert 'to_have_count(1)' in out and 'to_be_visible' not in out
+    assert any("multiselect-option" in a for a in applied)
+
+def test_downgrades_multiselect_option_checked():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    observation_evidence(page, "o",\n'
+           '        lambda: expect(page.locator("#ui-multiselect-channellist-option-2")).to_be_checked(), evidence_dir)\n')
+    out, _ = repair_spec(src)
+    assert 'to_have_count(1)' in out and 'to_be_checked' not in out
+
+def test_retargets_multiselect_option_click_to_label():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    action_evidence(page, "c",\n'
+           '        lambda: page.locator("#ui-multiselect-channellist-option-1").click(),\n'
+           '        lambda: expect(page.locator("#ui-multiselect-channellist-option-1")).to_have_count(1), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert "label[for='ui-multiselect-channellist-option-1']" in out
+    assert any("label" in a for a in applied)
+    assert _parses(out)
+
+def test_retargets_multiselect_option_click_via_variable():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    channel_checkbox = page.locator("#ui-multiselect-channellist-option-1")\n'
+           '    action_evidence(page, "c", lambda: channel_checkbox.click(),\n'
+           '        lambda: expect(channel_checkbox).to_have_count(1), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert "label[for='ui-multiselect-channellist-option-1']" in out
+    assert "#ui-multiselect-channellist-option-1" not in out
+    assert _parses(out)
+
+def test_no_escape_before_in_menu_label_click():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    action_evidence(page, "open", lambda: page.get_by_role("button", name="Pick", exact=True).click(),\n'
+           '        lambda: expect(page.locator("#ui-multiselect-x-option-1")).to_have_count(1), evidence_dir)\n'
+           '    action_evidence(page, "sel", lambda: page.locator("label[for=\'ui-multiselect-x-option-1\']").click(),\n'
+           '        lambda: expect(page.locator("#ui-multiselect-x-option-1")).to_have_count(1), evidence_dir)\n')
+    out, _ = repair_spec(src)
+    assert "Escape" not in out   # next click is into the menu - don't close it
+
+def test_leaves_normal_visibility_assert_alone():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    observation_evidence(page, "o", lambda: expect(page.locator("#real-panel")).to_be_visible(), evidence_dir)\n')
     out, applied = repair_spec(src)
     assert out == src and applied == []
 
@@ -210,6 +291,168 @@ def test_no_map_settle_without_map_embed():
            '    observation_evidence(page, "c", lambda: expect(page.locator("#thing canvas")).to_be_visible(), evidence_dir)\n')
     out, applied = repair_spec(src, PageInventory('https://x.test', 'T'))
     assert out == src and applied == []
+
+# ----------------------------------------------- fragile exact-heading names
+
+_LONG_EN = ("Discover how we help organizations achieve their goals through "
+            "practical people focused technology")
+_LONG_AR = "خطوات توليف جهاز استقبال الاقمار الصناعية لقنوات الجزيرة"
+
+def test_rewrites_long_english_heading_to_regex():
+    src = (f'def test_x(page, evidence_dir):\n'
+           f'    # https://x.test\n'
+           f'    h = page.get_by_role("heading", name="{_LONG_EN}", exact=True)\n'
+           f'    observation_evidence(page, "h", lambda: expect(h).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert "re.compile(r'" in out and _LONG_EN not in out
+    assert applied and "re.compile" in applied[-1]
+    assert _parses(out)
+
+def test_rewrites_long_arabic_heading_and_survives_validator():
+    src = ('import re\n'
+           'def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           f'    h = page.get_by_role("heading", name="{_LONG_AR}", exact=True)\n'
+           '    observation_evidence(page, "h", lambda: expect(h).to_be_visible(), evidence_dir)\n')
+    with pytest.raises(SpecError, match="fragile"):
+        validate_python_spec(src, "https://x.test")
+    out, applied = repair_spec(src)
+    assert "re.compile(r'" in out
+    validate_python_spec(out, "https://x.test")   # no longer fragile
+
+def test_leaves_short_heading_alone():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    h = page.get_by_role("heading", name="Contact us", exact=True)\n'
+           '    observation_evidence(page, "h", lambda: expect(h).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert out == src and applied == []
+
+
+# ----------------------------------------------- guessed select_option(label=)
+
+def _channel_inv():
+    return PageInventory('https://x.test/sub', 'Sub', controls=[
+        {'tag': 'select', 'id': 'edit-field-channel-sub-und',
+         'selector': '#edit-field-channel-sub-und',
+         'options': ['- Select -', 'Al Jazeera Arabic', 'Al Jazeera Mubasher', 'AJ+']},
+    ])
+
+def test_repoints_guessed_channel_label_to_index():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test/sub\n'
+           '    def act():\n'
+           '        page.locator("#edit-field-channel-sub-und").select_option(label="Al Jazeera News")\n'
+           '    action_evidence(page, "c", act,\n'
+           '        lambda: expect(page.locator("#edit-field-channel-sub-und")).not_to_have_value(""), evidence_dir)\n')
+    out, applied = repair_spec(src, _channel_inv())
+    assert 'select_option(index=1)' in out and 'label="Al Jazeera News"' not in out
+    assert applied and "index=1" in applied[-1]
+    assert _parses(out)
+
+def test_leaves_real_observed_option_label_alone():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test/sub\n'
+           '    page.locator("#edit-field-channel-sub-und").select_option(label="Al Jazeera Arabic")\n'
+           '    observation_evidence(page, "c", lambda: expect(page.locator("#edit-field-channel-sub-und")).not_to_have_value(""), evidence_dir)\n')
+    out, applied = repair_spec(src, _channel_inv())
+    assert out == src and applied == []
+
+def test_bad_select_label_noop_without_inventory():
+    src = ('page.locator("#c").select_option(label="Whatever")\n')
+    out, applied = repair_spec(src)
+    assert out == src and applied == []
+
+
+# ----------------------------------------------- unclosed menu overlay
+
+def test_inserts_escape_between_menu_open_and_next_click():
+    src = ('def test_search(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    channel = page.get_by_role("button", name="Select a channel", exact=True)\n'
+           '    action_evidence(page, "01-open", lambda: channel.click(),\n'
+           '        lambda: expect(page.locator("#ui-multiselect-channellist-option-1")).to_be_visible(), evidence_dir)\n'
+           '    search = page.get_by_role("button", name="Search", exact=True)\n'
+           '    action_evidence(page, "02-search", lambda: search.click(),\n'
+           '        lambda: expect(page.get_by_role("heading", name="Results", exact=True)).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert 'page.keyboard.press("Escape")' in out
+    assert out.index("Escape") < out.index('"02-search"')
+    assert any("Escape" in a for a in applied)
+    assert _parses(out)
+    assert out.count('keyboard.press("Escape")') == 1   # exactly one, not a runaway
+
+def test_escape_not_reinserted_when_already_present():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    b = page.get_by_role("button", name="Open", exact=True)\n'
+           '    action_evidence(page, "o", lambda: b.click(),\n'
+           '        lambda: expect(page.locator(".dropdown-menu")).to_be_visible(), evidence_dir)\n'
+           '    page.keyboard.press("Escape")\n'
+           '    action_evidence(page, "s", lambda: page.get_by_role("button", name="Go", exact=True).click(),\n'
+           '        lambda: expect(page.get_by_role("heading", name="R", exact=True)).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert out.count('keyboard.press("Escape")') == 1 and applied == []
+
+def test_no_escape_when_menu_step_is_last_click():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    b = page.get_by_role("button", name="Open", exact=True)\n'
+           '    action_evidence(page, "o", lambda: b.click(),\n'
+           '        lambda: expect(page.locator(".dropdown-menu")).to_be_visible(), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert "Escape" not in out and applied == []
+
+def test_no_escape_for_plain_link_clicks():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    action_evidence(page, "a", lambda: page.get_by_role("link", name="A", exact=True).first.click(),\n'
+           '        lambda: expect(page).to_have_url(re.compile(r"/a")), evidence_dir)\n'
+           '    action_evidence(page, "b", lambda: page.get_by_role("link", name="B", exact=True).first.click(),\n'
+           '        lambda: expect(page).to_have_url(re.compile(r"/b")), evidence_dir)\n')
+    out, applied = repair_spec(src)
+    assert "Escape" not in out
+
+
+def _ro_inv():
+    return PageInventory('https://x.test/wiz', 'Wiz', revealed=[
+        {'trigger': 'Next', 'effect': 'reveals', 'controls': [
+            {'tag': 'input', 'field_name': 'password', 'selector': 'input[name="password"]',
+             'name': '0000', 'readonly': True},
+        ]},
+    ])
+
+def test_converts_readonly_fill_to_visibility_check():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test/wiz\n'
+           '    password_field = page.locator(\'input[name="password"]\')\n'
+           '    action_evidence(page, "03-enter-password",\n'
+           '        lambda: password_field.fill("0000"),\n'
+           '        lambda: expect(password_field).to_have_value("0000"), evidence_dir)\n')
+    out, applied = repair_spec(src, _ro_inv())
+    assert '.fill(' not in out and 'observation_evidence(page, "03-enter-password"' in out
+    assert 'to_be_visible()' in out
+    assert applied and "readonly" in applied[-1]
+    assert _parses(out)
+
+def test_readonly_fill_rejected_by_validator_when_not_repaired():
+    # inline .fill on a readonly id the autorepair regex can't shape-match still gets caught
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test/wiz\n'
+           '    action_evidence(page, "p", lambda: page.locator(\'input[name="password"]\').fill("x"),\n'
+           '        lambda: expect(page.locator(\'input[name="password"]\')).to_be_visible(), evidence_dir)\n')
+    with pytest.raises(SpecError, match="READONLY"):
+        validate_python_spec(src, 'https://x.test/wiz', _ro_inv())
+
+def test_readonly_repair_noop_without_readonly_controls():
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    f = page.locator("#name")\n'
+           '    action_evidence(page, "n", lambda: f.fill("Jo"),\n'
+           '        lambda: expect(f).to_have_value("Jo"), evidence_dir)\n')
+    out, applied = repair_spec(src, PageInventory('https://x.test', 'T'))
+    assert out == src and applied == []
+
 
 def test_no_repairs_leaves_source_identical():
     src = 'def test_x(page):\n    expect(page).to_have_title("Hi")\n'

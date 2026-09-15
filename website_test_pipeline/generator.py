@@ -184,12 +184,18 @@ def _control_line(control: dict) -> str:
         opts = [str(o) for o in control["options"]]
         ids_only = len(opts) >= 2 and sum(bool(re.fullmatch(r"-?\d+", o.strip())) for o in opts) >= len(opts) - 1
         if ids_only:
-            parts.append(f"options=<{len(opts)}+ opaque numeric ids; pick by visible label, never assert to_have_value>")
+            parts.append(f"options=<{len(opts)}+ opaque numeric ids>")
         else:
-            parts.append(f"options={opts[:15]}")
+            parts.append(f"options={opts[:15]} (these are the VISIBLE LABELS)")
+    if control.get("tag") == "select":
+        parts.append("[select_option(label=<one listed label>); its .value attribute is an internal id "
+                     "you cannot see - NEVER assert to_have_value, use not_to_have_value('')]")
     for flag in ("required", "disabled"):
         if control.get(flag):
             parts.append(flag)
+    if control.get("readonly"):
+        parts.append("READONLY(display-only field - never .fill() it and never assert to_have_value; "
+                     "at most assert it is visible)")
     if control.get("hidden"):
         parts.append("HIDDEN(sr-only / 1px - assert to_have_count(1), never to_be_visible)")
     if control.get("volatile_id"):

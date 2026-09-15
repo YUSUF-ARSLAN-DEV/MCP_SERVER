@@ -118,6 +118,14 @@ def test_action_verb_matches(name):
 def test_action_verb_rejects_non_actions(name):
     assert not _ACTION_VERB.search(name)
 
+@pytest.mark.parametrize("name", ["بحث", "ابحث", "ابحث عن ترددات الجزيرة", "عرض النتائج"])
+def test_action_verb_matches_arabic_search(name):
+    assert _ACTION_VERB.search(name)
+
+@pytest.mark.parametrize("name", ["أشترك اﻷن", "التالي", "الذهاب الى الخريطة"])
+def test_action_verb_rejects_arabic_non_actions(name):
+    assert not _ACTION_VERB.search(name)
+
 def test_plausible_value_by_type():
     assert _plausible_value({"type": "email"}) == "test@example.com"
     assert _plausible_value({"type": "number"}) == "1"

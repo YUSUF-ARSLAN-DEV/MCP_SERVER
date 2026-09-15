@@ -13,7 +13,7 @@ from __future__ import annotations
 import ast
 import re
 
-from .validator import _norm
+from .validator import _norm, _ID_FRAGMENT
 
 _TAG_ROLE = {
     "button": "button", "a": "link", "nav": "navigation",
@@ -142,9 +142,6 @@ def _repair_missing_first(source: str, inventory) -> tuple[str, int]:
     return source, count
 
 
-_INT_LITERAL = re.compile(r"^-?\d+$")
-
-
 def _loc_key(segment: str) -> str:
     """Normalise a locator expression for comparison - drop all whitespace and a
     trailing .first / .last / .nth(...)."""
@@ -155,10 +152,12 @@ def _loc_key(segment: str) -> str:
 
 def _repair_select_value_assert(source: str) -> tuple[str, int]:
     """`select_option(label=/text=...)` already fails loudly if the option is
-    missing, so a following `expect(sel).to_have_value("<n>")` adds no signal and
-    breaks the instant the option's opaque id differs from the crawl snapshot
-    (Drupal / WP term ids are environment-specific). Downgrade it to
-    `not_to_have_value("")` - a real 'something got selected' check."""
+    missing, so a following `expect(sel).to_have_value("<x>")` adds no signal and
+    breaks the instant the option's value attribute differs from its visible label
+    (a country <option> reads "Aruba" but its value is "223"; Drupal / WP term ids
+    are environment-specific). The value attribute is unknowable from the page, so
+    downgrade ANY such assertion to `not_to_have_value("")` - a real 'something got
+    selected' check. (Only fires when the same locator was selected by label/text.)"""
     count = 0
     for _ in range(20):
         try:
@@ -181,7 +180,7 @@ def _repair_select_value_assert(source: str) -> tuple[str, int]:
                     and node.func.attr == "to_have_value" and len(node.args) == 1
                     and isinstance(node.args[0], ast.Constant)
                     and isinstance(node.args[0].value, str)
-                    and _INT_LITERAL.match(node.args[0].value.strip())):
+                    and node.args[0].value.strip()):   # any non-empty asserted value
                 continue
             expect_call = node.func.value
             if not (isinstance(expect_call, ast.Call) and isinstance(expect_call.func, ast.Name)
@@ -193,6 +192,338 @@ def _repair_select_value_assert(source: str) -> tuple[str, int]:
             old = ast.get_source_segment(source, node)
             if old:
                 hit = (old, old.rsplit(".to_have_value", 1)[0] + '.not_to_have_value("")')
+            break
+        if hit is None or hit[0] == hit[1]:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
+_LONG_WORD = re.compile(r"[^\W\d_]{4,}", re.UNICODE)
+
+
+def _repair_fragile_heading(source: str) -> tuple[str, int]:
+    """`get_by_role('heading', name='<long sentence>')` breaks on whitespace /
+    line-break drift between the crawl snapshot and the live render, and the
+    validator rejects it. Rewrite the name to `re.compile(r'<longest word>')` -
+    exactly the fix ASSERTION_RULES tells the model to make itself. qwen keeps
+    shipping the exact-string form on the Arabic wizard pages and burning the
+    retry budget on it."""
+    count = 0
+    for _ in range(20):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        hit = None
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get_by_role" and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and str(node.args[0].value).strip().lower() == "heading"):
+                continue
+            name_kw = next((k for k in node.keywords if k.arg == "name"), None)
+            if name_kw is None or not (isinstance(name_kw.value, ast.Constant)
+                                       and isinstance(name_kw.value.value, str)):
+                continue
+            literal = name_kw.value.value
+            if len(literal.split()) <= 6 and len(literal) <= 70:
+                continue
+            words = _LONG_WORD.findall(literal)
+            if not words:
+                continue
+            token = max(words, key=len)
+            old = ast.get_source_segment(source, name_kw.value)
+            if not old:
+                continue
+            hit = (old, f"re.compile(r'{token}')")
+            break
+        if hit is None or hit[0] == hit[1]:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
+def _select_option_texts(inventory) -> dict[str, set[str]]:
+    """{normalised select id/name/selector -> {observed option texts}} for every
+    <select> whose options the explorer captured."""
+    out: dict[str, set[str]] = {}
+    for control in getattr(inventory, "controls", None) or []:
+        if control.get("tag") != "select":
+            continue
+        opts = {_norm(str(o)) for o in (control.get("options") or []) if str(o).strip()}
+        if len(opts) < 2:
+            continue
+        for key in ("selector", "id", "field_name"):
+            if control.get(key):
+                out[_norm(str(control[key]))] = opts
+    return out
+
+
+def _repair_bad_select_label(source: str, inventory) -> tuple[str, int]:
+    """`select_option(label='X')` where X is not one of the <select>'s observed
+    option texts -> `select_option(index=1)`. The model guesses channel / plan /
+    category labels it never saw; Playwright then times out with 'did not find
+    some options'. Picking the first real option by position always resolves."""
+    if inventory is None:
+        return source, 0
+    opt_map = _select_option_texts(inventory)
+    if not opt_map:
+        return source, 0
+    count = 0
+    for _ in range(20):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        hit = None
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "select_option"):
+                continue
+            kw = next((k for k in node.keywords if k.arg in {"label", "text"}), None)
+            if kw is None or not (isinstance(kw.value, ast.Constant)
+                                  and isinstance(kw.value.value, str)):
+                continue
+            recv = ast.get_source_segment(source, node.func.value) or ""
+            targets = re.findall(r"#([A-Za-z0-9_-]+)", recv)
+            targets += [m.group(2) for m in re.finditer(r"name\s*=\s*(['\"])([^'\"]+)\1", recv)]
+            opts = next((opt_map[_norm(t)] for t in targets if _norm(t) in opt_map), None)
+            if opts is None:
+                continue
+            label = _norm(kw.value.value)
+            if not label or any(label == o or (len(o) >= 3 and (label in o or o in label)) for o in opts):
+                continue
+            recv_seg = ast.get_source_segment(source, node.func.value)
+            old = ast.get_source_segment(source, node)
+            if not recv_seg or not old:
+                continue
+            hit = (old, f"{recv_seg}.select_option(index=1)")
+            break
+        if hit is None or hit[0] == hit[1]:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
+_MENU_TOKENS = re.compile(r"multiselect|dropdown-menu|ui-menu|select2|chosen-drop|\blistbox\b|option-\d", re.I)
+
+
+def _repair_close_menu(source: str) -> tuple[str, int]:
+    """A test that clicks a widget which opens a menu/listbox, then clicks
+    something else: the still-open menu overlay intercepts the second click and it
+    times out. Insert `page.keyboard.press('Escape')` right after the
+    menu-opening step. (LOCATOR_RULES already tells the model to do this; qwen
+    ignores it on the jQuery-UI multiselect pages.)"""
+    count = 0
+    for _ in range(10):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        assigned: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                assigned[node.targets[0].id] = ast.get_source_segment(source, node.value) or ""
+
+        def _expand(text: str) -> str:  # splice in any `x = page.locator(...)` bodies the line references
+            extra = " ".join(v for k, v in assigned.items() if re.search(rf"\b{re.escape(k)}\b", text))
+            return text + " " + extra
+
+        hit = None
+        for func in ast.walk(tree):
+            if not (isinstance(func, ast.FunctionDef) and func.name.startswith("test_")):
+                continue
+            stmts = list(func.body)
+            for i, stmt in enumerate(stmts):
+                seg = ast.get_source_segment(source, stmt) or ""
+                if ".click(" not in seg or not _MENU_TOKENS.search(_expand(seg)):
+                    continue
+                # already followed by an Escape? (the guard must look at the NEXT
+                # statement, not this one - the press is inserted as a sibling)
+                nxt = ast.get_source_segment(source, stmts[i + 1]) if i + 1 < len(stmts) else ""
+                if nxt and "keyboard.press" in nxt and "Escape" in nxt:
+                    continue
+                rest = [ast.get_source_segment(source, s) or "" for s in stmts[i + 1:]]
+                later = "\n".join(rest)
+                if ".click(" not in later:
+                    continue
+                # don't close the menu if the very next click is INTO it (the model
+                # is still selecting an option) - only Escape before a click elsewhere
+                first_click = next((r for r in rest if ".click(" in r), "")
+                if _MENU_TOKENS.search(_expand(first_click)):
+                    continue
+                indent = " " * stmt.col_offset
+                hit = (seg, seg + f'\n{indent}page.keyboard.press("Escape")')
+                break
+            if hit:
+                break
+        if hit is None or hit[0] == hit[1]:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
+def _readonly_tokens(inventory) -> set[str]:
+    tokens: set[str] = set()
+    groups = [getattr(inventory, "controls", None) or []]
+    for entry in getattr(inventory, "revealed", None) or []:
+        groups.append(entry.get("controls") or [])
+    for group in groups:
+        for control in group:
+            if not control.get("readonly"):
+                continue
+            for key in ("selector", "id", "field_name", "name"):
+                if control.get(key):
+                    tokens.add(_norm(str(control[key])))
+    return {t for t in tokens if t}
+
+
+def _repair_readonly_fill(source: str, inventory) -> tuple[str, int]:
+    """`action_evidence(page, l, lambda: fld.fill(v), lambda: expect(fld).to_have_value(v), dir)`
+    where `fld` is a readonly display field (the wizard's default-password box, a
+    generated code) - the fill times out 'element is not editable'. Replace the
+    whole step with an observation that the field is visible."""
+    if inventory is None:
+        return source, 0
+    readonly = _readonly_tokens(inventory)
+    if not readonly:
+        return source, 0
+    count = 0
+    for _ in range(15):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        assigned: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                assigned[node.targets[0].id] = ast.get_source_segment(source, node.value) or ""
+        hit = None
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "action_evidence"):
+                continue
+            seg = ast.get_source_segment(source, node) or ""
+            m = re.search(r"lambda:\s*(?P<loc>[A-Za-z_][\w.\"'\[\]()=\-\s]*?)\.(?:fill|type)\(", seg)
+            if not m:
+                continue
+            loc = m.group("loc").strip()
+            expanded = loc + " " + assigned.get(loc, "")
+            frags = [mm.group(1) or mm.group(2) for mm in _ID_FRAGMENT.finditer(expanded)]
+            frags += [mm.group(2) for mm in re.finditer(r"name\s*=\s*(['\"])([^'\"]+)\1", expanded)]
+            if not any(_norm(f) in readonly for f in frags if f):
+                continue
+            lbl = re.search(r"action_evidence\(\s*page\s*,\s*(['\"][^'\"]*['\"])", seg)
+            if not lbl:
+                continue
+            indent = " " * node.col_offset
+            new = (f"observation_evidence(page, {lbl.group(1)}, "
+                   f"lambda: expect({loc}).to_be_visible(), evidence_dir)")
+            hit = (seg, new)
+            break
+        if hit is None or hit[0] == hit[1]:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
+_MS_OPTION = re.compile(r"ui-multiselect[\w-]*option-\d|ui-multiselect[\w-]*optionlabel", re.I)
+
+
+_MS_OPTION_ID = re.compile(r"""["'#]?(ui-multiselect-[\w-]*?option-\d+)["']?""")
+
+
+def _repair_multiselect_option_click(source: str) -> tuple[str, int]:
+    """`page.locator('#ui-multiselect-x-option-1').click()` clicks the 1px sr-only
+    checkbox itself and times out 'element is not visible'. The clickable element
+    is its <label>. Rewrite the locator to `label[for="..."]`."""
+    count = 0
+    for _ in range(20):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        # every `x = page.locator("...")` and the raw string literals in .locator("...").click()
+        literal_nodes: list[ast.Constant] = []
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "locator" and node.args
+                    and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+                literal_nodes.append(node.args[0])
+        hit = None
+        for lit in literal_nodes:
+            sel = lit.value
+            m = _MS_OPTION_ID.search(sel)
+            if not m or sel.strip().startswith("label"):
+                continue
+            old_arg = ast.get_source_segment(source, lit)
+            if not old_arg:
+                continue
+            hit = (old_arg, f'"label[for=\'{m.group(1)}\']"')
+            break
+        if hit is None or hit[0] == hit[1]:
+            break
+        updated = source.replace(hit[0], hit[1], 1)
+        if updated == source:
+            break
+        source = updated
+        count += 1
+    return source, count
+
+
+def _repair_multiselect_option_visibility(source: str) -> tuple[str, int]:
+    """jQuery-UI multiselect renders its real option checkboxes as 1px sr-only
+    nodes - `expect(page.locator('#ui-multiselect-x-option-1')).to_be_visible()`
+    (or .to_be_checked()) always fails 'Actual value: hidden'. The honest check is
+    that the node exists once. Downgrade to .to_have_count(1)."""
+    count = 0
+    for _ in range(20):
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            break
+        assigned: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                assigned[node.targets[0].id] = ast.get_source_segment(source, node.value) or ""
+        hit = None
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in {"to_be_visible", "to_be_checked", "to_be_hidden"}):
+                continue
+            recv = ast.get_source_segment(source, node.func.value) or ""
+            m = re.fullmatch(r"expect\(\s*([A-Za-z_]\w*)\s*\)", recv.strip())
+            if m and m.group(1) in assigned:
+                recv = recv + " " + assigned[m.group(1)]
+            if not _MS_OPTION.search(recv):
+                continue
+            old = ast.get_source_segment(source, node)
+            if not old:
+                continue
+            new = old.rsplit(f".{node.func.attr}", 1)[0] + ".to_have_count(1)"
+            hit = (old, new)
             break
         if hit is None or hit[0] == hit[1]:
             break
@@ -256,9 +587,27 @@ def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
         source, n = _repair_select_value_assert(source)
         if n:
             applied.append(f"downgraded {n} opaque select-value assertion(s) to not_to_have_value('')")
+        source, n = _repair_bad_select_label(source, inventory)
+        if n:
+            applied.append(f"repointed {n} guessed select_option(label=) to index=1")
+        source, n = _repair_fragile_heading(source)
+        if n:
+            applied.append(f"rewrote {n} fragile exact-heading name(s) to re.compile()")
         source, n = _repair_missing_first(source, inventory)
         if n:
             applied.append(f"added .first to {n} strict-mode locator(s)")
+        source, n = _repair_multiselect_option_click(source)
+        if n:
+            applied.append(f"retargeted {n} multiselect-option click(s) to the visible <label>")
+        source, n = _repair_close_menu(source)
+        if n:
+            applied.append(f"inserted Escape after {n} menu-opening step(s)")
+        source, n = _repair_multiselect_option_visibility(source)
+        if n:
+            applied.append(f"downgraded {n} sr-only multiselect-option visibility assert(s) to to_have_count(1)")
+        source, n = _repair_readonly_fill(source, inventory)
+        if n:
+            applied.append(f"converted {n} .fill() on a readonly field to a visibility check")
         source, n = _repair_map_settle(source, inventory)
         if n:
             applied.append(f"added a map settle wait to {n} test(s)")

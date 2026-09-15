@@ -327,13 +327,19 @@ def test_control_line_hides_opaque_numeric_select_options():
     line = _control_line({"tag": "select", "selector": "#countrylist", "region": "content",
                           "options": ["-1", "37", "285", "38", "20"]})
     assert "37" not in line and "285" not in line
-    assert "opaque numeric ids" in line and "never assert to_have_value" in line
+    assert "opaque numeric ids" in line
 
 def test_control_line_keeps_real_text_select_options():
     from website_test_pipeline.generator import _control_line
     line = _control_line({"tag": "select", "selector": "#freq", "region": "content",
                           "options": ["Daily", "Weekly", "Monthly"]})
     assert "Weekly" in line
+
+def test_control_line_warns_never_assert_select_value():
+    from website_test_pipeline.generator import _control_line
+    line = _control_line({"tag": "select", "selector": "#freq", "region": "content",
+                          "options": ["Daily", "Weekly"]})
+    assert "NEVER assert to_have_value" in line and "not_to_have_value" in line
 
 def test_compact_revealed_renders_trigger_and_controls():
     revealed = [
@@ -624,6 +630,15 @@ def test_rejects_truncated_role_name_hallucinated_footer_link():
            '    # https://example.test\n'
            '    link = page.get_by_role("link", name="About", exact=True).first\n'
            '    observation_evidence(page, "a", lambda: expect(link).to_be_visible(), evidence_dir)\n')
+    with pytest.raises(SpecError, match='not in observed inventory'):
+        validate_python_spec(src, 'https://example.test', _footer_inv())
+
+def test_rejects_mixed_quote_hallucinated_selector():
+    # "div[role='listbox']" - the inner ' used to truncate the extractor to "div[role="
+    src = ('def test_menu(page, evidence_dir):\n'
+           '    # https://example.test\n'
+           '    action_evidence(page, "m", lambda: page.get_by_role("button", name="Email address", exact=True).click(),\n'
+           '        lambda: expect(page.locator("div[role=\'listbox\']")).to_be_visible(), evidence_dir)\n')
     with pytest.raises(SpecError, match='not in observed inventory'):
         validate_python_spec(src, 'https://example.test', _footer_inv())
 
