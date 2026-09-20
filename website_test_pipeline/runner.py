@@ -71,6 +71,17 @@ def outcome_matches(predicted: dict, observed: dict) -> bool:
     return False
 
 
+def hop_hint(step: dict, index: int, current_url: str) -> str:
+    """When a step fails on a later hop, say which page it expected and where the browser is.
+    Not a check by itself: a redirect (/ -> /en) makes the expected and actual page differ
+    on a flow that works, so it is only added to a failure message, and never for step 1
+    (its page is wherever the start URL lands)."""
+    expected = step.get("page")
+    if index == 0 or not expected or _path(expected) == _path(current_url):
+        return ""
+    return f" (hop {index + 1}: step expects page {_path(expected)}, browser is on {_path(current_url)})"
+
+
 def apply_result(flow: dict, result: dict, now: str) -> dict:
     """Update the flow from a run and return the evaluation entry for flow_ratings.json."""
     observed = result["observed"]
@@ -170,11 +181,12 @@ def run_flow(page, flow: dict, log=None) -> dict:
         return result
     first = previous = take_snapshot(page)
     result["landed_url"] = first["url"]  # where the start URL really ended up (it may redirect)
-    for step in steps:
+    for index, step in enumerate(steps):
         try:
             _do_step(page, step)
         except Exception as exc:
-            result["error"] = f'step "{describe_step(step)}" failed: {str(exc).splitlines()[0][:120]}'
+            result["error"] = (f'step "{describe_step(step)}" failed: {str(exc).splitlines()[0][:120]}'
+                               f'{hop_hint(step, index, page.url)}')
             break
         page.wait_for_timeout(_STEP_WAIT_MS)
         try:

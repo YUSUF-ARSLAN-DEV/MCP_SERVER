@@ -137,8 +137,10 @@ What is missing is *hop awareness*: nothing checks the flow is on the page each
 step expects.
 **Files:** `runner.py`, `proposer.py`/`critic.py` prompts, `flowgen.py`, tests.
 
-- Runner: before each step, compare the current path with the step's `page`; on a
-  mismatch fail with `expected /x, was on /y` (a clear hop-level error).
+- Runner: when a step fails on a later hop, the error says which page the step expects and
+  where the browser is (`hop 2: step expects page /x, browser is on /y`). It is NOT a
+  pre-step mismatch check: a working flow can legitimately differ from the recorded page
+  (sat-stg redirects `/` to `/en`), so that would fail good flows.
 - Record `step_urls` in `observed` so each hop's landing page is known.
 - Flowgen: emit `expect(page).to_have_url(re.compile(...))` after each step that
   observed a navigation, so a failure names the hop that broke.
@@ -227,7 +229,7 @@ detail when we reach it.
 | 9 results feed ratings | done, pushed (`flowresults.py`, `derive_status`, `stale`) |
 | 10 multi-page hop awareness | in progress, one commit per part: |
 | &nbsp;&nbsp;10a runner records landed_url + step_urls | done, pushed |
-| &nbsp;&nbsp;10b hop-aware step errors | todo |
+| &nbsp;&nbsp;10b hop-aware step errors | done, pushed |
 | &nbsp;&nbsp;10c flowgen asserts every hop URL | todo |
 | &nbsp;&nbsp;10d propose encourages cross-page chains | todo |
 | 11 human review commands | todo |

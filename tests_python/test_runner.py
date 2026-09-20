@@ -1,4 +1,4 @@
-from website_test_pipeline.runner import apply_result, classify, diff_snapshots, outcome_matches
+from website_test_pipeline.runner import apply_result, classify, diff_snapshots, hop_hint, outcome_matches
 
 
 def _snap(url="https://x.test/en", headings=(), controls=(), results=()):
@@ -107,3 +107,15 @@ def test_apply_result_still_works_for_results_without_url_history():
               "observed": {"effect": "reveals", "url": "u", "new_headings": ["h"], "new_controls": [], "results": []}}
     apply_result(flow, result, "now")
     assert flow["observed"]["step_urls"] == [] and flow["observed"]["landed_url"] is None
+
+
+def test_hop_hint_names_the_expected_and_actual_page_on_a_later_hop():
+    step = {"kind": "click", "name": "Subscribe", "page": "/en/list"}
+    assert hop_hint(step, 1, "https://x.test/en/map") ==         " (hop 2: step expects page /en/list, browser is on /en/map)"
+
+
+def test_hop_hint_is_silent_when_pages_agree_or_it_is_the_first_step_or_there_is_no_page():
+    step = {"kind": "click", "name": "Go", "page": "/en/list"}
+    assert hop_hint(step, 1, "https://x.test/en/list/?a=1") == ""   # same page, query and slash ignored
+    assert hop_hint(step, 0, "https://x.test/en") == ""             # step 1: start URL may redirect (/ -> /en)
+    assert hop_hint({"kind": "click", "name": "Go"}, 2, "https://x.test/en") == ""   # explorer flows carry no page
