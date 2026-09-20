@@ -25,7 +25,8 @@ SYSTEM = "Return exactly one JSON object and no prose. Propose only what the sit
 RULES = (
     "You are a QA analyst. From the SITE MAP below, propose up to %d user flows: journeys a real visitor "
     "takes to accomplish a goal (find information, search or filter, subscribe or contact, follow a path "
-    "across pages). Each flow is %d-%d steps and ends in an observable outcome.\n"
+    "across pages). Each flow is %d-%d steps and ends in an observable outcome; a single click is "
+    "acceptable only when it navigates to another page.\n"
     "Rules:\n"
     "- Use ONLY pages and controls listed in the SITE MAP. Copy control names exactly as written there.\n"
     "- Every step names the page it happens on (its path, e.g. /en/find).\n"
@@ -111,8 +112,8 @@ def validate_flow(raw: dict, index: dict, pages: set[str],
                   linked: frozenset = frozenset()) -> tuple[list[dict] | None, dict | None, str]:
     """(steps, outcome, '') when every step and the outcome exist on the site; else (None, None, reason)."""
     goal, steps_in = str(raw.get("goal") or "").strip(), raw.get("steps")
-    if not goal or not isinstance(steps_in, list) or not MIN_STEPS <= len(steps_in) <= MAX_STEPS:
-        return None, None, "needs a goal and %d-%d steps (one click is not a journey)" % (MIN_STEPS, MAX_STEPS)
+    if not goal or not isinstance(steps_in, list) or not 1 <= len(steps_in) <= MAX_STEPS:
+        return None, None, "needs a goal and 1-%d steps" % MAX_STEPS
     if _page_key(str(raw.get("start_path") or "")) not in pages:
         return None, None, f'start page {raw.get("start_path")} was not explored'
     steps = []
@@ -126,6 +127,8 @@ def validate_flow(raw: dict, index: dict, pages: set[str],
     if effect is None:
         return None, None, f'unknown outcome {outcome_in.get("type")!r}'
     outcome = {"effect": effect}
+    if len(steps) < MIN_STEPS and effect != "navigates":
+        return None, None, "a single step is only a journey when it navigates to another page"
     if effect == "navigates":
         to = _page_key(str(outcome_in.get("to_path") or ""))
         if to == _page_key(str(raw.get("start_path"))):

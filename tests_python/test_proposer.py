@@ -110,9 +110,16 @@ def test_outcome_to_a_linked_but_unexplored_page_is_allowed():
     assert len(accepted) == 1 and not rejected
 
 
-def test_single_step_flow_is_rejected():
-    flow = _flow(steps=[{"page": "/en", "action": "click", "target": "Search"}])
-    assert "not a journey" in propose([flow], INVS, [])[1][0][1]
+def test_single_step_that_only_reveals_is_rejected():
+    flow = _flow(steps=[{"page": "/en", "action": "click", "target": "Search"}],
+                 outcome={"type": "reveals_panel"})
+    assert "only a journey when it navigates" in propose([flow], INVS, [])[1][0][1]
+
+
+def test_single_click_that_navigates_to_another_page_is_accepted():
+    flow = _flow(goal="Go to results", steps=[{"page": "/en", "action": "click", "target": "Search"}])
+    accepted, rejected = propose([flow], INVS, [])
+    assert len(accepted) == 1 and not rejected
 
 
 def test_flow_ending_on_its_own_start_page_is_rejected():
