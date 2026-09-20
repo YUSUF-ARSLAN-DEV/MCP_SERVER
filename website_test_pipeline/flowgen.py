@@ -239,8 +239,11 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
     effects = list(observed.get("step_effects") or [])
     last_nav = max((i for i, e in enumerate(effects) if e == "navigates"), default=None)
     final_path = _path(observed.get("url") or "")
-    # The start URL is not where the page stays (sat-stg redirects / to /en). Only the final URL
-    # was observed, so a path is known only when no navigation happened, or after the last one.
+    # The start URL is not where the page stays (sat-stg redirects / to /en), so it is never used.
+    # A run that recorded step_urls (step 10a) tells us the page after every step. An older run only
+    # has the final URL: a path is then known only when no navigation happened, or after the last one.
+    step_urls = list(observed.get("step_urls") or [])
+    have_urls = len(step_urls) == len(steps)
     known_path: str | None = final_path if last_nav is None else None
 
     body: list[str] = []
@@ -250,7 +253,9 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
         if locator is None or action is None:
             return None, reason or why
         effect = effects[i] if i < len(effects) else None
-        if effect == "navigates":
+        if have_urls:
+            known_path = _path(step_urls[i])
+        elif effect == "navigates":
             known_path = final_path if i == last_nav else None
         label = f"{i + 1:02d}-{step.get('kind')}-{_target_slug(step)}"
         body += [

@@ -230,7 +230,7 @@ detail when we reach it.
 | 10 multi-page hop awareness | in progress, one commit per part: |
 | &nbsp;&nbsp;10a runner records landed_url + step_urls | done, pushed |
 | &nbsp;&nbsp;10b hop-aware step errors | done, pushed |
-| &nbsp;&nbsp;10c flowgen asserts every hop URL | todo |
+| &nbsp;&nbsp;10c flowgen asserts every hop URL | done, pushed |
 | &nbsp;&nbsp;10d propose encourages cross-page chains | todo |
 | 11 human review commands | todo |
 | 12 report flows section | todo |
@@ -249,7 +249,7 @@ detail when we reach it.
 
 - `multiselect` steps are not emitted yet (each widget picks options differently); such flows are skipped with a logged reason.
 - A step's control role is read from the explored pages (or an optional `role` on the step); if it cannot be told, the flow is skipped, never guessed. Step 10 should have `propose`/`verify` store `role` on steps.
-- Only the final URL is observed, so a mid-flow hop is asserted as "body visible" until Step 10 records `step_urls`.
+- (Resolved in 10c) a mid-flow hop used to be asserted as "body visible"; runs that recorded `step_urls` now assert every hop's landing URL. Flows verified before 10a keep the old behaviour until re-verified.
 
 ## Open questions (decide at the step where they matter)
 

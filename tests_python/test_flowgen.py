@@ -195,3 +195,32 @@ def test_run_flowgen_writes_specs_and_removes_only_stale_generated_ones(tmp_path
 def test_run_flowgen_needs_flows(tmp_path):
     settings = SimpleNamespace(flows_file=tmp_path / "none.json", artifacts_dir=tmp_path, tests_dir=tmp_path / "t")
     assert run_flowgen(settings, logging.getLogger("t")) == 2
+
+
+def test_every_hop_is_asserted_with_its_own_landing_url_when_the_run_recorded_them():
+    flow = _flow(outcome={"effect": "navigates", "to": "/en/map"})
+    flow["steps"] = [{"kind": "click", "selector": None, "name": "Search"}] * 3
+    flow["observed"].update(url="https://x.test/en/map", new_headings=[],
+                            step_effects=["navigates", "reveals", "navigates"],
+                            step_urls=["https://x.test/en/list", "https://x.test/en/list", "https://x.test/en/map"])
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SEARCH])])
+    assert reason == ""
+    assert 'expect(page.locator("body"))' not in source           # no hop is left unchecked any more
+    urls = re.findall(r'to_have_url\(re\.compile\(r"([^"]+)"', source)
+    assert [u.split("/?")[0].replace("\\", "") for u in urls] == ["/en/list", "/en/list", "/en/map"]
+
+
+def test_a_redirect_at_load_no_longer_matters_when_step_urls_are_known():
+    flow = _flow(outcome={"effect": "reveals"})
+    flow["steps"] = [{"kind": "click", "selector": None, "name": "Search"}]
+    flow["observed"].update(effect="reveals", url="https://x.test/en", step_effects=["reveals"],
+                            step_urls=["https://x.test/en"], landed_url="https://x.test/en", new_headings=["Passcode"])
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SEARCH])])
+    assert reason == "" and "/en" in source and '"^https?' not in source
+
+
+def test_a_run_with_a_different_number_of_step_urls_falls_back_to_the_old_behaviour():
+    flow = _flow()
+    flow["observed"]["step_urls"] = ["https://x.test/en/results"]   # 1 url for 2 steps: not trustworthy
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert reason == "" and source.count("to_have_url") == 1
