@@ -32,7 +32,7 @@ PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--traci
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
-    parser.add_argument('command', choices=['crawl','generate','explore','execute','report'], nargs='?', default='generate')
+    parser.add_argument('command', choices=['crawl','generate','explore','propose','execute','report'], nargs='?', default='generate')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--commit', action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
@@ -55,6 +55,9 @@ def main() -> int:
         log.info('CRAWL SUMMARY seed=%s discovered=%s file=%s', settings.seed_url, len(discovered), settings.urls_file)
         return 0
     urls = read_urls(settings.urls_file)
+    if args.command == 'propose':
+        from .proposer import run_propose
+        return run_propose(settings, urls, ModelClient(settings, log), log)
     if args.command == 'execute':
         result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q'], cwd=settings.root, env=pytest_env)
         return result.returncode
