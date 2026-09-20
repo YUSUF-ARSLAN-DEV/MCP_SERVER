@@ -99,17 +99,21 @@ def merge_flow(doc: dict, flow: dict) -> str:
     return "added"
 
 
+def save_flows(path: Path, doc: dict) -> None:
+    doc["version"] = FLOWS_VERSION
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
 def record_flow(path: Path, start_url: str, primary: dict | None, log=None) -> dict | None:
     flow = flow_from_primary(start_url, primary)
     if flow is None:
         return None
     doc = load_flows(path)
     result = merge_flow(doc, flow)
-    doc["version"] = FLOWS_VERSION
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
+    save_flows(path, doc)
     if log:
         log.info("flows: %s %s (%s)", result, flow["id"], flow["status"])
     return flow

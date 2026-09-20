@@ -32,7 +32,7 @@ PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--traci
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
-    parser.add_argument('command', choices=['crawl','generate','explore','propose','execute','report'], nargs='?', default='generate')
+    parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','execute','report'], nargs='?', default='generate')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--commit', action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
@@ -54,6 +54,9 @@ def main() -> int:
         settings.urls_file.write_text('\n'.join(discovered) + '\n', encoding='utf-8')
         log.info('CRAWL SUMMARY seed=%s discovered=%s file=%s', settings.seed_url, len(discovered), settings.urls_file)
         return 0
+    if args.command == 'verify':
+        from .runner import run_verify
+        return run_verify(settings, log)
     urls = read_urls(settings.urls_file)
     if args.command == 'propose':
         from .proposer import run_propose
