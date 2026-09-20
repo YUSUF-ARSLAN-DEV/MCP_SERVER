@@ -180,3 +180,55 @@ def test_search_term_prefers_brand():
 
 def test_search_term_falls_back_to_heading_word():
     assert _search_term("https://x.io/", [{"text": "Enterprise Cloud Platform"}]) == "enterprise"
+
+
+# ------------------------------------------------------------------- menu closing
+
+class _MenuPage:
+    """Menu stays open until `closes_on` step; records what the helper did."""
+    def __init__(self, closes_on):
+        self.open, self.closes_on, self.actions = True, closes_on, []
+        self.keyboard = self
+        self.mouse = self
+    def locator(self, _sel):
+        page = self
+        class _L:
+            def count(self_inner): return 1 if page.open else 0
+        return _L()
+    def press(self, key):
+        self.actions.append("escape")
+        if self.closes_on == "escape": self.open = False
+    def click(self, *a, **k):
+        self.actions.append("corner")
+        if self.closes_on == "corner": self.open = False
+    def wait_for_timeout(self, _ms): pass
+
+
+class _Trigger:
+    def __init__(self, page): self.page = page
+    def click(self, timeout=None):
+        self.page.actions.append("trigger")
+        if self.page.closes_on == "trigger": self.page.open = False
+
+
+def test_close_menus_stops_after_escape_when_it_works():
+    from website_test_pipeline.explorer import _close_menus
+    page = _MenuPage("escape")
+    _close_menus(page, _Trigger(page))
+    assert page.actions == ["escape"]
+
+def test_close_menus_falls_back_to_trigger_then_corner():
+    from website_test_pipeline.explorer import _close_menus
+    page = _MenuPage("trigger")
+    _close_menus(page, _Trigger(page))
+    assert page.actions == ["escape", "trigger"]
+    page = _MenuPage("corner")
+    _close_menus(page)  # no trigger known
+    assert page.actions == ["escape", "corner"]
+
+def test_close_menus_noop_when_nothing_open():
+    from website_test_pipeline.explorer import _close_menus
+    page = _MenuPage("escape")
+    page.open = False
+    _close_menus(page)
+    assert page.actions == []

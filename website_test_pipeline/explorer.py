@@ -586,6 +586,29 @@ def _plausible_value(control: dict) -> str:
     }.get(typ, "test")
 
 
+_OPEN_MENU_SEL = ('.ui-multiselect-menu:visible, .select2-dropdown:visible, '
+                  '.select2-results:visible, [class*="dropdown-menu"]:visible')
+
+
+def _close_menus(page, trigger=None) -> None:
+    """Escape, then re-click the trigger, then click a page corner, until no widget
+    menu is left open. An open jQuery-UI multiselect menu intercepts the next click,
+    which is why the Search click timed out after a channel was picked."""
+    for attempt in range(3):
+        try:
+            if not page.locator(_OPEN_MENU_SEL).count():
+                return
+            if attempt == 0:
+                page.keyboard.press("Escape")
+            elif attempt == 1 and trigger is not None:
+                trigger.click(timeout=1000)
+            else:
+                page.mouse.click(2, 2)
+            page.wait_for_timeout(300)
+        except Exception:
+            return
+
+
 def _pick_multiselect(page, control: dict) -> str | None:
     """Open the widget and take its first real option; fall back to the underlying
     <select multiple> so a menu that won't open on a synthetic click still works."""
@@ -594,15 +617,16 @@ def _pick_multiselect(page, control: dict) -> str | None:
         try:
             loc.click(timeout=2000)
             page.wait_for_timeout(700)
-            menu = page.locator('.ui-multiselect-menu:visible, .select2-results:visible, [class*="dropdown-menu"]:visible').first
+            menu = page.locator(_OPEN_MENU_SEL).first
             option = menu.locator('li label, li [role="option"], li a').first
             if option.count():
                 label = (option.inner_text(timeout=1000) or "").strip()
                 option.click(timeout=1500)
-                page.keyboard.press("Escape")
+                _close_menus(page, loc)
                 return label[:80] or "first option"
         except Exception:
             pass
+        _close_menus(page, loc)
     try:
         sel = page.locator('select[multiple]').first
         if sel.count():
@@ -784,6 +808,7 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
         if log:
             log.info('primary-flow: action locator for "%s" did not resolve', action.get("name"))
         return None
+    _close_menus(page)
     try:
         act_loc.click(timeout=2500)
         page.wait_for_timeout(2200)
