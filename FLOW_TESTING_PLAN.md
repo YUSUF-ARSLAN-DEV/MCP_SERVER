@@ -225,7 +225,11 @@ detail when we reach it.
 | 1-7 (explorer flows, sitemap, propose, critic/ratings, verify) | done, pushed |
 | 8 flowgen | done, pushed (`flowgen` command; all 8 sat-stg flows emit and pass live) |
 | 9 results feed ratings | done, pushed (`flowresults.py`, `derive_status`, `stale`) |
-| 10 multi-page hop awareness | todo |
+| 10 multi-page hop awareness | in progress, one commit per part: |
+| &nbsp;&nbsp;10a runner records landed_url + step_urls | done, pushed |
+| &nbsp;&nbsp;10b hop-aware step errors | todo |
+| &nbsp;&nbsp;10c flowgen asserts every hop URL | todo |
+| &nbsp;&nbsp;10d propose encourages cross-page chains | todo |
 | 11 human review commands | todo |
 | 12 report flows section | todo |
 | 13 staleness + healing | todo |

@@ -86,3 +86,24 @@ def test_human_status_is_never_changed_by_a_run():
         flow = _flow(status=status)
         apply_result(flow, _result(ok=False, done=0, error="boom", effect="no-visible-change"), "t")
         assert flow["status"] == status
+
+
+def test_apply_result_keeps_where_every_step_ended_up():
+    flow = {"id": "f", "status": "candidate", "outcome": {"effect": "navigates", "to": "/en/map"}}
+    result = {"ok": True, "steps_done": 2, "steps_total": 2, "error": None,
+              "step_effects": ["navigates", "navigates"], "landed_url": "https://x.test/en",
+              "step_urls": ["https://x.test/en/list", "https://x.test/en/map"],
+              "observed": {"effect": "navigates", "url": "https://x.test/en/map", "new_headings": [],
+                           "new_controls": [], "results": []}}
+    apply_result(flow, result, "now")
+    assert flow["observed"]["landed_url"] == "https://x.test/en"
+    assert flow["observed"]["step_urls"] == ["https://x.test/en/list", "https://x.test/en/map"]
+    assert flow["observed"]["step_effects"] == ["navigates", "navigates"]
+
+
+def test_apply_result_still_works_for_results_without_url_history():
+    flow = {"id": "f", "status": "candidate", "outcome": {"effect": "reveals"}}
+    result = {"ok": True, "steps_done": 1, "steps_total": 1, "error": None, "step_effects": ["reveals"],
+              "observed": {"effect": "reveals", "url": "u", "new_headings": ["h"], "new_controls": [], "results": []}}
+    apply_result(flow, result, "now")
+    assert flow["observed"]["step_urls"] == [] and flow["observed"]["landed_url"] is None

@@ -77,7 +77,8 @@ def apply_result(flow: dict, result: dict, now: str) -> dict:
     matched = result["ok"] and outcome_matches(flow.get("outcome") or {}, observed)
     changed = observed["effect"] != "no-visible-change"
     passed = bool(result["ok"] and matched and changed)
-    flow["observed"] = {**observed, "step_effects": result["step_effects"]}
+    flow["observed"] = {**observed, "step_effects": result["step_effects"],
+                        "landed_url": result.get("landed_url"), "step_urls": result.get("step_urls", [])}
     flow["last_run_at"] = now
     if flow.get("status") not in HUMAN_STATUSES:
         flow["status"] = "verified" if passed else "candidate"
@@ -157,7 +158,8 @@ def _do_step(page, step: dict) -> None:
 
 def run_flow(page, flow: dict, log=None) -> dict:
     steps = flow.get("steps") or []
-    result = {"ok": False, "steps_done": 0, "steps_total": len(steps), "error": None, "step_effects": []}
+    result = {"ok": False, "steps_done": 0, "steps_total": len(steps), "error": None,
+              "step_effects": [], "step_urls": [], "landed_url": None}
     try:
         page.goto(flow["start_url"], wait_until="domcontentloaded")
         settle_page(page)
@@ -167,6 +169,7 @@ def run_flow(page, flow: dict, log=None) -> dict:
         result["observed"] = classify(diff_snapshots(_empty(flow), _empty(flow)))
         return result
     first = previous = take_snapshot(page)
+    result["landed_url"] = first["url"]  # where the start URL really ended up (it may redirect)
     for step in steps:
         try:
             _do_step(page, step)
@@ -180,6 +183,7 @@ def run_flow(page, flow: dict, log=None) -> dict:
             pass
         current = take_snapshot(page)
         result["step_effects"].append(classify(diff_snapshots(previous, current))["effect"])
+        result["step_urls"].append(current["url"])
         result["steps_done"] += 1
         previous = current
     result["ok"] = result["steps_done"] == len(steps) and not result["error"]
