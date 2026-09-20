@@ -42,6 +42,10 @@ def main() -> int:
     args = parser.parse_args()
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
     log.info('WORKSPACE site=%s dir=%s', settings.site, settings.workspace)
+    os.environ['WTP_HEURISTICS'] = str(settings.heuristics_file)   # generated specs read the same lists (see heuristics.py)
+    from . import heuristics
+    for note in heuristics.configure(settings.heuristics_file):
+        log.warning('heuristics: %s', note)
     pytest_env = {**os.environ, 'WTP_ARTIFACTS': str(settings.artifacts_dir)}
     if args.command == 'crawl':
         if not settings.seed_url:

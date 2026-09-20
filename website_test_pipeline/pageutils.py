@@ -1,4 +1,7 @@
 """Shared page helpers used by both the explorer and the generated specs."""
+import json
+
+from . import heuristics
 
 # Accept / dismiss button accessible names across common consent + popup frameworks.
 _ACCEPT_NAMES = (
@@ -111,8 +114,12 @@ def _wait_gone(page) -> None:
             pass
 
 
-OPEN_MENU_SEL = ('.ui-multiselect-menu:visible, .select2-dropdown:visible, '
-                  '.select2-results:visible, [class*="dropdown-menu"]:visible')
+def menu_selector() -> str:
+    """CSS for any open, visible dropdown / menu container (see heuristics.py; extendable per site)."""
+    return heuristics.menu_selector()
+
+
+OPEN_MENU_SEL = menu_selector()   # the default value, kept for importers; code calls menu_selector() at use time
 
 
 def close_menus(page, trigger=None) -> None:
@@ -124,7 +131,7 @@ def close_menus(page, trigger=None) -> None:
     end the loop: the corner click after it is what finally closes the menu."""
     for attempt in range(4):
         try:
-            if not page.locator(OPEN_MENU_SEL).count():
+            if not page.locator(menu_selector()).count():
                 return
         except Exception:
             return
@@ -140,6 +147,20 @@ def close_menus(page, trigger=None) -> None:
             continue
 
 
+def _menu_for(page, trigger):
+    """The menu this trigger opened: the element it points to with aria-controls / aria-owns when it says
+    so (the standard way widget libraries link a button to its menu), else the first open menu container."""
+    try:
+        target = trigger.get_attribute("aria-controls") or trigger.get_attribute("aria-owns")
+        if target:
+            owned = page.locator('[id=' + json.dumps(target.split()[0]) + ']')
+            if owned.count():
+                return owned.first
+    except Exception:
+        pass
+    return page.locator(menu_selector()).first
+
+
 def pick_option(page, trigger, text: str) -> None:
     """Open a dropdown / checkbox-menu widget and pick the option whose text contains `text`.
 
@@ -148,7 +169,7 @@ def pick_option(page, trigger, text: str) -> None:
     when the menu will not open on a synthetic click. Raises if the option does not exist."""
     trigger.click(timeout=3000)
     page.wait_for_timeout(700)
-    option = page.locator(OPEN_MENU_SEL).first.locator('li label, li [role="option"], li a').filter(has_text=text).first
+    option = _menu_for(page, trigger).locator(heuristics.option_selector()).filter(has_text=text).first
     if option.count():
         option.click(timeout=2000)
         close_menus(page, trigger)
@@ -161,12 +182,12 @@ def pick_option(page, trigger, text: str) -> None:
     raise RuntimeError(f'option "{text}" not found in the opened menu')
 
 
-_LOADER_JS = '''() => [...document.querySelectorAll(
-    '[class*="loading" i],[class*="loader" i],[class*="spinner" i],[aria-busy="true"],[role="progressbar"]'
-)].some(e => {
-    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
-    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
-})'''
+def _loader_js() -> str:
+    """JS that is true while any visible loading indicator exists (class hints from heuristics.py, aria-busy,
+    role=progressbar)."""
+    return ("() => [...document.querySelectorAll(" + json.dumps(heuristics.loader_selector()) + ")].some(e => {"
+            " const r = e.getBoundingClientRect(), s = getComputedStyle(e);"
+            " return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'; })")
 
 
 def wait_for_loaders(page, timeout_ms: int = 4000, poll_ms: int = 250) -> bool:
@@ -175,7 +196,7 @@ def wait_for_loaders(page, timeout_ms: int = 4000, poll_ms: int = 250) -> bool:
     Cheap when nothing is loading (one check), and never raises: an odd page just stops the wait."""
     waited = 0
     try:
-        while page.evaluate(_LOADER_JS):
+        while page.evaluate(_loader_js()):
             if waited >= timeout_ms:
                 return False
             page.wait_for_timeout(poll_ms)

@@ -1,7 +1,7 @@
 """The plain-sentence starting point of flow testing: runs/<site>/intents.json.
 
-An intent is one user journey written the way a person would say it ("A visitor picks a
-country and a channel, searches, and sees the satellite frequencies"). The AI writes the
+An intent is one user journey written the way a person would say it ("A visitor searches for a
+product, filters by price, and sees the matching results"). The AI writes the
 first batch from the site map (`intents`), a person can add (`flows add`), reword
 (`flows edit`) or drop (`flows drop`) any of them, and a later stage (`expand`) turns each
 sentence into concrete steps that code checks against the explored pages.
@@ -19,6 +19,7 @@ import json
 import re
 from pathlib import Path
 
+from . import heuristics
 from .sitemap import build_site_map, load_inventories, render_site_map
 
 INTENTS_VERSION = 1
@@ -33,9 +34,9 @@ SYSTEM = "Return exactly one JSON object and no prose. Propose only what the sit
 RULES = (
     "You are a QA analyst writing test ideas for a non-technical reader. From the SITE MAP below, write up to %d "
     "user journeys as plain English sentences, the way a person would describe them out loud, for example: "
-    "\"A visitor picks a country and a channel, searches, and sees the satellite frequencies.\"\n"
+    "\"A visitor searches for a product, filters by price, and sees the matching results.\"\n"
     "Rules:\n"
-    "- One sentence per journey: what the visitor does, then what they should see. Cross pages when a real link exists.\n"
+    "- One sentence per journey: what the visitor does, then what they should see. Cross pages when a real link exists. Prefer journeys of two or more actions, or that reach another page; skip a single widget interaction (zoom, play, toggle) that stays on the same page.\n"
     "- NO technical words: no selectors, ids, CSS, URLs, button ids, or code. Use the names visitors see on screen.\n"
     "- Only journeys the SITE MAP supports. Do not invent pages, buttons, or results.\n"
     "- Never a journey that needs an account, password, payment or a real person's data, a language switch, or one "
@@ -103,19 +104,10 @@ def looks_technical(sentence: str) -> bool:
     return bool(_TECHNICAL.search(sentence))
 
 
-# Things the AI must not write as a journey: each would become a weak, unsafe or untestable flow.
-_UNSUITABLE = (
-    (re.compile(r"\b(password|passcode|log ?in|sign ?in|sign ?up|credit card|payment|checkout)\b", re.I),
-     "needs credentials or payment details"),
-    (re.compile(r"\b(controls?|elements?|widgets?|fields?|options?)\b[^.]{0,20}\b(appear|show|display|become visible)", re.I),
-     "describes widgets appearing, not something a visitor achieves"),
-    (re.compile(r"\b(language|arabic version|english version|switch(es)? to (arabic|english))\b", re.I),
-     "a language switch leaves the site and cannot be tested"),
-)
-
-
 def unsuitable_reason(sentence: str) -> str:
-    for pattern, reason in _UNSUITABLE:
+    """Why the AI may not write this sentence as a journey ('' if fine). The rules live in heuristics.py
+    (credentials/payment, 'widgets appear', language switches) and can be extended per site."""
+    for pattern, reason in heuristics.unsuitable_rules():
         if pattern.search(sentence):
             return reason
     return ""

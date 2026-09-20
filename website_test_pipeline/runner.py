@@ -15,6 +15,7 @@ from .explorer import (
     _CONTROL_SEL, _CONTROLS_JS, _HEADINGS_JS, _RESULTS_JS, _RESULTS_SEL,
     _close_menus, _pick_multiselect, _plausible_value, _select_first_real,
 )
+from . import heuristics
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
 from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
@@ -37,8 +38,8 @@ def _same_url(a: str, b: str) -> bool:
 
 
 def _same_heading_key(text: str) -> str:
-    """A heading compared ignoring case, spacing and punctuation: 'Find Al Jazeera Near You' and
-    'Find Aljazeera Near You' are the same heading, not a new one that appeared."""
+    """A heading compared ignoring case, spacing and punctuation: 'Find Your Store' and
+    'Find your  store' are the same heading, not a new one that appeared."""
     return "".join(ch for ch in (text or "").lower() if ch.isalnum())
 
 
@@ -95,12 +96,9 @@ def hop_hint(step: dict, index: int, current_url: str) -> str:
     return f" (hop {index + 1}: step expects page {_path(expected)}, browser is on {_path(current_url)})"
 
 
-_EXPECTS_CONTENT = re.compile(r"(?<![a-z])(results?|frequenc[a-z]*|list|listing|table|details?|sees?|shows?|displays?|finds?)(?![a-z])", re.I)
-
-
 def _echoes_input(control: str, flow: dict) -> bool:
     """A control that only repeats a value the flow itself entered (the results page's filter chip
-    'Al Jazeera 2 HD Channel' after picking that channel) is not new content."""
+    'Blue Widget' after picking that option) is not new content."""
     name = _same_heading_key(control.partition(":")[2])
     values = [_same_heading_key(str(s.get("value"))) for s in flow.get("steps") or [] if s.get("value")]
     return bool(name) and any(v and (v in name or name in v) and min(len(v), len(name)) >= 3 for v in values)
@@ -116,7 +114,7 @@ def content_shown(observed: dict, flow: dict | None = None) -> bool:
 def sentence_expects_content(flow: dict) -> bool:
     """A flow built from a plain sentence that says the visitor sees / finds / gets results is promising
     content, not just a new URL. (Explorer flows carry a machine goal and are not judged this way.)"""
-    return flow.get("source") == "intent" and bool(_EXPECTS_CONTENT.search(" " + (flow.get("goal") or "") + " "))
+    return flow.get("source") == "intent" and heuristics.has_word("content_words", flow.get("goal") or "")
 
 
 def apply_result(flow: dict, result: dict, now: str) -> dict:

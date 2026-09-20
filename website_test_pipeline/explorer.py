@@ -4,7 +4,7 @@ from .models import PageInventory
 from .pageutils import (
     _ACCEPT_NAMES,
     _CLOSE_NAMES,
-    OPEN_MENU_SEL as _OPEN_MENU_SEL,
+    menu_selector as _menu_selector,
     close_menus as _close_menus,
     dismiss_overlays,
     prime_lazy_content,
@@ -596,7 +596,7 @@ def _pick_multiselect(page, control: dict) -> str | None:
         try:
             loc.click(timeout=2000)
             page.wait_for_timeout(700)
-            menu = page.locator(_OPEN_MENU_SEL).first
+            menu = page.locator(_menu_selector()).first
             option = menu.locator('li label, li [role="option"], li a').first
             if option.count():
                 label = (option.inner_text(timeout=1000) or "").strip()

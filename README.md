@@ -187,6 +187,23 @@ Rules that keep the generated tests trustworthy:
 - The AI may not write sentences that need credentials or payment, switch language, or only describe
   widgets appearing; a person may write anything and takes the responsibility.
 
+**Adapting to a site or language (`runs/<site>/heuristics.json`, optional).** The tool reads plain
+sentences and unfamiliar pages with a few word lists and selectors. The defaults are generic (standard
+ARIA roles, the usual loading-spinner names, common English verbs) and name no site. To adapt one, list
+extra entries; they are added to the defaults, or replace them if the key is listed under `"replace"`:
+
+```json
+{ "content_words":  ["résultats", "liste"],      "pick_verbs": ["choisit", "sélectionne"],
+  "menu_selectors": ["[data-menu-open]"],         "option_selectors": ["[data-option]"],
+  "loader_hints":   ["chargement"],               "volatile_params": ["trk", "=page"],
+  "unsuitable": [{ "pattern": "connexion", "reason": "needs credentials" }],
+  "replace": ["trigger_stopwords"] }
+```
+
+A word ending in `*` matches any ending (`result*`). A missing or malformed file falls back to the
+defaults with a warning. The same file is read by the runner and by the generated specs, so a flow is
+tested the way it was verified.
+
 `generate` and `execute` work as before. `report` now shows flow tests in their own **User flows** section instead of mixing them in with the page tests: the plain sentence as the title, the journey step by step with the page each step landed on, expected vs observed, where it broke when it failed (which step, which page), and the recorded history. Flows with no test result are listed separately. If a report file is open in Word, a `-new` copy is written instead of failing.
 
 ## Known limitations

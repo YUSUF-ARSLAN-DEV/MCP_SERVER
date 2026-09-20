@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlsplit
 
 from .explorer import _plausible_value
+from .heuristics import is_volatile_param
 from .flows import FlowsFileError, _slug, is_blocked, load_flows
 from .runner import _path
 from .sitemap import load_inventories
@@ -31,7 +32,6 @@ _INPUT_ROLE = {"checkbox": "checkbox", "radio": "radio", "button": "button", "su
 _NAME_CUT = 40          # flows store control names cut to 40 chars
 _MAX_HEADINGS = 2
 _MAX_PARAMS = 3
-_VOLATILE_PARAM = re.compile(r"^(utm_|_ga|fbclid|gclid|sid$|session|token|nonce|ts$|time|cb$|rand|_$)", re.I)
 
 
 # ------------------------------------------------------------------ small helpers
@@ -132,7 +132,7 @@ def _query_expects(url: str) -> list[str]:
     never tracking/session parameters."""
     keys = []
     for key, value in parse_qsl(urlsplit(url).query, keep_blank_values=False):
-        if value and not _VOLATILE_PARAM.match(key) and key not in keys:
+        if value and not is_volatile_param(key) and key not in keys:
             keys.append(key)
     return [f"expect(page).to_have_url(re.compile({_re_lit('[?&]' + re.escape(key) + '=[^&]')}))"
             for key in keys[:_MAX_PARAMS]]
@@ -261,7 +261,7 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
     effects = list(observed.get("step_effects") or [])
     last_nav = max((i for i, e in enumerate(effects) if e == "navigates"), default=None)
     final_path = _path(observed.get("url") or "")
-    # The start URL is not where the page stays (sat-stg redirects / to /en), so it is never used.
+    # The start URL is not where the page stays (some sites redirect / to /en), so it is never used.
     # A run that recorded step_urls (step 10a) tells us the page after every step. An older run only
     # has the final URL: a path is then known only when no navigation happened, or after the last one.
     step_urls = list(observed.get("step_urls") or [])

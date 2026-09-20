@@ -15,6 +15,7 @@ import json
 import re
 from datetime import datetime, timezone
 
+from . import heuristics
 from .critic import MIN_COHERENCE, rate_flows
 from .flows import FlowsFileError, flow_id, load_flows, merge_flow, save_flows
 from .intents import (
@@ -70,9 +71,6 @@ def _norm(text: str) -> str:
 
 
 _OPTION_ROLES = {"checkbox", "option", "menuitemcheckbox", "radio", "menuitemradio"}
-_ALL_OPTION = re.compile(r"^(select|check|uncheck|deselect|clear)?" + chr(92) + "s*(all|none|everything)$", re.I)
-_PICK_VERB = re.compile(r"(?:" + chr(92) + "b(pick|picks|picked|choose|chooses|chosen|select|selects|selecting|filter|filters)" + chr(92) + "b)", re.I)
-_TRIGGER_STOP = {"please", "select", "choose", "pick", "your", "the"}
 
 
 def _is_option(control: dict) -> bool:
@@ -96,8 +94,8 @@ def _options_of(trigger: str, page: str, inventories: list[dict]) -> list[str]:
 
 def _sentence_picks(sentence: str, trigger: str) -> bool:
     """Does the sentence say to pick/choose something that is this menu (its key word follows a pick verb)?"""
-    keys = [w for w in re.findall(r"[^" + chr(92) + "W" + chr(92) + "d_]{4,}", trigger.lower()) if w not in _TRIGGER_STOP]
-    for verb in _PICK_VERB.finditer(sentence):
+    keys = [w for w in re.findall(r"[^" + chr(92) + "W" + chr(92) + "d_]{4,}", trigger.lower()) if w not in set(heuristics.words("trigger_stopwords"))]
+    for verb in heuristics.word_regex("pick_verbs").finditer(sentence):
         window = sentence[verb.end():verb.end() + 70].lower()
         if any(k in window for k in keys):
             return True
@@ -120,7 +118,7 @@ def _triggers_offering(option: str, page: str, inventories: list[dict]) -> list[
 
 
 def repair_option_targets(steps: list[dict], inventories: list[dict]) -> list[str]:
-    """The model sometimes names the OPTION as the thing to pick from ('pick Al Jazeera Documentary' with that
+    """The model sometimes names the OPTION as the thing to pick from ('pick Blue Widget' with that
     option as the target) instead of the menu button. When the target is not a menu but is an option of exactly
     one explored menu, that is what was meant: the menu becomes the target and the option the value.
     Returns 'option -> menu' for each repair."""
@@ -155,7 +153,7 @@ def ground_sentence_values(steps: list[dict], sentence: str, inventories: list[d
             continue
         options = (_select_options(step, step["page"], inventories) if step["kind"] == "select"
                    else _options_of(step.get("name") or "", step["page"], inventories))
-        named = [o for o in options if len(_norm(o)) >= 3 and not _ALL_OPTION.match(o.strip())
+        named = [o for o in options if len(_norm(o)) >= 3 and not heuristics.all_option_regex().match(o.strip())
                  and re.search(r"(?<![a-z0-9])" + re.escape(_norm(o)) + r"(?![a-z0-9])", said)]
         if len(named) == 1:
             step["value"] = named[0][:80]
@@ -202,7 +200,7 @@ def ground_options(steps: list[dict], inventories: list[dict]) -> str:
             if options and not any(_norm(value) in _norm(o) or _norm(o) in _norm(value) for o in options):
                 return f'option "{value}" was never seen in "{step.get("name")}" on {step["page"]}'
             continue
-        real = [o for o in options if not _ALL_OPTION.match(o.strip())]      # "Select All" is not "a channel"
+        real = [o for o in options if not heuristics.all_option_regex().match(o.strip())]      # "Select All" is not "a channel"
         if not real:
             return f'no option was ever seen inside "{step.get("name")}" on {step["page"]}, so nothing can be picked'
         step["value"] = real[0][:80]          # the first real option the explorer saw: a fact, not a guess
