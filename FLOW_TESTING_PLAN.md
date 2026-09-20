@@ -1,308 +1,250 @@
-# Plan: Multi-Hop Execution-Flow Testing
+# Plan: Flow Testing (journeys, not just pages)
+
+_Rewritten 2026-09-20 to match what was actually built. The first version of this
+plan (a `multi_hop_flows` flag threaded through explorer/generator/validator) was
+superseded by a separate **flows layer**; it is still in git history if needed._
 
 ## Goal
 
-Right now the pipeline tests **pages**, not **journeys**: each URL gets its own
-`PageInventory`, its own generated spec, and (at best) one in-page primary flow
-that stops the instant it causes a navigation (`_probe_primary_flow()`,
-`website_test_pipeline/explorer.py:710-806`). The result is real coverage of
-individual controls, but no test that reproduces what an actual user does:
-start on page A, act, land on page B, keep going, land on page C, verify the
-end state.
+The pipeline used to test **pages**: one `PageInventory`, one generated spec per
+URL. A real user does **journeys**: start on page A, act, land on page B, keep
+going, and end in an observable state. This plan builds journey testing on top of
+the existing pipeline **without giving up its core guarantee: nothing in a test
+is guessed.** Every selector, step and outcome must have been observed in a real
+browser by code, not predicted by a model.
 
-This plan extends the *existing* primary-flow mechanism to chain across pages
-instead of stopping at the first navigation, while keeping every other
-guarantee the pipeline already has: no hallucinated selectors, no guessed
-outcomes, same validator strictness — just applied per hop instead of per
-page.
+## Design principles (do not break these)
 
-**Non-goal for this plan:** the credentials/manual-login idea discussed
-separately. That's independent and can land before, after, or interleaved
-with this work without conflict.
+1. **Flows are data.** A flow is a JSON record (`runs/<site>/flows.json`), not a
+   prompt. Anything can add one (explorer, model, human); one code path checks it.
+2. **Models suggest, code decides.** A model may *propose* and *rate* flows. Code
+   rejects any flow naming a page/control/outcome the explorer never saw. Only a
+   real browser run can mark a flow `verified`.
+3. **Observed beats predicted.** `verify` records what *actually* happened (DOM
+   snapshot diff per step). Assertions in generated tests come from
+   `flow["observed"]`, never from the model's guess.
+4. **Humans always win.** `approved` / `rejected` statuses and `source: human`
+   ratings are never overwritten by any command.
+5. **History, not opinions.** `flow_ratings.json` is append-only: who judged, with
+   what model + prompt version, when, and why.
+6. **Additive.** Existing per-page generate/execute/report keep working unchanged.
 
-## Current architecture (baseline, for reference)
+## What exists today (done, all pushed to `origin/master`)
 
-- `crawler.py` — discovers same-origin URLs, writes `urls.txt`.
-- `explorer.py` — `explore()` builds one `PageInventory` per URL, in
-  isolation. `_probe_primary_flow()` already fills selects/inputs and clicks
-  one action, but returns after the first navigation/reveal — it never keeps
-  interacting with the destination page.
-- `generator.py` — `generate_spec()` builds **one spec file per URL**
-  (`{url}_test.py`) from that URL's single `PageInventory`. `prompt_for()`
-  inserts a `PRIMARY FLOW` block only if `inventory.primary_flow` is set
-  (`generator.py:346-347`), and `PRIMARY_FLOW_RULES` (`generator.py:71-93`)
-  tells the model to make it test #1 — but it's still a single-page flow.
-- `validator.py` — `validate_python_spec(source, url, inventory)` fact-checks
-  every selector in a spec against **one flat inventory**
-  (`_allowed_tokens(inventory)`, `validator.py:467`).
-- `report.py` — `UrlReport` is one-page-scoped.
+| # | Step | Commit | What it gave us |
+|---|------|--------|-----------------|
+| 1 | Explorer records flows | `d91348a` | `flows.json` format (`flows.py`); `explore` writes each verified primary flow via `record_flow()` |
+| 2 | Menu-close probe fix | `3c83a9a` | Open widget menus no longer block the Search click |
+| 3 | Site map | `8e72238` | `sitemap.py`: deterministic evidence pack (pages, controls, links between pages) |
+| 4 | `propose` | `ed7d23f` | Model suggests flows from the site map; `validate_flow()` rejects invented pages/controls/outcomes; accepted as `candidate` |
+| 5 | Smarter proposals | `b7460d9` | Linked-page outcomes, duplicate filter, model critic (`critic.py`), `ratings.py` + `flow_ratings.json` |
+| 6 | Single-click rule | `5bdccd9` | A 1-step flow is valid only if it navigates |
+| 7 | `verify` | `f485186` | `runner.py`: run each flow step by step, snapshot after every step, diff, classify (`navigates`/`results`/`reveals`/`no-visible-change`), compare with the prediction, set `verified`/`candidate`, append a runner rating |
 
-The gap is specifically: **explorer stops too early, and validator assumes
-one page per spec.** Everything else (crawl, cli loop, autorepair) can stay
-mostly as-is.
+Current commands: `crawl`, `explore`, `generate`, `propose`, `verify`, `execute`, `report`.
+Real data: `runs/sat-stg.aljazeera.tv/flows.json` (8 flows, all verified) and `flow_ratings.json`.
 
-## Design summary
+### Data shapes (source of truth: `flows.py`, `ratings.py`, `runner.py`)
 
-1. Explorer gains a multi-hop flow probe: after a step causes navigation,
-   keep going on the new page (bounded depth) instead of returning.
-2. Each hop's own `PageInventory` snapshot is kept *with* the flow, not
-   discarded — this is what lets the validator stay strict per hop.
-3. Generator builds a chained test from a multi-hop flow, with the prompt
-   showing which controls belong to which hop.
-4. Validator becomes step-aware: it maps each block of generated code to the
-   hop it belongs to and checks selectors against that hop's inventory, not
-   a merged pool (a merged pool would let a page-D selector wrongly validate
-   an assertion that actually runs against page B).
-5. The crawl/generate loop marks URLs "absorbed" into a longer flow so they
-   don't also get a redundant shallow single-page spec.
-6. Report gains hop-level attribution for flow test failures.
+```
+flow = {id, goal, source: explorer|model|human, status: candidate|verified|approved|rejected,
+        start_url, steps: [{kind: click|select|fill|multiselect|submit, selector, name, value, page?}],
+        outcome: {effect: navigates|results|reveals|validation, to?}, evidence?, proposed_by?,
+        observed?: {effect, url, new_headings, new_controls, results, step_effects}, last_run_at?}
+rating entry = {source: model|runner|human|pytest, at, ...}
+   model : scores{coherence, importance, outcome_strength}, reason, kept, model, prompt_version
+   runner: passed, checks{steps_completed, outcome_matched, observed_effect}, error?
+```
 
-## Commit sequence and rollback strategy
+## Working protocol for every remaining step
 
-Every phase below is designed to land as its **own commit** (or small commit
-group), and the **old single-hop behavior stays the default and fully
-intact** until Phase 7. That means at any point before Phase 7, a broken
-phase can be undone with a single `git revert` of that phase's commit(s)
-without touching anything before it — the pipeline falls straight back to
-today's working single-page behavior.
+The user says "do step N" (or "next"). For each step:
 
-Concretely:
+1. **Orient:** `graphify query` on the area, read only what the step touches.
+2. **Tests first** in `tests_python/` for the pure logic (the suite is ~0.2 s).
+3. **Implement**, matching surrounding style. Keep the step small enough to revert alone.
+4. **`python -m pytest tests_python -q` must be green** before committing.
+5. **Real check where the step touches a browser or model:** run on the existing
+   `runs/sat-stg.aljazeera.tv` data, capped at **3 URLs** for anything that crawls or
+   explores (`verify`/`flowgen` on the 8 saved flows is cheap and fine). Report
+   the real numbers. If a real run cannot be done, say so plainly.
+6. **Any bug hit gets a short Bug / Cause note** (what it was, why it happened).
+7. `graphify update .`, tick the step in the **Roadmap status** table below.
+8. **One commit per step, never bundled.** Message = `type(flows): summary`, then a
+   body with **Why / What / How verified**, then the Co-Authored-By trailer.
+   (Avoid backticks in heredoc commit messages.)
+9. Look at `git diff --cached` for secrets before pushing (a key leaked once; see
+   history rewrite of 2026-08-31). `runs/` and `.env` stay git-ignored.
+10. `git push origin master`, then `git tag flows-step-N` + `git push origin flows-step-N`
+    so any step is one `git checkout` / `git revert` away.
+11. **Report in <=100 words:** what changed, test result, real-run result, next step.
 
-- Add a `Settings` flag, e.g. `multi_hop_flows: bool = False` (default off),
-  in `config.py` at the start of Phase 1. Every new code path in Phases 1-5
-  is gated behind this flag. This means Phases 1-5 can be committed
-  incrementally and merged into the main branch **without ever changing
-  pipeline behavior for existing runs** — the flag is the rollback switch,
-  not just the commit history.
-- After **every** phase commit: run `pytest tests_python/ -q` (must stay
-  green — this is the existing regression suite covering validator,
-  autorepair, crawler, primary-flow probing) before moving to the next
-  phase.
-- After Phases 1, 2, 4, and 5 specifically: also run one real pipeline pass
-  against `sat-stg.aljazeera.tv` (`generate` then `report`, flag on) and
-  diff the output against the last known-good `full-report.docx` totals, so
-  a regression in real generation quality is caught immediately, not just a
-  unit-test pass.
-- Tag the commit at the end of each phase (`git tag flow-plan-phase-1`, etc.)
-  so you can `git diff`/`git checkout` between phase boundaries directly
-  instead of hunting through history.
-- Do not squash phase commits together. Keeping them separate is what makes
-  "walk back the change that broke things" a one-line revert instead of an
-  archaeology exercise.
+Rollback: `git revert <step commit>` undoes exactly one step; nothing later depends
+on an earlier step's internals except through the JSON formats above.
 
 ---
 
-## Phase 0 — Safety baseline
+## Remaining steps
 
-- Confirm `tests_python/` is green on current `master`.
-- Tag current commit: `git tag pre-flow-plan`.
-- No code changes.
+### Step 8 - Emit a pytest spec from a verified flow (deterministic, no model)
 
-## Phase 1 — `Settings.multi_hop_flows` flag + data model
+**Why:** a verified flow already contains every selector, value and observed
+outcome. Turning it into code with a *template* means zero hallucination and no
+retry loop - the strongest form of the "nothing guessed" rule.
 
-**Files:** `config.py`, `models.py`
+**Files:** new `website_test_pipeline/flowgen.py`; `validator.py` (accept a flow);
+`cli.py` (new `flowgen` command); `tests_python/test_flowgen.py`.
 
-- Add `multi_hop_flows: bool` to `Settings` (default `False`), read from env
-  like the rest of `Settings`.
-- Extend the flow shape in `models.py`: today `primary_flow` is a single
-  dict (`action`, `action_selector`, `steps`, effect fields). Add an optional
-  `hops: list[dict]` field, where each hop dict is
-  `{url, steps: [...], inventory_snapshot: PageInventory-shaped dict}`.
-  Keep the existing single-hop fields untouched so old code paths (flag off)
-  don't need to change at all.
+- Input: flows with status `verified` or `approved` (never `candidate`/`rejected`).
+- Output: `runs/<site>/tests/flow_<id>_test.py`, one test per flow: open start URL via
+  `open_page`, then each step wrapped in `action_evidence` with kebab labels
+  (`01-select-country`, `02-search`), mirroring how `runner._do_step` acts
+  (selector if present, else role+name lookup; select by label; fill; click).
+- Assertions come only from `flow["observed"]`:
+  `navigates` -> `to_have_url(re.compile(<path>))`; `new_headings` -> one short
+  heading (<=6 words, else a distinctive-word regex) visible; `results` -> results
+  region visible. Never exact row counts or rotating text. `no-visible-change`
+  flows are not emitted.
+- Names stored cut to 40 chars: locate by substring (`exact=False`), and teach the
+  validator that flow specs may do so. Build a synthetic inventory-like token set
+  from the flow so `validate_python_spec` keeps full strictness.
+- Every emitted spec must pass `validate_python_spec`; a flow that cannot is
+  logged and skipped, not written.
 
-**Commit:** "flow-plan: add multi_hop_flows flag + hop data model (inert)"
-**Verify:** `pytest tests_python/ -q` green (nothing exercises the new field
-yet, so this should be a no-op change to behavior).
+**Verify:** unit tests (emit -> validate for each effect type; refuses candidates);
+run `flowgen` on the 8 sat-stg flows, read 2 by hand, `pytest` the flow specs.
+**Commit:** `feat(flows): flowgen - emit validated pytest specs from verified flows`
 
-## Phase 2 — Multi-hop explorer probe
+### Step 9 - Execution results feed the ratings
 
-**Files:** `explorer.py`
+**Why:** "verified" should mean the flow works *and* its generated test passes.
+**Files:** `report.py`/`cli.py` (execute path), `ratings.py` (helper), tests.
 
-- Add `_probe_primary_flow_multi_hop()` alongside (not replacing)
-  `_probe_primary_flow()`. Reuse the existing single-hop logic for hop 1,
-  but instead of returning on `effect == "navigates"`, when
-  `settings.multi_hop_flows` is on:
-  - re-run `settle_page()` / `dismiss_overlays()` on the new URL,
-  - re-run inventory collection for the new page (reuse whatever `explore()`
-    calls internally for controls/headings — factor that inventory-building
-    part out of `explore()` into a small helper if it isn't already
-    separable, so it can be called mid-flow without a fresh `page.goto`),
-  - look for the next verb-named action button on the new page the same way
-    hop 1 did,
-  - repeat, bounded by `max_hops` (start with 3 — homepage → results page →
-    detail page is the common case; make it a `Settings` field, not a magic
-    number),
-  - stop and keep whatever hops succeeded so far if a hop fails (mirrors the
-    existing "don't build a test from a dead flow" philosophy — a 2-hop
-    partial flow is still useful, don't discard it because hop 3 failed).
-- Log every hop transition and every stop reason, same style as the existing
-  `primary-flow: ...` log lines — this is what let us diagnose the
-  homepage's 2500ms Search-click timeout earlier, keep that visibility.
-- `explore()` calls the multi-hop version instead of the single-hop version
-  only when `settings.multi_hop_flows` is true; otherwise unchanged.
+- After `execute`/`report`, map pytest results of `flow_*_test.py` back to flow ids
+  and append `{source: "pytest", passed, at, test}` to `flow_ratings.json`.
+- Add `derive_status(flow, ratings)`: latest evidence wins; human statuses never
+  change; a previously `verified` flow whose latest run failed becomes `stale`.
+  (`stale` is new; only execution can move a flow out of `candidate`.)
 
-**Commit:** "flow-plan: multi-hop primary-flow probe behind flag"
-**Verify:** `pytest tests_python/ -q` green. Add new unit tests
-(`tests_python/test_primary_flow.py` already has the pattern) for: 2-hop
-success, hop-3 failure keeping hops 1-2, max-hops cutoff, hop-1-fails
-falls back to today's `None` behavior.
+**Verify:** unit tests for `derive_status`; run `execute` on the flow specs and
+check ratings gained pytest entries. **Commit:** `feat(flows): pytest results feed flow_ratings and status`
 
-## Phase 3 — Crawl-loop coordination (absorbed URLs)
+### Step 10 - Multi-page journeys (the original goal, now cheap)
 
-**Files:** `cli.py`, `urls.py`
+**Why:** the proposer already sees every explored page, and `verify` already runs
+steps on one continuous `page`, so cross-page flows mostly exist at the data level.
+What is missing is *hop awareness*: nothing checks the flow is on the page each
+step expects.
+**Files:** `runner.py`, `proposer.py`/`critic.py` prompts, `flowgen.py`, tests.
 
-- After exploring with multi-hop on, if a flow's hops include other URLs
-  from `urls.txt`, mark those URLs "absorbed" in the run manifest
-  (`manifest['urls'][url] = {'status': 'absorbed', 'into': origin_url}`)
-  instead of generating a redundant shallow standalone spec for them.
-- Still explore them independently first (you don't know a URL is going to
-  be absorbed until some other page's flow reaches it), but skip the
-  `generate_spec()` call for absorbed URLs.
-- This needs a small ordering decision: process flow-generation for a URL
-  only after all hops it might land on have been through `explore()` at
-  least once for their own primary-flow attempt (so you know whether they'd
-  have generated a meaningful standalone spec) — or, simpler for v1: always
-  generate the standalone spec too, and let a human/report note flag
-  "this page also appears as hop 2 of flow X" without suppressing anything
-  yet. **Recommend starting with the simpler non-suppressing version** —
-  suppression is an optimization, not a correctness requirement, and it's
-  easy to get the ordering wrong and silently drop a page's only test.
+- Runner: before each step, compare the current path with the step's `page`; on a
+  mismatch fail with `expected /x, was on /y` (a clear hop-level error).
+- Record `step_urls` in `observed` so each hop's landing page is known.
+- Flowgen: emit `expect(page).to_have_url(re.compile(...))` after each step that
+  observed a navigation, so a failure names the hop that broke.
+- Propose prompt: explicitly encourage chains across linked pages (A -> B -> C),
+  bounded by the existing `MAX_STEPS`. No feature flag needed.
 
-**Commit:** "flow-plan: mark absorbed URLs in run manifest (non-suppressing)"
-**Verify:** `pytest tests_python/ -q` green. Manual run on sat-stg: confirm
-manifest correctly flags e.g. `/en/frequency-search` as reachable via the
-homepage's flow, without losing its standalone spec.
+**Verify:** unit tests (drift detection, per-hop asserts); `propose` then `verify`
+on sat-stg; confirm at least one multi-page flow is proposed, verified or cleanly
+rejected. **Commit:** `feat(flows): hop-aware runner and specs for multi-page journeys`
 
-## Phase 4 — Generator: chained multi-page spec
+### Step 11 - Human review commands
 
-**Files:** `generator.py`
+**Why:** today approving/rejecting a flow means hand-editing JSON.
+**Files:** `cli.py` (`flows` subcommands), `flows.py`, `ratings.py`, tests.
 
-- Extend `PRIMARY_FLOW_RULES` (or add a new `MULTI_HOP_FLOW_RULES` block,
-  cleaner than overloading the existing one) to cover the multi-page case:
-  the model must treat each hop's controls as only valid *after* that hop's
-  navigation, must call `_open`/rely on the already-navigated `page` object
-  rather than re-opening between hops, and must assert something concrete
-  on the **final** hop's landing state (not just "we got here").
-- `prompt_for()` needs to render each hop's compacted controls separately
-  and labeled ("HOP 1 (https://.../): ...", "HOP 2 (https://.../en/frequency-search):
-  ..."), reusing `_compact_controls()` per hop rather than one merged block —
-  this is what keeps the model from mixing up which selector belongs to
-  which page.
-- Only activate this path when `inventory.hops` is present (i.e., flag on
-  and multi-hop probe succeeded with ≥2 hops); otherwise fall through to
-  today's single-page `prompt_for()` unchanged.
+- `flows list` (id, status, goal, last result), `flows show <id>` (steps, observed,
+  rating history), `flows approve <id>`, `flows reject <id> --reason "..."`.
+- Each decision sets the human status **and** appends a `source: human` rating with
+  the reason. `flows add` is out of scope until needed.
 
-**Commit:** "flow-plan: chained multi-hop prompt + generation path"
-**Verify:** `pytest tests_python/ -q` green. Manually generate a spec for
-the sat-stg homepage flow with the flag on, read the output by hand, confirm
-it references hop-2 controls only after the hop-1 navigation in the code.
+**Verify:** unit tests; approve/reject one real flow and confirm `flowgen` respects it.
+**Commit:** `feat(flows): flows list/show/approve/reject with recorded reasons`
 
-## Phase 5 — Validator: step-aware fact-checking
+### Step 12 - Report: a Flows section
 
-**Files:** `validator.py`
+**Why:** flow results should be readable next to the page reports.
+**Files:** `report.py`, tests.
 
-This is the highest-risk phase — it's where "same strictness" either holds
-or quietly breaks.
+- Per flow: goal, steps, hop URLs, predicted vs observed outcome, status, rating
+  history, latest pytest result, and *which step/hop* failed.
+- Flow tests count as behavioural (never flagged "shallow"); filed under the
+  flow's start URL, other hops listed as evidence.
 
-- Add `validate_multi_hop_spec(source, hops: list[dict])` alongside (not
-  replacing) `validate_python_spec()`.
-- Reuse every pattern-only check as-is (syntax, action_evidence requirement,
-  no unsafe imports, etc. — these don't care about page boundaries).
-- For the inventory fact-check section: split the source into blocks by
-  hop boundary. The generator (Phase 4) should emit an unambiguous marker
-  comment per hop (e.g. `# --- hop 2: https://... ---`) specifically so the
-  validator can split on it reliably — don't try to infer hop boundaries
-  from `page.goto`/URL-assertion calls, that's fragile. Then run the
-  existing `_allowed_tokens()` / selector cross-check
-  (`validator.py:467-481`) **per block, against that hop's own
-  `inventory_snapshot`**, not the union of all hops' tokens.
-- Keep the union-of-all-hops check as a secondary/looser fallback only
-  for the case where the marker comments are missing or malformed (should
-  raise `SpecError` instead — don't silently fall back to the looser
-  merged-pool check, since that's exactly the strictness regression this
-  phase exists to prevent).
-- `generate_spec()` in `generator.py` calls `validate_multi_hop_spec()`
-  instead of `validate_python_spec()` when generating from a multi-hop
-  flow (mirrors Phase 4's branch).
+**Verify:** unit tests; `report` on sat-stg and open the `.docx`.
+**Commit:** `feat(report): flows section with per-hop failure attribution`
 
-**Commit:** "flow-plan: step-aware validator for multi-hop specs"
-**Verify:** `pytest tests_python/ -q` green, plus new unit tests mirroring
-`tests_python/test_pipeline.py`'s validator coverage: a spec where hop-2 code
-uses a hop-1-only selector must be **rejected** (this is the core regression
-test for this phase — write it before writing the fix, confirm it fails
-without the per-hop check and passes with it).
+### Step 13 - Staleness and healing
 
-## Phase 6 — Report: hop-level attribution
+**Why:** sites change; a flow whose control disappeared should be flagged, then fixed.
+**Files:** `runner.py`/`flows.py`, `cli.py`, tests.
 
-**Files:** `report.py`
+- `verify --failed-only` re-runs only stale/candidate flows.
+- On "control not found", look the control up by name/role in a fresh inventory of
+  that page; if exactly one match, propose the healed step, re-verify, and only
+  then update the flow (old step kept in history). Otherwise mark `stale`.
+- Deterministic first; a model is only a suggestion source, never the judge.
 
-- `UrlReport`/`TestOutcome` gain an optional `hops: list[str]` field so a
-  flow test's report entry can show which URLs it touched.
-- `_behaviour_ceiling()` and the shallow-coverage warning logic
-  (`report.py:255+`) should treat a multi-hop test as inherently
-  behavioural (it can't exist without at least one real navigation-driven
-  action) — don't let it get flagged as shallow just because it's one test
-  covering what used to be three separate elements.
-- `build_url_docx()` / `build_combined_docx()` — decide (and note in the doc
-  itself) which "page" a flow test's report entry is filed under; simplest
-  is the flow's origin URL, with the other hops listed in the test's
-  evidence section.
+**Verify:** unit tests with a renamed selector; real re-verify on sat-stg.
+**Commit:** `feat(flows): stale detection and deterministic selector healing`
 
-**Commit:** "flow-plan: hop-aware report attribution"
-**Verify:** `pytest tests_python/ -q` green. Manual run: confirm a flow
-test's failure clearly shows which hop failed in the `.docx` output, not
-just "test failed" with no indication of which page in the chain broke.
+### Step 14 - Flow coverage and a closed loop
 
-## Phase 7 — Flip the default, real-site validation
+**Why:** know what journeys are still untested and let `propose` target them.
+**Files:** `sitemap.py`, `proposer.py`, `report.py`, tests.
 
-- Run the full pipeline against `sat-stg.aljazeera.tv` with
-  `multi_hop_flows=True` end to end (crawl → explore → generate → report).
-- Compare against the last known-good baseline run: total test count,
-  pass/fail ratio, and manually read at least 2-3 generated flow specs for
-  quality (same bar as the earlier "these are genuine tests" review).
-- Only after this looks right: flip `Settings.multi_hop_flows` default to
-  `True` in `config.py`.
+- Coverage = explored pages/controls touched by at least one verified flow.
+- Feed the uncovered list into the propose prompt; show coverage in the report.
+- One command `flows run` chains propose -> verify -> flowgen -> execute for a site
+  (each stage still independently runnable and skippable).
 
-**Commit:** "flow-plan: enable multi-hop flows by default"
-**Verify:** Full `pytest tests_python/ -q` + full real-site run compared
-against Phase-0 baseline numbers.
+**Verify:** unit tests; run the chain on sat-stg (<=3 URLs if it explores).
+**Commit:** `feat(flows): flow coverage metric and propose-verify-flowgen-execute chain`
 
-## Phase 8 — Cleanup
+### Step 15 - Docs and cleanup
 
-- Once stable for a while (your call on how long), remove the flag and the
-  now-dead single-hop-only code paths it was guarding, or keep both
-  permanently if single-hop remains useful for pages where a full flow
-  doesn't make sense (e.g. the map/embed pages that already skip primary-flow
-  entirely). **Recommend keeping both** — multi-hop is additive to the
-  existing single-page testing, not a replacement for it; plenty of pages
-  (the ones with no chainable action) will always fall back to single-page
-  element tests, and that's correct behavior, not a gap.
+`README.md`, `EXPLAIN.md`, and `AI-TEST-GUIDE.md` (flow specs section); document
+the flow/ratings formats and the human-override rules; `graphify update .`; note
+known limits (no login/credentials, see non-goals). **Commit:** `docs(flows): document the flows workflow`
 
-**Commit:** "flow-plan: remove flag, multi-hop flows are now the default
-path" (only if you decide to remove the flag).
+### Step 16 - LAST: screenshots/vision and attached documents
+
+Explicitly last, per the user. (a) Vision: send `evidence/*.png` to a vision-capable
+model to *rate* a flow's end state (rating only, never marks verified). (b) Attached
+requirement documents: extract user stories and feed them to `propose` as extra
+evidence; code still rejects anything the explorer did not observe. Scope this in
+detail when we reach it.
 
 ---
 
-## Open questions to resolve before/while implementing
+## Roadmap status
 
-1. **Max hop depth** — start at 3, but should it be per-site configurable
-   (some journeys are legitimately 4-5 steps, e.g. add-to-cart → cart →
-   checkout → confirm)?
-2. **Absorbed-URL suppression (Phase 3)** — start non-suppressing as
-   recommended, revisit once you can see how noisy the "also tested via
-   flow X" duplication actually is in practice.
-3. **Hop inventory freshness** — if a flow probe explores page B mid-flow,
-   and page B was *also* crawled and explored standalone earlier in the run,
-   should the flow reuse that earlier inventory snapshot (faster, but could
-   be stale if the flow's navigation state differs, e.g. logged-in vs
-   logged-out) or always re-derive it fresh mid-flow (slower, always
-   accurate to the actual flow state)? **Recommend always fresh** — the
-   whole point of strictness here is not trusting stale/context-mismatched
-   observations (this is exactly the bug class that caused the
-   `subscribe-now` failure from the earlier report review).
-4. **Naming convention for flow specs** — one file per flow
-   (`{origin-url}_flow_test.py`) separate from the page's own
-   `{url}_test.py`, or merged into the same file? Recommend separate files —
-   keeps the "absorbed but still independently testable" pages clean and
-   makes flow-specific failures easy to isolate in the report.
+| Step | Status |
+|------|--------|
+| 1-7 (explorer flows, sitemap, propose, critic/ratings, verify) | done, pushed |
+| 8 flowgen | todo |
+| 9 results feed ratings | todo |
+| 10 multi-page hop awareness | todo |
+| 11 human review commands | todo |
+| 12 report flows section | todo |
+| 13 staleness + healing | todo |
+| 14 coverage + chain | todo |
+| 15 docs | todo |
+| 16 vision + attached docs | todo (last) |
+
+## Non-goals
+
+- Login / credentials / manual-login flows (independent; can land any time).
+- Flows needing payment or a real person's data (the proposer already forbids them).
+- Replacing per-page generation: pages with no chainable action keep single-page tests.
+
+## Open questions (decide at the step where they matter)
+
+1. **Step 8:** truncated (40-char) control names - substring match vs storing the full
+   name in `flows.json`. Leaning: store full names going forward, substring for old data.
+2. **Step 9:** should a failing flow *test* demote `verified` immediately, or only after
+   two consecutive failures (flaky-network tolerance)? Leaning: two.
+3. **Step 10:** max hop depth is `MAX_STEPS` (8) today; per-site override needed?
+4. **Step 13:** how far may healing go before a human must approve the changed step?
+   Leaning: never auto-heal an `approved` flow; propose the change instead.
