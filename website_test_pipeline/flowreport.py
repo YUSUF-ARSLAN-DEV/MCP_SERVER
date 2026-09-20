@@ -36,6 +36,7 @@ class FlowReport:
     new_headings: list[str] = field(default_factory=list)
     history: list[str] = field(default_factory=list)
     outcome: Any = None                # the TestOutcome of its generated test, or None if it was not run
+    navigation_only: bool = False      # the outcome proves the URL changed and nothing about what the page shows
     failure: str = ""                  # which step / page broke, when the test failed
     warnings: list[str] = field(default_factory=list)
 
@@ -114,6 +115,9 @@ def flow_warnings(fr: FlowReport) -> list[str]:
     if fr.failed and fr.status == "verified":
         out.append(f"flow \"{fr.title}\" failed this run but is still verified (one failure is tolerated; "
                    "a second in a row makes it stale)")
+    if fr.tested and fr.passed and fr.navigation_only:
+        out.append(f"flow \"{fr.title}\": passed, but its outcome only proves the URL changed - no heading, results or "
+                   "new controls were observed to check what the page shows")
     if fr.status == "stale":
         out.append(f"flow \"{fr.title}\" is stale: it failed repeatedly - re-run verify or rebuild it")
     return out
@@ -134,6 +138,8 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         new_headings=list(observed.get("new_headings") or []),
         history=[f"{(e.get('at') or '')[:19]}  {_rating_line(e)}" for e in entries],
         outcome=outcome,
+        navigation_only=(observed.get("effect") == "navigates" and not observed.get("new_headings")
+                         and not observed.get("results") and not observed.get("new_controls")),
     )
     if outcome is not None and fr.failed:
         stems = [_stem(p) for p in outcome.evidence]

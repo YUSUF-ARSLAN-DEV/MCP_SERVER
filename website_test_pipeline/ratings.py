@@ -54,6 +54,8 @@ def derive_status(current: str | None, entries: list[dict]) -> str | None:
         return current
     if runs[-1].get("passed"):
         return "verified"
+    if runs[-1].get("definite"):
+        return "candidate"        # not a flaky run: the flow is wrong as built (e.g. it promises content it never shows)
     failing = 0
     for entry in reversed(runs):
         if entry.get("passed"):

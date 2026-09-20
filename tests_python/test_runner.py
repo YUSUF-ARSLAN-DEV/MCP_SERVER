@@ -119,3 +119,92 @@ def test_hop_hint_is_silent_when_pages_agree_or_it_is_the_first_step_or_there_is
     assert hop_hint(step, 1, "https://x.test/en/list/?a=1") == ""   # same page, query and slash ignored
     assert hop_hint(step, 0, "https://x.test/en") == ""             # step 1: start URL may redirect (/ -> /en)
     assert hop_hint({"kind": "click", "name": "Go"}, 2, "https://x.test/en") == ""   # explorer flows carry no page
+
+
+# ------------------------------------------------------------------ settling and content promises
+
+def test_a_heading_spelled_differently_is_not_a_new_heading():
+    before = _snap(headings=["Find Al Jazeera Near You", "Satellite Frequencies"])
+    after = _snap(headings=["Find Aljazeera Near You", "Satellite  frequencies", "Here are the results"])
+    assert diff_snapshots(before, after)["new_headings"] == ["Here are the results"]
+
+
+def test_non_latin_headings_are_still_told_apart():
+    diff = diff_snapshots(_snap(headings=["العربية"]), _snap(headings=["العربية", "نتائج البحث"]))
+    assert diff["new_headings"] == ["نتائج البحث"]
+
+
+def _intent_flow(goal, status="verified"):
+    return {"id": "f", "source": "intent", "goal": goal, "status": status, "outcome": {"effect": "navigates", "to": "/en/find"}}
+
+
+def _nav_result(new_headings=(), new_controls=(), results=()):
+    observed = {"effect": "navigates", "url": "https://x.test/en/find", "new_headings": list(new_headings),
+                "new_controls": list(new_controls), "results": list(results)}
+    return {"ok": True, "steps_done": 1, "steps_total": 1, "error": None, "step_effects": ["navigates"], "observed": observed}
+
+
+def test_a_sentence_that_promises_content_fails_when_only_the_url_changed():
+    from website_test_pipeline.runner import sentence_expects_content
+    flow = _intent_flow("A visitor picks a country and sees the frequencies page.")
+    assert sentence_expects_content(flow)
+    evaluation = apply_result(flow, _nav_result(), "now")
+    assert evaluation["passed"] is False and evaluation["definite"] is True
+    assert "promises content" in evaluation["error"] and flow["status"] == "candidate"
+
+
+def test_the_promise_is_kept_when_a_heading_results_or_new_controls_appeared():
+    for kwargs in ({"new_headings": ["Results"]}, {"new_controls": ["button:Subscribe"]}, {"results": [{"key": "#t", "rows": 5}]}):
+        evaluation = apply_result(_intent_flow("A visitor sees the frequencies."), _nav_result(**kwargs), "now")
+        assert evaluation["passed"] is True and "definite" not in evaluation
+
+
+def test_sentences_that_promise_nothing_and_machine_goals_are_not_judged_this_way():
+    from website_test_pipeline.runner import sentence_expects_content
+    assert not sentence_expects_content(_intent_flow("A visitor opens the subscribe page."))
+    assert not sentence_expects_content(dict(_intent_flow("Search: sees results"), source="explorer"))
+    assert apply_result(_intent_flow("A visitor opens the subscribe page."), _nav_result(), "now")["passed"] is True
+
+
+def test_settled_snapshot_waits_for_content_that_arrives_late(monkeypatch):
+    from website_test_pipeline import runner
+    states = iter([_snap(headings=["Form"]), _snap(headings=["Form", "Results"]), _snap(headings=["Form", "Results"])])
+    monkeypatch.setattr(runner, "take_snapshot", lambda page: next(states))
+    monkeypatch.setattr(runner, "wait_for_loaders", lambda page, ms: True)
+
+    class _Page:
+        def wait_for_timeout(self, ms): pass
+        def wait_for_load_state(self, *a, **k): pass
+
+    assert runner.settled_snapshot(_Page())["headings"] == ["Form", "Results"]      # it did not stop at the first look
+
+
+def test_snapshots_equal_compares_url_headings_controls_and_results():
+    from website_test_pipeline.runner import snapshots_equal
+    a = _snap(headings=["H"], controls=["button:Go"], results=[_rows("#r", 3)])
+    assert snapshots_equal(a, dict(a)) and not snapshots_equal(a, _snap(headings=["H", "New"], controls=["button:Go"], results=[_rows("#r", 3)]))
+    assert not snapshots_equal(a, dict(a, url="https://x.test/other"))
+
+
+def test_a_filter_chip_that_echoes_the_picked_option_is_not_new_content():
+    flow = dict(_intent_flow("A visitor picks a channel and sees the frequencies."),
+                steps=[{"kind": "multiselect", "name": "Channel", "value": "Al Jazeera 2 HD Channel"}])
+    echo = _nav_result(new_controls=["button:Al Jazeera 2 HD Channel"])
+    evaluation = apply_result(flow, echo, "now")
+    assert evaluation["passed"] is False and "promises content" in evaluation["error"]
+    real = _nav_result(new_controls=["button:Al Jazeera 2 HD Channel", "button:Subscribe"])
+    assert apply_result(dict(flow, status="candidate"), real, "now")["passed"] is True
+
+
+def test_content_shown_without_a_flow_counts_every_new_control():
+    from website_test_pipeline.runner import content_shown
+    assert content_shown({"new_controls": ["button:Go"]}) and not content_shown({})
+
+
+def test_a_predicted_results_outcome_is_met_by_a_search_that_navigated_to_a_page_with_a_new_heading():
+    predicted = {"effect": "results"}
+    landed = {"effect": "navigates", "url": "https://x.test/find?c=1", "new_headings": ["Here are the results"], "results": []}
+    assert outcome_matches(predicted, landed) is True
+    assert outcome_matches(predicted, dict(landed, new_headings=[])) is False          # a bare URL change is not results
+    assert outcome_matches(predicted, {"effect": "reveals", "new_headings": ["x"], "results": []}) is False
+    assert outcome_matches(predicted, {"effect": "results", "results": [{"key": "#r", "rows": 5}], "new_headings": []}) is True

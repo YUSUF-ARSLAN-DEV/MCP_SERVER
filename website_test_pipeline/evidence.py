@@ -3,6 +3,11 @@ import re
 
 def action_evidence(page, test_name: str, action, verify, directory: Path) -> Path:
     action(); verify()
+    try:
+        from .pageutils import wait_for_loaders
+        wait_for_loaders(page, 3000)   # a spinner in the screenshot means the content had not arrived
+    except Exception:
+        pass
     directory.mkdir(parents=True, exist_ok=True)
     safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", test_name).strip("-") or "evidence"
     path = directory / f"{safe_name}.png"

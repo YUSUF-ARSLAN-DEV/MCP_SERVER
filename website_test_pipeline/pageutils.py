@@ -159,3 +159,27 @@ def pick_option(page, trigger, text: str) -> None:
         native.select_option(label=text, timeout=2000)
         return
     raise RuntimeError(f'option "{text}" not found in the opened menu')
+
+
+_LOADER_JS = '''() => [...document.querySelectorAll(
+    '[class*="loading" i],[class*="loader" i],[class*="spinner" i],[aria-busy="true"],[role="progressbar"]'
+)].some(e => {
+    const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+})'''
+
+
+def wait_for_loaders(page, timeout_ms: int = 4000, poll_ms: int = 250) -> bool:
+    """Wait until no visible loading spinner is left (up to timeout_ms). Returns True if the page is idle.
+    A screenshot or snapshot taken while a spinner still shows records the page BEFORE its content arrived.
+    Cheap when nothing is loading (one check), and never raises: an odd page just stops the wait."""
+    waited = 0
+    try:
+        while page.evaluate(_LOADER_JS):
+            if waited >= timeout_ms:
+                return False
+            page.wait_for_timeout(poll_ms)
+            waited += poll_ms
+    except Exception:
+        return True
+    return True

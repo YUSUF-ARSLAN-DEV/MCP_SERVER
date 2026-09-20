@@ -3,7 +3,8 @@ import logging
 from types import SimpleNamespace
 
 from website_test_pipeline.expand import (
-    ground_options, parse_expansion, prompt_for, run_expand, upgrade_menu_clicks,
+    drop_superseded_picks, ground_options, ground_sentence_values, parse_expansion, prompt_for, repair_option_targets,
+    run_expand, upgrade_menu_clicks,
 )
 from website_test_pipeline.flows import load_flows
 from website_test_pipeline.intents import add_intent, load_intents, save_intents, sentence_hash
@@ -141,6 +142,68 @@ def test_a_click_is_left_alone_when_the_sentence_only_opens_the_menu_or_the_butt
     assert upgrade_menu_clicks(steps, "A visitor opens the channel list and sees the channels.", [HOME]) == []
     assert steps[0]["kind"] == "click"
     assert upgrade_menu_clicks(steps, "A visitor picks a country and a channel.", [dict(HOME, revealed=[])]) == []
+
+
+def test_a_pick_that_targets_an_option_is_repaired_to_target_its_menu():
+    step = {"kind": "multiselect", "name": "AJ English", "page": "/en", "selector": "#opt", "value": None}
+    assert repair_option_targets([step], [HOME]) == ["AJ English -> Please select a channel"]
+    assert step["name"] == "Please select a channel" and step["value"] == "AJ English" and step["selector"] is None
+
+
+def test_a_real_menu_button_is_left_alone_and_an_unknown_target_is_not_guessed():
+    menu = {"kind": "multiselect", "name": "Please select a channel", "page": "/en", "value": None}
+    unknown = {"kind": "multiselect", "name": "Nothing like it", "page": "/en", "value": None}
+    assert repair_option_targets([menu, unknown], [HOME]) == []
+    assert menu["name"] == "Please select a channel" and unknown["name"] == "Nothing like it"
+
+
+def test_an_option_offered_by_two_menus_is_not_repaired_because_it_is_ambiguous():
+    twin = dict(HOME, revealed=HOME["revealed"] + [{"trigger": "Other menu", "effect": "reveals",
+                                                    "controls": [{"tag": "input", "type": "checkbox", "name": "AJ English"}]}])
+    step = {"kind": "multiselect", "name": "AJ English", "page": "/en", "value": None}
+    assert repair_option_targets([step], [twin]) == [] and step["name"] == "AJ English"
+
+
+def test_the_sentence_naming_one_option_sets_the_value_the_model_left_out():
+    select = {"kind": "select", "selector": "#country", "name": "Pick a country", "page": "/en", "value": None}
+    pick = {"kind": "multiselect", "name": "Please select a channel", "page": "/en", "value": None}
+    said = "A visitor picks Qatar and the AJ English channel, then searches."
+    home = json.loads(json.dumps(HOME))
+    home["controls"][0]["options"] = ["Please select a country", "Egypt", "Qatar"]
+    assert len(ground_sentence_values([select, pick], said, [home])) == 2
+    assert select["value"] == "Qatar" and pick["value"] == "AJ English"
+
+
+def test_a_sentence_that_names_no_option_or_several_leaves_the_value_alone():
+    home = json.loads(json.dumps(HOME))
+    home["controls"][0]["options"] = ["Egypt", "Qatar"]
+    select = {"kind": "select", "selector": "#country", "name": "Pick a country", "page": "/en", "value": None}
+    pick = {"kind": "multiselect", "name": "Please select a channel", "page": "/en", "value": None}
+    assert ground_sentence_values([select, pick], "A visitor picks a country and a channel.", [home]) == []
+    assert ground_sentence_values([select], "A visitor compares Egypt with Qatar.", [home]) == []       # ambiguous
+    assert select["value"] is None and pick["value"] is None
+    named = dict(select, value="Egypt")
+    assert ground_sentence_values([named], "picks Qatar", [home]) == [] and named["value"] == "Egypt"  # never overrides
+
+
+def test_the_option_must_be_a_whole_word_and_select_all_is_never_chosen():
+    home = json.loads(json.dumps(HOME))
+    home["revealed"][0]["controls"].append({"tag": "input", "type": "checkbox", "name": "Select All"})
+    pick = {"kind": "multiselect", "name": "Please select a channel", "page": "/en", "value": None}
+    assert ground_sentence_values([pick], "the visitor chooses select all channels", [home]) == []
+    assert ground_sentence_values([dict(pick)], "the AJ Englishman speaks", [home]) == []
+
+
+def test_a_generic_pick_followed_by_a_specific_pick_of_the_same_menu_is_dropped():
+    generic = {"kind": "multiselect", "name": "Please select a channel", "page": "/en", "value": None}
+    specific = {"kind": "multiselect", "name": "Please select a channel", "page": "/en", "value": "AJ English"}
+    search = {"kind": "click", "name": "Search", "page": "/en", "value": None}
+    steps = [generic, specific, search]
+    assert drop_superseded_picks(steps) == ["Please select a channel"] and steps == [specific, search]
+    same = [dict(specific), dict(specific)]
+    assert drop_superseded_picks(same) == ["Please select a channel"] and len(same) == 1
+    different = [dict(specific, value="AJ Arabic"), dict(specific)]
+    assert drop_superseded_picks(different) == [] and len(different) == 2        # two different options: both are wanted
 
 
 # ------------------------------------------------------------------ the command

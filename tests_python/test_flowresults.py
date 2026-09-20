@@ -109,3 +109,10 @@ def test_feed_results_reads_and_writes_the_files_and_never_raises(tmp_path):
     ratings.write_text("not json", encoding="utf-8")   # a broken ratings file is reported, not raised
     feed_results(settings, logging.getLogger("t"))
     assert ratings.read_text(encoding="utf-8") == "not json"
+
+
+def test_a_definite_failure_demotes_at_once_but_a_flaky_one_is_tolerated():
+    definite = {"source": "runner", "passed": False, "definite": True}
+    assert derive_status("verified", [_run(True), definite]) == "candidate"
+    assert derive_status("verified", [_run(True), _run(False)]) == "verified"      # an ordinary failure gets the grace
+    assert derive_status("approved", [_run(True), definite]) == "approved"          # a person's decision still wins

@@ -213,3 +213,15 @@ def test_a_locked_document_is_saved_under_a_new_name_instead_of_aborting_the_rep
     assert _save_document(doc, tmp_path / "locked.docx", run).name == "locked-new.docx"
     assert doc.saved == ["free.docx", "locked-new.docx"]
     assert len(run.notes) == 1 and "locked.docx" in run.notes[0] and run.notes[0] in run.warnings
+
+
+def test_a_passing_flow_that_only_proves_a_url_change_is_flagged_as_weak():
+    flow = _flow()
+    flow["observed"].update(new_headings=[], results=[], new_controls=[])
+    weak = build_flow_report(flow, [], _outcome("passed", evidence=["01-a.png"]))
+    assert weak.navigation_only and any("only proves the URL changed" in w for w in weak.warnings)
+    strong = build_flow_report(_flow(), [], _outcome("passed", evidence=["01-a.png"]))
+    assert not strong.navigation_only and not any("only proves" in w for w in strong.warnings)
+    reveals = _flow()
+    reveals["observed"].update(effect="reveals", new_headings=[])
+    assert not build_flow_report(reveals, [], _outcome("passed", evidence=["01-a.png"])).navigation_only

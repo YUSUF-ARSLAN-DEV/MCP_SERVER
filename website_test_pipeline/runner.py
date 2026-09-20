@@ -7,6 +7,7 @@ predicted one AND something visibly changed. Each run appends a mechanical evalu
 to flow_ratings.json. Human decisions (approved / rejected) are never changed.
 """
 from __future__ import annotations
+import re
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -15,10 +16,13 @@ from .explorer import (
     _close_menus, _pick_multiselect, _plausible_value, _select_first_real,
 )
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
-from .pageutils import dismiss_overlays, pick_option, settle_page
+from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
 
 _STEP_WAIT_MS = 1200
+_LOADER_WAIT_MS = 5000     # longest we wait for a loading spinner to go away after a step
+_SETTLE_POLL_MS = 500
+_SETTLE_ROUNDS = 4         # re-snapshot at most this many times waiting for the page to stop changing
 _MAX_LIST = 8
 
 
@@ -32,13 +36,19 @@ def _same_url(a: str, b: str) -> bool:
     return (a or "").split("#")[0].rstrip("/") == (b or "").split("#")[0].rstrip("/")
 
 
+def _same_heading_key(text: str) -> str:
+    """A heading compared ignoring case, spacing and punctuation: 'Find Al Jazeera Near You' and
+    'Find Aljazeera Near You' are the same heading, not a new one that appeared."""
+    return "".join(ch for ch in (text or "").lower() if ch.isalnum())
+
+
 def diff_snapshots(before: dict, after: dict) -> dict:
-    seen_h, seen_c = set(before["headings"]), set(before["controls"])
+    seen_h, seen_c = {_same_heading_key(h) for h in before["headings"]}, set(before["controls"])
     seen_r = {(r["key"], r["rows"]) for r in before["results"]}
     return {
         "url_changed": not _same_url(before["url"], after["url"]),
         "url": after["url"],
-        "new_headings": [h for h in after["headings"] if h not in seen_h][:_MAX_LIST],
+        "new_headings": [h for h in after["headings"] if _same_heading_key(h) not in seen_h][:_MAX_LIST],
         "new_controls": [c for c in after["controls"] if c not in seen_c][:_MAX_LIST],
         "results": [{"key": r["key"], "rows": r["rows"]} for r in after["results"]
                     if r["in_main"] and r["rows"] >= 3 and (r["key"], r["rows"]) not in seen_r],
@@ -65,7 +75,10 @@ def outcome_matches(predicted: dict, observed: dict) -> bool:
         to = predicted.get("to")
         return got == "navigates" and (not to or _path(to) == _path(observed["url"]))
     if want == "results":
-        return got == "results" or bool(observed.get("results"))
+        # a results region, or - when the search also changed the URL, so the run was classed as a
+        # navigation - a new heading on the page it landed on (e.g. "Here are the results for ...")
+        return (got == "results" or bool(observed.get("results"))
+                or (got == "navigates" and bool(observed.get("new_headings"))))
     if want in {"reveals", "validation"}:
         return got in {"reveals", "results"}
     return False
@@ -82,12 +95,37 @@ def hop_hint(step: dict, index: int, current_url: str) -> str:
     return f" (hop {index + 1}: step expects page {_path(expected)}, browser is on {_path(current_url)})"
 
 
+_EXPECTS_CONTENT = re.compile(r"(?<![a-z])(results?|frequenc[a-z]*|list|listing|table|details?|sees?|shows?|displays?|finds?)(?![a-z])", re.I)
+
+
+def _echoes_input(control: str, flow: dict) -> bool:
+    """A control that only repeats a value the flow itself entered (the results page's filter chip
+    'Al Jazeera 2 HD Channel' after picking that channel) is not new content."""
+    name = _same_heading_key(control.partition(":")[2])
+    values = [_same_heading_key(str(s.get("value"))) for s in flow.get("steps") or [] if s.get("value")]
+    return bool(name) and any(v and (v in name or name in v) and min(len(v), len(name)) >= 3 for v in values)
+
+
+def content_shown(observed: dict, flow: dict | None = None) -> bool:
+    """Did anything besides the URL change: a new heading, a results region, or new controls that are
+    not just the flow's own input echoed back?"""
+    controls = [c for c in observed.get("new_controls") or [] if not flow or not _echoes_input(c, flow)]
+    return bool(observed.get("new_headings") or observed.get("results") or controls)
+
+
+def sentence_expects_content(flow: dict) -> bool:
+    """A flow built from a plain sentence that says the visitor sees / finds / gets results is promising
+    content, not just a new URL. (Explorer flows carry a machine goal and are not judged this way.)"""
+    return flow.get("source") == "intent" and bool(_EXPECTS_CONTENT.search(" " + (flow.get("goal") or "") + " "))
+
+
 def apply_result(flow: dict, result: dict, now: str) -> dict:
     """Update the flow from a run and return the evaluation entry for flow_ratings.json."""
     observed = result["observed"]
     matched = result["ok"] and outcome_matches(flow.get("outcome") or {}, observed)
     changed = observed["effect"] != "no-visible-change"
-    passed = bool(result["ok"] and matched and changed)
+    promised = sentence_expects_content(flow) and not content_shown(observed, flow)
+    passed = bool(result["ok"] and matched and changed and not promised)
     flow["observed"] = {**observed, "step_effects": result["step_effects"],
                         "landed_url": result.get("landed_url"), "step_urls": result.get("step_urls", [])}
     flow["last_run_at"] = now
@@ -100,6 +138,10 @@ def apply_result(flow: dict, result: dict, now: str) -> dict:
     }
     if result.get("error"):
         evaluation["error"] = result["error"]
+    elif promised and result["ok"] and matched and changed:
+        evaluation["error"] = ("the sentence promises content but the run only saw the URL change "
+                               "(no new heading, results or controls appeared)")
+        evaluation["definite"] = True      # deterministic, so no benefit of the doubt (see ratings.derive_status)
     return evaluation
 
 
@@ -122,6 +164,31 @@ def take_snapshot(page) -> dict:
         "results": [{"key": p.get("selector") or p.get("klass") or "?", "rows": p.get("rows") or 0,
                      "in_main": bool(p.get("in_main"))} for p in results],
     }
+
+
+def settled_snapshot(page) -> dict:
+    """Snapshot the page after a step, once it has settled: wait the usual beat, then for spinners to
+    go, then until two snapshots in a row agree. Content that loads a moment after the click (search
+    results, a table) is then part of what the run observed instead of being missed."""
+    page.wait_for_timeout(_STEP_WAIT_MS)
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=3000)
+    except Exception:
+        pass
+    wait_for_loaders(page, _LOADER_WAIT_MS)
+    snapshot = take_snapshot(page)
+    for _ in range(_SETTLE_ROUNDS):
+        page.wait_for_timeout(_SETTLE_POLL_MS)
+        again = take_snapshot(page)
+        if snapshots_equal(snapshot, again):
+            break
+        snapshot = again
+    return snapshot
+
+
+def snapshots_equal(a: dict, b: dict) -> bool:
+    return (_same_url(a["url"], b["url"]) and a["headings"] == b["headings"] and a["controls"] == b["controls"]
+            and [(r["key"], r["rows"]) for r in a["results"]] == [(r["key"], r["rows"]) for r in b["results"]])
 
 
 def _locate(page, step: dict):
@@ -190,12 +257,7 @@ def run_flow(page, flow: dict, log=None) -> dict:
             result["error"] = (f'step "{describe_step(step)}" failed: {str(exc).splitlines()[0][:120]}'
                                f'{hop_hint(step, index, page.url)}')
             break
-        page.wait_for_timeout(_STEP_WAIT_MS)
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=3000)
-        except Exception:
-            pass
-        current = take_snapshot(page)
+        current = settled_snapshot(page)
         result["step_effects"].append(classify(diff_snapshots(previous, current))["effect"])
         result["step_urls"].append(current["url"])
         result["steps_done"] += 1

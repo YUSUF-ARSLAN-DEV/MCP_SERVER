@@ -104,6 +104,81 @@ def _sentence_picks(sentence: str, trigger: str) -> bool:
     return False
 
 
+def _triggers_offering(option: str, page: str, inventories: list[dict]) -> list[str]:
+    """Menu buttons on `page` whose explored menu holds an option that matches `option`."""
+    wanted, found = _norm(option), []
+    for inv in inventories:
+        if _page_key(re.sub(r"^https?://[^/]+", "", inv.get("url", ""))) != page:
+            continue
+        for entry in inv.get("revealed") or []:
+            trigger = entry.get("trigger") or ""
+            if trigger and trigger not in found and any(
+                    wanted and (wanted in _norm(c["name"]) or _norm(c["name"]) in wanted)
+                    for c in entry.get("controls") or [] if _is_option(c)):
+                found.append(trigger)
+    return found
+
+
+def repair_option_targets(steps: list[dict], inventories: list[dict]) -> list[str]:
+    """The model sometimes names the OPTION as the thing to pick from ('pick Al Jazeera Documentary' with that
+    option as the target) instead of the menu button. When the target is not a menu but is an option of exactly
+    one explored menu, that is what was meant: the menu becomes the target and the option the value.
+    Returns 'option -> menu' for each repair."""
+    fixed = []
+    for step in steps:
+        if step.get("kind") != "multiselect" or _options_of(step.get("name") or "", step["page"], inventories):
+            continue
+        menus = _triggers_offering(step.get("name") or "", step["page"], inventories)
+        if len(menus) == 1:
+            fixed.append(f'{step.get("name")} -> {menus[0]}')
+            step.update(value=step.get("value") or step.get("name"), name=menus[0][:40], selector=None)
+    return fixed
+
+
+def _select_options(step: dict, page: str, inventories: list[dict]) -> list[str]:
+    for inv in inventories:
+        if _page_key(re.sub(r"^https?://[^/]+", "", inv.get("url", ""))) != page:
+            continue
+        for c in inv.get("controls") or []:
+            if c.get("tag") == "select" and step.get("selector") and c.get("selector") == step.get("selector"):
+                return [str(o) for o in c.get("options") or [] if o]
+    return []
+
+
+def ground_sentence_values(steps: list[dict], sentence: str, inventories: list[dict]) -> list[str]:
+    """When a select or pick step has no value but the sentence names exactly one of that control's real
+    options ('picks Qatar'), use it. The option comes from the explored page, the model only had to leave
+    it out. Returns 'step -> value' for each one set."""
+    said, out = _norm(sentence), []
+    for step in steps:
+        if step.get("value") or step.get("kind") not in {"select", "multiselect"}:
+            continue
+        options = (_select_options(step, step["page"], inventories) if step["kind"] == "select"
+                   else _options_of(step.get("name") or "", step["page"], inventories))
+        named = [o for o in options if len(_norm(o)) >= 3 and not _ALL_OPTION.match(o.strip())
+                 and re.search(r"(?<![a-z0-9])" + re.escape(_norm(o)) + r"(?![a-z0-9])", said)]
+        if len(named) == 1:
+            step["value"] = named[0][:80]
+            out.append(f'{step.get("name") or step.get("selector")} -> {named[0]}')
+    return out
+
+
+def drop_superseded_picks(steps: list[dict]) -> list[str]:
+    """Two picks in a row from the same menu where the second one names its option: the first one only
+    said 'pick a channel' and the second says which, so it is dropped (the flow would otherwise choose twice)."""
+    dropped, keep = [], []
+    for i, step in enumerate(steps):
+        nxt = steps[i + 1] if i + 1 < len(steps) else None
+        if (nxt and step.get("kind") == "multiselect" and nxt.get("kind") == "multiselect"
+                and step.get("page") == nxt.get("page") and _norm(step.get("name") or "") == _norm(nxt.get("name") or "")
+                and (not step.get("value") or _norm(step["value"]) == _norm(nxt.get("value") or ""))):
+            dropped.append(step.get("name") or "")
+            continue
+        keep.append(step)
+    steps[:] = keep
+    return dropped
+
+
 def upgrade_menu_clicks(steps: list[dict], sentence: str, inventories: list[dict]) -> list[str]:
     """The model often writes 'pick a channel' as a plain click, which only opens the menu. When a click targets a
     button whose explored menu holds options and the sentence says to pick from it, make it a real pick step.
@@ -158,9 +233,18 @@ def expand_intent(intent: dict, client, inventories: list[dict], site_map: dict,
         raw, index, pages, frozenset(_page_key(e["to"]) for e in edges), _transitions(edges, site_map["nav"]))
     if steps is None:
         return None, None, reason
+    for repair in repair_option_targets(steps, inventories):
+        if log:
+            log.info("expand: %s - repaired a pick that targeted an option: %s", intent["id"], repair)
     upgraded = upgrade_menu_clicks(steps, intent["sentence"], inventories)
     if upgraded and log:
         log.info("expand: %s - %s is a pick, not a click (the sentence says to pick from it)", intent["id"], ", ".join(upgraded))
+    for done in ground_sentence_values(steps, intent["sentence"], inventories):
+        if log:
+            log.info("expand: %s - the sentence names the option: %s", intent["id"], done)
+    for menu in drop_superseded_picks(steps):
+        if log:
+            log.info("expand: %s - dropped a pick of %s that a later pick of the same menu supersedes", intent["id"], menu)
     reason = ground_options(steps, inventories)
     if reason:
         return None, None, reason

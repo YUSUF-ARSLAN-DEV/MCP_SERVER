@@ -66,3 +66,62 @@ def test_pick_option_raises_when_the_option_exists_nowhere():
     page = _Page(option_count=0, native_count=0)
     with pytest.raises(RuntimeError, match='option "Nope" not found'):
         pick_option(page, _Loc(page, "trigger"), "Nope")
+
+
+# ------------------------------------------------------------------ waiting for spinners
+
+class _BusyPage:
+    def __init__(self, busy_polls):
+        self.busy_polls, self.waited = busy_polls, 0
+
+    def evaluate(self, script):
+        busy = self.busy_polls > 0
+        self.busy_polls -= 1
+        return busy
+
+    def wait_for_timeout(self, ms):
+        self.waited += ms
+
+
+def test_wait_for_loaders_returns_at_once_when_nothing_is_loading():
+    from website_test_pipeline.pageutils import wait_for_loaders
+    page = _BusyPage(0)
+    assert wait_for_loaders(page) is True and page.waited == 0
+
+
+def test_wait_for_loaders_waits_until_the_spinner_is_gone():
+    from website_test_pipeline.pageutils import wait_for_loaders
+    page = _BusyPage(3)
+    assert wait_for_loaders(page, timeout_ms=4000, poll_ms=250) is True and page.waited == 750
+
+
+def test_wait_for_loaders_gives_up_on_a_spinner_that_never_goes():
+    from website_test_pipeline.pageutils import wait_for_loaders
+    page = _BusyPage(10 ** 6)
+    assert wait_for_loaders(page, timeout_ms=1000, poll_ms=250) is False and page.waited == 1000
+
+
+def test_wait_for_loaders_never_raises_on_a_page_that_cannot_evaluate():
+    from website_test_pipeline.pageutils import wait_for_loaders
+
+    class _Broken:
+        def evaluate(self, script): raise RuntimeError("closed")
+
+    assert wait_for_loaders(_Broken()) is True
+
+
+def test_the_evidence_screenshot_is_taken_after_the_page_stops_loading(tmp_path):
+    from website_test_pipeline.evidence import action_evidence
+    order = []
+
+    class _Page:
+        def evaluate(self, script):
+            order.append("loader-check")
+            return False
+
+        def wait_for_timeout(self, ms): pass
+
+        def screenshot(self, path, full_page): order.append("screenshot")
+
+    action_evidence(_Page(), "01-x", lambda: order.append("action"), lambda: order.append("verify"), tmp_path)
+    assert order == ["action", "verify", "loader-check", "screenshot"]
