@@ -41,7 +41,7 @@ browser by code, not predicted by a model.
 | 6 | Single-click rule | `5bdccd9` | A 1-step flow is valid only if it navigates |
 | 7 | `verify` | `f485186` | `runner.py`: run each flow step by step, snapshot after every step, diff, classify (`navigates`/`results`/`reveals`/`no-visible-change`), compare with the prediction, set `verified`/`candidate`, append a runner rating |
 
-Current commands: `crawl`, `explore`, `generate`, `propose`, `verify`, `execute`, `report`.
+Current commands: `crawl`, `explore`, `generate`, `propose`, `verify`, `flowgen`, `flows`, `execute`, `report`.
 Real data: `runs/sat-stg.aljazeera.tv/flows.json` (8 flows, all verified) and `flow_ratings.json`.
 
 ### Data shapes (source of truth: `flows.py`, `ratings.py`, `runner.py`)
@@ -151,7 +151,7 @@ step expects.
 on sat-stg; confirm at least one multi-page flow is proposed, verified or cleanly
 rejected. **Commit:** `feat(flows): hop-aware runner and specs for multi-page journeys`
 
-### Step 11 - Human review commands
+### Step 11 - Human review commands - DONE
 
 **Why:** today approving/rejecting a flow means hand-editing JSON.
 **Files:** `cli.py` (`flows` subcommands), `flows.py`, `ratings.py`, tests.
@@ -232,7 +232,7 @@ detail when we reach it.
 | &nbsp;&nbsp;10b hop-aware step errors | done, pushed |
 | &nbsp;&nbsp;10c flowgen asserts every hop URL | done, pushed |
 | &nbsp;&nbsp;10d propose encourages cross-page chains | done, pushed |
-| 11 human review commands | todo |
+| 11 human review commands | done, pushed (`flows list/show/approve/reject/reset`, `review.py`) |
 | 12 report flows section | todo |
 | 13 staleness + healing | todo |
 | 14 coverage + chain | todo |
