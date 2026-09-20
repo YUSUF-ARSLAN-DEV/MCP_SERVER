@@ -15,6 +15,7 @@ HOME = {"url": "https://x.test/en", "title": "Home", "headings": [],
 FIND = {"url": "https://x.test/en/find", "title": "Find", "headings": [], "controls": [
     {"tag": "button", "name": "Subscribe Now", "region": "other"}], "revealed": []}
 INVS = [HOME, FIND]
+HOME_LINKING = dict(HOME, controls=HOME["controls"] + [{"tag": "a", "name": "Map", "href": "/en/map", "region": "other"}])
 
 def _flow(**over):
     base = {"goal": "Find frequencies by country", "start_path": "/en",
@@ -44,7 +45,7 @@ def test_valid_flow_becomes_a_candidate_with_full_start_url():
     assert flow["proposed_by"] == {"model": "m", "prompt_version": "propose-v1"}
 
 def test_unknown_control_rejects_the_whole_flow():
-    bad = _flow(steps=[{"page": "/en", "action": "click", "target": "Buy now"}])
+    bad = _flow(steps=[{"page": "/en", "action": "click", "target": "Buy now"}, {"page": "/en", "action": "click", "target": "Search"}])
     accepted, rejected = propose([bad], INVS, [])
     assert not accepted and 'control "Buy now" not found on /en' in rejected[0][1]
 
@@ -52,25 +53,25 @@ def test_unexplored_page_and_outcome_are_rejected():
     _, r1 = propose([_flow(start_path="/en/map")], INVS, [])
     assert "not explored" in r1[0][1]
     _, r2 = propose([_flow(outcome={"type": "navigates", "to_path": "/en/map"})], INVS, [])
-    assert "outcome page /en/map was not explored" in r2[0][1]
+    assert "neither explored nor linked" in r2[0][1]
     _, r3 = propose([_flow(outcome={"type": "explodes"})], INVS, [])
     assert "unknown outcome" in r3[0][1]
 
 def test_action_must_fit_the_control_type():
-    bad = _flow(steps=[{"page": "/en", "action": "select", "target": "Search"}])
+    bad = _flow(steps=[{"page": "/en", "action": "select", "target": "Search"}, {"page": "/en", "action": "click", "target": "Search"}])
     assert "is not a select" in propose([bad], INVS, [])[1][0][1]
-    bad = _flow(steps=[{"page": "/en", "action": "fill", "target": "Search"}])
+    bad = _flow(steps=[{"page": "/en", "action": "fill", "target": "Search"}, {"page": "/en", "action": "click", "target": "Search"}])
     assert "not a text field" in propose([bad], INVS, [])[1][0][1]
 
 def test_unknown_select_value_is_dropped_not_kept():
-    flow = _flow(steps=[{"page": "/en", "action": "select", "target": "#country", "value": "Atlantis"}])
+    flow = _flow(steps=[{"page": "/en", "action": "select", "target": "#country", "value": "Atlantis"}, {"page": "/en", "action": "click", "target": "Search"}])
     accepted, _ = propose([flow], INVS, [])
     assert accepted[0]["steps"][0]["value"] is None
 
 def test_duplicate_of_existing_flow_is_skipped():
     first, _ = propose([_flow()], INVS, [])
     again, rejected = propose([_flow(goal="Same steps, new words")], INVS, first)
-    assert not again and rejected[0][1] == "duplicate of an existing flow"
+    assert not again and rejected[0][1].startswith("duplicate of an existing flow")
 
 def test_prompt_contains_rules_and_map():
     text = prompt_for("SITE MAP (1 pages explored)")
@@ -83,10 +84,12 @@ def test_run_propose_writes_candidates_and_only_uses_listed_urls(tmp_path):
     seen = {}
     class Client:
         def generate(self, prompt, system):
+            if "strict QA reviewer" in prompt:
+                return json.dumps({"ratings": [{"n": 1, "coherence": 4, "importance": 5, "outcome_strength": 3, "reason": "ok"}]})
             seen["prompt"] = prompt
             return json.dumps({"flows": [_flow(), _flow(goal="bad", start_path="/stale")]})
     settings = SimpleNamespace(artifacts_dir=tmp_path, flows_file=tmp_path / "flows.json",
-                               urls_file="urls.txt", model="m")
+                               ratings_file=tmp_path / "ratings.json", urls_file="urls.txt", model="m")
     rc = run_propose(settings, ["https://x.test/en", "https://x.test/en/find"], Client(), logging.getLogger("t"))
     assert rc == 0 and "/stale" not in seen["prompt"].split("SITE MAP")[1]
     flows = load_flows(settings.flows_file)["flows"]
@@ -95,3 +98,39 @@ def test_run_propose_writes_candidates_and_only_uses_listed_urls(tmp_path):
 def test_run_propose_needs_inventories(tmp_path):
     settings = SimpleNamespace(artifacts_dir=tmp_path, flows_file=tmp_path / "f.json", urls_file="u", model="m")
     assert run_propose(settings, ["https://x.test/"], object(), logging.getLogger("t")) == 2
+
+
+# ------------------------------------------------ outcome pages, dedupe, minimum steps
+
+def test_outcome_to_a_linked_but_unexplored_page_is_allowed():
+    flow = _flow(goal="Open the map", steps=[{"page": "/en", "action": "click", "target": "Map"},
+                                             {"page": "/en", "action": "click", "target": "Search"}],
+                 outcome={"type": "navigates", "to_path": "/en/map"})
+    accepted, rejected = propose([flow], [HOME_LINKING, FIND], [])
+    assert len(accepted) == 1 and not rejected
+
+
+def test_single_step_flow_is_rejected():
+    flow = _flow(steps=[{"page": "/en", "action": "click", "target": "Search"}])
+    assert "not a journey" in propose([flow], INVS, [])[1][0][1]
+
+
+def test_flow_ending_on_its_own_start_page_is_rejected():
+    flow = _flow(outcome={"type": "navigates", "to_path": "/en"})
+    assert "started on" in propose([flow], INVS, [])[1][0][1]
+
+
+def test_duplicate_of_explorer_flow_is_caught_across_pages_and_kinds():
+    explorer = {"steps": [{"kind": "select", "selector": "#country", "name": "Pick a country", "value": "Egypt"},
+                          {"kind": "click", "selector": None, "name": "Search"}]}
+    pick = _flow(steps=[{"page": "/en", "action": "pick", "target": "#country", "value": "Qatar"},
+                        {"page": "/en", "action": "click", "target": "Search"}])
+    accepted, rejected = propose([pick], INVS, [explorer])
+    assert not accepted and rejected[0][1].startswith("duplicate")
+
+
+def test_pick_on_a_real_select_is_stored_as_select():
+    pick = _flow(steps=[{"page": "/en", "action": "pick", "target": "#country", "value": "Qatar"},
+                        {"page": "/en", "action": "click", "target": "Search"}])
+    accepted, _ = propose([pick], INVS, [])
+    assert accepted[0]["steps"][0]["kind"] == "select"
