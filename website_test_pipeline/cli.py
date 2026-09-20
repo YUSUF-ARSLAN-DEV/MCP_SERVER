@@ -32,8 +32,8 @@ PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--traci
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
-    parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','execute','report'], nargs='?', default='generate')
-    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id>')
+    parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','execute','report'], nargs='?', default='generate')
+    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents')
     parser.add_argument('--reason', default='', help='flows reject/approve: why (required to reject)')
     parser.add_argument('--status', default=None, help='flows list: only flows with this status')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
@@ -67,6 +67,9 @@ def main() -> int:
         from .flowgen import run_flowgen
         return run_flowgen(settings, log)
     urls = read_urls(settings.urls_file)
+    if args.command == 'intents':
+        from .intents import run_intents
+        return run_intents(settings, urls, ModelClient(settings, log), log)
     if args.command == 'propose':
         from .proposer import run_propose
         return run_propose(settings, urls, ModelClient(settings, log), log)

@@ -1,4 +1,5 @@
-"""Human review of flows from the command line: list, show, approve, reject, reset.
+"""Human review of flows from the command line: list, show, approve, reject, reset
+(and, in intents.py, add / edit / drop / intents for the plain-sentence file).
 
 A person's decision is the one thing the tool never overwrites: approve/reject set the
 flow's status (verify, propose, explore and flowgen all leave those two alone) and add a
@@ -144,6 +145,9 @@ def run_flows_command(settings, words: list[str], reason: str = "", status: str 
     action = words[0] if words else "list"
     rest = words[1:]
     try:
+        if action in {"add", "edit", "drop", "intents"}:      # the plain-sentence file, not flows.json
+            from .intents import run_intent_action
+            return run_intent_action(settings, action, rest, reason, out)
         doc = load_flows(settings.flows_file)
         ratings = load_ratings(settings.ratings_file)
         if action == "list":
@@ -160,7 +164,7 @@ def run_flows_command(settings, words: list[str], reason: str = "", status: str 
             save_ratings(settings.ratings_file, ratings)
             out(f'{flow["id"]} -> {flow["status"]}')
             return 0
-        raise ReviewError(f"unknown flows command {action!r}: use list, show, approve, reject or reset")
+        raise ReviewError(f"unknown flows command {action!r}: use list, show, approve, reject, reset, add, edit, drop or intents")
     except ReviewError as exc:
         out(f"flows: {exc}")
         return 2

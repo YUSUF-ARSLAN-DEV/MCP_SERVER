@@ -260,7 +260,7 @@ detail when we reach it.
 | 11 human review commands | done, pushed (`flows list/show/approve/reject/reset`, `review.py`) |
 | 11b multiselect picks the named option | done, pushed |
 | 11c query-string outcome assertion | done, pushed |
-| 11d intents store + commands + AI sentences | todo |
+| 11d intents store + commands + AI sentences | done, pushed |
 | 11e expand sentence -> steps | todo |
 | 11f sync, safeguards, acceptance, docs | todo |
 | 12 report flows section | todo |

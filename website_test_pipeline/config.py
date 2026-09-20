@@ -45,6 +45,7 @@ class Settings:
     seeds_file: Path = RUNS
     flows_file: Path = RUNS
     ratings_file: Path = RUNS
+    intents_file: Path = RUNS
     tests_dir: Path = RUNS
     artifacts_dir: Path = RUNS
 
@@ -58,6 +59,7 @@ class Settings:
         object.__setattr__(self, "seeds_file", base / "seeds.txt")
         object.__setattr__(self, "flows_file", base / "flows.json")
         object.__setattr__(self, "ratings_file", base / "flow_ratings.json")
+        object.__setattr__(self, "intents_file", base / "intents.json")
         override = os.getenv("URLS_FILE", "")
         chosen = Path(override) if override and Path(override).is_absolute() else base / "urls.txt"
         object.__setattr__(self, "urls_file", chosen)
