@@ -86,7 +86,7 @@ on an earlier step's internals except through the JSON formats above.
 
 ## Remaining steps
 
-### Step 8 - Emit a pytest spec from a verified flow (deterministic, no model)
+### Step 8 - Emit a pytest spec from a verified flow (deterministic, no model) - DONE
 
 **Why:** a verified flow already contains every selector, value and observed
 outcome. Turning it into code with a *template* means zero hallucination and no
@@ -223,7 +223,7 @@ detail when we reach it.
 | Step | Status |
 |------|--------|
 | 1-7 (explorer flows, sitemap, propose, critic/ratings, verify) | done, pushed |
-| 8 flowgen | todo |
+| 8 flowgen | done, pushed (`flowgen` command; all 8 sat-stg flows emit and pass live) |
 | 9 results feed ratings | todo |
 | 10 multi-page hop awareness | todo |
 | 11 human review commands | todo |
@@ -238,6 +238,12 @@ detail when we reach it.
 - Login / credentials / manual-login flows (independent; can land any time).
 - Flows needing payment or a real person's data (the proposer already forbids them).
 - Replacing per-page generation: pages with no chainable action keep single-page tests.
+
+## Known limits of Step 8 (carry into later steps)
+
+- `multiselect` steps are not emitted yet (each widget picks options differently); such flows are skipped with a logged reason.
+- A step's control role is read from the explored pages (or an optional `role` on the step); if it cannot be told, the flow is skipped, never guessed. Step 10 should have `propose`/`verify` store `role` on steps.
+- Only the final URL is observed, so a mid-flow hop is asserted as "body visible" until Step 10 records `step_urls`.
 
 ## Open questions (decide at the step where they matter)
 
