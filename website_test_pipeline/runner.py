@@ -269,16 +269,42 @@ def _empty(flow: dict) -> dict:
     return {"url": flow.get("start_url", ""), "headings": [], "controls": [], "results": []}
 
 
-def run_verify(settings, log) -> int:
+def select_flows(flows: list[dict], only: list[str] | None = None, failed_only: bool = False) -> tuple[list[dict], list[str]]:
+    """Which flows `verify` should run, and any reference that matched nothing.
+    Never a rejected flow, and never one waiting for its sentence to be rebuilt (see flows.is_blocked).
+    `only` limits it to flows whose id equals or contains one of the given fragments; `failed_only` to
+    flows that are not verified yet or went stale, i.e. the ones worth re-running after a site change."""
+    todo = [f for f in flows if f.get("status") != "rejected" and not is_blocked(f)]
+    if failed_only:
+        todo = [f for f in todo if f.get("status") in {"candidate", "stale"}]
+    unmatched: list[str] = []
+    if only:
+        chosen = []
+        for ref in only:
+            hits = [f for f in todo if ref == f["id"] or ref in f["id"]]
+            if not hits:
+                unmatched.append(ref)
+            chosen += [f for f in hits if f not in chosen]
+        todo = chosen
+    return todo, unmatched
+
+
+def run_verify(settings, log, only: list[str] | None = None, failed_only: bool = False) -> int:
     from playwright.sync_api import sync_playwright
     from .intents import sync_files
     sync_files(settings, log)                    # a flow whose sentence changed must not be re-verified as-is
     doc = load_flows(settings.flows_file)
     ratings = load_ratings(settings.ratings_file)
-    todo = [f for f in doc["flows"] if f.get("status") != "rejected" and not is_blocked(f)]
+    todo, unmatched = select_flows(doc["flows"], only, failed_only)
+    for ref in unmatched:
+        log.error("verify: no runnable flow matches '%s' (see `flows list`; rejected flows and flows waiting for a "
+                  "rebuilt sentence are skipped)", ref)
     if not todo:
-        log.error("verify: no flows in %s - run explore or propose first", settings.flows_file)
-        return 2
+        if not (only or failed_only):
+            log.error("verify: no flows in %s - run explore or propose first", settings.flows_file)
+        else:
+            log.info("verify: nothing to run for this selection")
+        return 2 if unmatched or not (only or failed_only) else 0
     verified = 0
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=settings.headless)

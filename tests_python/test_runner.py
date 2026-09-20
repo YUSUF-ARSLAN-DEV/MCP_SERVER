@@ -208,3 +208,51 @@ def test_a_predicted_results_outcome_is_met_by_a_search_that_navigated_to_a_page
     assert outcome_matches(predicted, dict(landed, new_headings=[])) is False          # a bare URL change is not results
     assert outcome_matches(predicted, {"effect": "reveals", "new_headings": ["x"], "results": []}) is False
     assert outcome_matches(predicted, {"effect": "results", "results": [{"key": "#r", "rows": 5}], "new_headings": []}) is True
+
+
+# ------------------------------------------------------------------ choosing which flows to verify
+
+def _f(fid, status="verified", **extra):
+    return dict({"id": fid, "status": status}, **extra)
+
+
+def test_select_flows_skips_rejected_and_blocked_flows_by_default():
+    from website_test_pipeline.runner import select_flows
+    flows = [_f("a"), _f("b", "rejected"), _f("c", "candidate", intent_state="edited"), _f("d", "candidate")]
+    todo, unmatched = select_flows(flows)
+    assert [f["id"] for f in todo] == ["a", "d"] and unmatched == []
+
+
+def test_failed_only_keeps_just_the_flows_that_are_not_verified_yet():
+    from website_test_pipeline.runner import select_flows
+    flows = [_f("a"), _f("b", "candidate"), _f("c", "stale"), _f("d", "approved")]
+    assert [f["id"] for f in select_flows(flows, failed_only=True)[0]] == ["b", "c"]
+
+
+def test_ids_can_be_fragments_and_unknown_ones_are_reported():
+    from website_test_pipeline.runner import select_flows
+    flows = [_f("site--search-by-country"), _f("site--open-map"), _f("other--search-by-name")]
+    todo, unmatched = select_flows(flows, only=["search", "nope"])
+    assert [f["id"] for f in todo] == ["site--search-by-country", "other--search-by-name"] and unmatched == ["nope"]
+    assert [f["id"] for f in select_flows(flows, only=["site--open-map", "open-map"])[0]] == ["site--open-map"]   # no duplicates
+
+
+def test_only_and_failed_only_combine():
+    from website_test_pipeline.runner import select_flows
+    flows = [_f("a--x", "candidate"), _f("a--y"), _f("b--x", "stale")]
+    assert [f["id"] for f in select_flows(flows, only=["x"], failed_only=True)[0]] == ["a--x", "b--x"]
+
+
+def test_verify_exit_codes_for_empty_and_unmatched_selections(tmp_path):
+    import json, logging
+    from types import SimpleNamespace
+    from website_test_pipeline.runner import run_verify
+    flows = tmp_path / "flows.json"
+    flows.write_text(json.dumps({"version": 1, "flows": [_f("a", "verified")]}), encoding="utf-8")
+    settings = SimpleNamespace(flows_file=flows, ratings_file=tmp_path / "r.json", headless=True, navigation_timeout_ms=1000,
+                               intents_file=tmp_path / "i.json")
+    log = logging.getLogger("t")
+    assert run_verify(settings, log, failed_only=True) == 0            # nothing is failing: nothing to run is fine
+    assert run_verify(settings, log, only=["zzz"]) == 2                # a reference that matches nothing is an error
+    flows.write_text(json.dumps({"version": 1, "flows": []}), encoding="utf-8")
+    assert run_verify(settings, log) == 2                              # no flows at all

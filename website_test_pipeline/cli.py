@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents')
     parser.add_argument('--reason', default='', help='flows reject/approve: why (required to reject)')
     parser.add_argument('--status', default=None, help='flows list: only flows with this status')
+    parser.add_argument('--failed-only', action='store_true', help='verify: only flows that are candidate or stale (re-check after a site change)')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--commit', action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
@@ -63,7 +64,7 @@ def main() -> int:
         return 0
     if args.command == 'verify':
         from .runner import run_verify
-        return run_verify(settings, log)
+        return run_verify(settings, log, args.words, args.failed_only)
     if args.command == 'flows':
         from .review import run_flows_command
         return run_flows_command(settings, args.words, args.reason, args.status)

@@ -162,6 +162,8 @@ python -m website_test_pipeline.cli flows drop i-004 --reason "..."  # remove a 
 python -m website_test_pipeline.cli expand                        # sentences -> steps (only new or reworded ones)
 python -m website_test_pipeline.cli expand i-003                  # force one sentence to be rebuilt
 python -m website_test_pipeline.cli verify                        # run every flow in a real browser, record what happened
+python -m website_test_pipeline.cli verify --failed-only            # only flows that are candidate or stale (re-check after a site change)
+python -m website_test_pipeline.cli verify <id-fragment>...        # only the flows whose id contains it
 python -m website_test_pipeline.cli flowgen                       # write a pytest spec for each verified/approved flow
 python -m website_test_pipeline.cli execute                       # run all specs; flow results feed flow_ratings.json
 python -m website_test_pipeline.cli flows list [--status verified]   # every flow, its status and last real run
