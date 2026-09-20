@@ -233,12 +233,22 @@ def prompt_for(site_map_text: str, existing: list[str]) -> str:
     return f"{RULES}\n\nEXISTING\n{shown}\n\n{site_map_text}"
 
 
-def parse_response(raw: str) -> list[dict]:
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", (raw or "").strip(), flags=re.I)
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
+def first_json_object(raw: str):
+    """The first JSON object in a model answer. Models sometimes add prose, a code fence, or a second
+    object after the first; taking the first complete object survives all of those."""
+    text = re.sub(r"^```(?:json)?\s*", "", (raw or "").strip(), flags=re.I)
+    start = text.find("{")
+    if start < 0:
         raise ValueError("no JSON object in model response")
-    data = json.loads(text[start:end + 1])
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+    except ValueError as exc:
+        raise ValueError(f"model response is not valid JSON ({exc})") from exc
+    return obj
+
+
+def parse_response(raw: str) -> list[dict]:
+    data = first_json_object(raw)
     rows = data.get("intents") if isinstance(data, dict) else None
     if not isinstance(rows, list):
         raise ValueError("response has no 'intents' list")

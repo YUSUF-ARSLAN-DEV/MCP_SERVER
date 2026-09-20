@@ -90,7 +90,10 @@ def _rating_line(entry: dict) -> str:
 def render_show(flow: dict, entries: list[dict]) -> str:
     out = [f'{flow["id"]}', f'  goal:     {flow.get("goal", "")}',
            f'  status:   {flow.get("status")}   source: {flow.get("source")}',
-           f'  start:    {flow.get("start_url")}', "  steps:"]
+           f'  start:    {flow.get("start_url")}']
+    if flow.get("intent_id"):
+        out.append(f'  intent:   {flow["intent_id"]} (from the plain-sentence file; the goal above is that sentence)')
+    out.append("  steps:")
     out += [f"    {i}. {describe_step(s)}" for i, s in enumerate(flow.get("steps") or [], 1)]
     predicted = flow.get("outcome") or {}
     out.append(f'  expected: {predicted.get("effect")}' + (f' -> {predicted["to"]}' if predicted.get("to") else ""))

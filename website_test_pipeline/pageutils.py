@@ -118,11 +118,17 @@ OPEN_MENU_SEL = ('.ui-multiselect-menu:visible, .select2-dropdown:visible, '
 def close_menus(page, trigger=None) -> None:
     """Escape, then re-click the trigger, then click a page corner, until no widget
     menu is left open. An open jQuery-UI multiselect menu intercepts the next click,
-    which is why the Search click timed out after a channel was picked."""
-    for attempt in range(3):
+    which is why the Search click timed out after a channel was picked.
+
+    A step that fails (typically the trigger is itself covered by the open menu) must not
+    end the loop: the corner click after it is what finally closes the menu."""
+    for attempt in range(4):
         try:
             if not page.locator(OPEN_MENU_SEL).count():
                 return
+        except Exception:
+            return
+        try:
             if attempt == 0:
                 page.keyboard.press("Escape")
             elif attempt == 1 and trigger is not None:
@@ -131,7 +137,7 @@ def close_menus(page, trigger=None) -> None:
                 page.mouse.click(2, 2)
             page.wait_for_timeout(300)
         except Exception:
-            return
+            continue
 
 
 def pick_option(page, trigger, text: str) -> None:

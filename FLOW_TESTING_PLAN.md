@@ -261,7 +261,7 @@ detail when we reach it.
 | 11b multiselect picks the named option | done, pushed |
 | 11c query-string outcome assertion | done, pushed |
 | 11d intents store + commands + AI sentences | done, pushed |
-| 11e expand sentence -> steps | todo |
+| 11e expand sentence -> steps | done, pushed |
 | 11f sync, safeguards, acceptance, docs | todo |
 | 12 report flows section | todo |
 | 13 staleness + healing | todo |

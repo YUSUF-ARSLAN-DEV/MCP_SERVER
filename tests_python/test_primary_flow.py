@@ -232,3 +232,17 @@ def test_close_menus_noop_when_nothing_open():
     page.open = False
     _close_menus(page)
     assert page.actions == []
+
+
+def test_close_menus_keeps_going_when_the_trigger_click_itself_fails():
+    from website_test_pipeline.explorer import _close_menus
+
+    class _CoveredTrigger:
+        def __init__(self, page): self.page = page
+        def click(self, timeout=None):
+            self.page.actions.append("trigger")
+            raise RuntimeError("the open menu intercepts pointer events")
+
+    page = _MenuPage("corner")
+    _close_menus(page, _CoveredTrigger(page))
+    assert page.actions == ["escape", "trigger", "corner"]      # used to stop after the failed trigger click
