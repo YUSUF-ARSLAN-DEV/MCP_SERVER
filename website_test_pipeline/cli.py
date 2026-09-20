@@ -6,6 +6,7 @@ from playwright.sync_api import sync_playwright
 from .config import Settings
 from .crawler import crawl
 from .explorer import explore
+from .flows import record_flow
 from .generator import generate_spec
 from .llm import ModelClient, diagnose_error
 from .urls import merge_extra_urls, read_urls
@@ -89,6 +90,10 @@ def main() -> int:
             try:
                 context = browser.new_context(); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max, log)
                 (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
+                try:
+                    record_flow(settings.flows_file, url, inventory.primary_flow, log)
+                except Exception as exc:
+                    log.warning('flows: could not record flow for %s (%s)', url, exc)
                 if args.command == 'generate':
                     output = settings.tests_dir/f'{name(url)}_test.py'; generate_spec(client, guide, persona, inventory, output, log=log); manifest['urls'][url] = {'status':'generated','spec':str(output)}
                 else: manifest['urls'][url] = {'status':'explored'}

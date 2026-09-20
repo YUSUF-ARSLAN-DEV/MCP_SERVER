@@ -43,6 +43,7 @@ class Settings:
     workspace: Path = RUNS
     urls_file: Path = RUNS
     seeds_file: Path = RUNS
+    flows_file: Path = RUNS
     tests_dir: Path = RUNS
     artifacts_dir: Path = RUNS
 
@@ -54,6 +55,7 @@ class Settings:
         # operator-supplied URLs (deep links the crawler can't reach with real
         # params, e.g. a map result or a wizard step) merged into `crawl` output.
         object.__setattr__(self, "seeds_file", base / "seeds.txt")
+        object.__setattr__(self, "flows_file", base / "flows.json")
         override = os.getenv("URLS_FILE", "")
         chosen = Path(override) if override and Path(override).is_absolute() else base / "urls.txt"
         object.__setattr__(self, "urls_file", chosen)
