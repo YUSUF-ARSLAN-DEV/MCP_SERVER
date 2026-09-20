@@ -115,7 +115,7 @@ retry loop - the strongest form of the "nothing guessed" rule.
 run `flowgen` on the 8 sat-stg flows, read 2 by hand, `pytest` the flow specs.
 **Commit:** `feat(flows): flowgen - emit validated pytest specs from verified flows`
 
-### Step 9 - Execution results feed the ratings
+### Step 9 - Execution results feed the ratings - DONE
 
 **Why:** "verified" should mean the flow works *and* its generated test passes.
 **Files:** `report.py`/`cli.py` (execute path), `ratings.py` (helper), tests.
@@ -224,7 +224,7 @@ detail when we reach it.
 |------|--------|
 | 1-7 (explorer flows, sitemap, propose, critic/ratings, verify) | done, pushed |
 | 8 flowgen | done, pushed (`flowgen` command; all 8 sat-stg flows emit and pass live) |
-| 9 results feed ratings | todo |
+| 9 results feed ratings | done, pushed (`flowresults.py`, `derive_status`, `stale`) |
 | 10 multi-page hop awareness | todo |
 | 11 human review commands | todo |
 | 12 report flows section | todo |
@@ -249,8 +249,8 @@ detail when we reach it.
 
 1. **Step 8:** truncated (40-char) control names - substring match vs storing the full
    name in `flows.json`. Leaning: store full names going forward, substring for old data.
-2. **Step 9:** should a failing flow *test* demote `verified` immediately, or only after
-   two consecutive failures (flaky-network tolerance)? Leaning: two.
+2. **Step 9 (decided):** a flow goes `stale` after two failed executions in a row (runner or
+   pytest, any mix); one failure is tolerated. `stale` flows keep their spec so the failure stays loud.
 3. **Step 10:** max hop depth is `MAX_STEPS` (8) today; per-site override needed?
 4. **Step 13:** how far may healing go before a human must approve the changed step?
    Leaning: never auto-heal an `approved` flow; propose the change instead.

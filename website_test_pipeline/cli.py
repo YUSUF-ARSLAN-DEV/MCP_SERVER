@@ -66,6 +66,8 @@ def main() -> int:
         return run_propose(settings, urls, ModelClient(settings, log), log)
     if args.command == 'execute':
         result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q'], cwd=settings.root, env=pytest_env)
+        from .flowresults import feed_results
+        feed_results(settings, log)
         return result.returncode
     if args.command == 'report':
         from . import report as report_mod
@@ -81,6 +83,8 @@ def main() -> int:
             if n:
                 log.info('REPAIR regenerated %s page(s); re-running', n)
                 result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
+        from .flowresults import feed_results
+        feed_results(settings, log)
         run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined)
         log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
         for warning in run.warnings:

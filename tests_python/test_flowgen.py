@@ -74,8 +74,9 @@ def test_only_verified_or_approved_flows_are_emitted():
     inv = [_inventory(controls=[SELECT, SEARCH])]
     for status in ("candidate", "rejected"):
         source, reason = emit_flow_spec(_flow(status=status), inv)
-        assert source is None and "verified/approved" in reason
-    assert emit_flow_spec(_flow(status="approved"), inv)[0] is not None
+        assert source is None and "verified/approved/stale" in reason
+    for status in ("approved", "stale"):  # a stale flow keeps its test: failing is the alarm
+        assert emit_flow_spec(_flow(status=status), inv)[0] is not None
 
 
 def test_a_flow_that_was_never_run_or_saw_nothing_is_skipped():

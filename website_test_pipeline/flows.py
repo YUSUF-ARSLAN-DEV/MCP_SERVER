@@ -4,7 +4,8 @@ human wrote them. Explore writes the flows it verified; a human can edit the
 file (goal text, status) and re-exploring never overwrites those edits.
 
 status: candidate (seen but not confirmed) | verified (a probe ran it and saw an
-outcome) | approved / rejected (a human decided - never changed by the tool).
+outcome) | stale (was verified, then failed repeatedly - re-run verify) |
+approved / rejected (a human decided - never changed by the tool).
 """
 from __future__ import annotations
 import json

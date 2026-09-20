@@ -16,7 +16,7 @@ from .explorer import (
 )
 from .flows import HUMAN_STATUSES, describe_step, load_flows, save_flows
 from .pageutils import dismiss_overlays, settle_page
-from .ratings import append_rating, load_ratings, save_ratings
+from .ratings import append_rating, derive_status, load_ratings, save_ratings
 
 _STEP_WAIT_MS = 1200
 _MAX_LIST = 8
@@ -216,8 +216,10 @@ def run_verify(settings, log) -> int:
                 finally:
                     context.close()
                 now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                before = flow.get("status")
                 evaluation = apply_result(flow, result, now)
                 append_rating(ratings, flow["id"], evaluation)
+                flow["status"] = derive_status(before, ratings["ratings"][flow["id"]])
                 verified += evaluation["passed"]
                 log.info("verify: %s -> %s (%s steps, observed %s%s)", flow["id"], flow["status"],
                          evaluation["checks"]["steps_completed"], evaluation["checks"]["observed_effect"],
