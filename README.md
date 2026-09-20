@@ -141,6 +141,54 @@ specs, and it encodes the locator lessons this project paid for:
 a single all-files pass strains the model and produces malformed syntax) and
 always validate generated code before running it.
 
+## Flow testing: user journeys from plain sentences
+
+Page tests check controls; **flows** check journeys (pick a country and a channel, search,
+land on the results). You describe a journey in a plain sentence, the AI turns it into steps
+from the real page DOM, code rejects anything invented, and a browser run must confirm it
+before a test is written. Everything lives in `runs/<site>/`.
+
+```
+intents.json  ->  expand  ->  flows.json  ->  verify  ->  flowgen  ->  tests/flow_*_test.py
+(sentences)      (AI + code)   (steps)         (browser)   (template)    (run with execute)
+```
+
+```powershell
+python -m website_test_pipeline.cli intents                       # AI writes plain sentences from the explored site
+python -m website_test_pipeline.cli flows add Go to the landing page, pick a country and a channel, search
+python -m website_test_pipeline.cli flows intents                 # list sentences: status, and why one could not be built
+python -m website_test_pipeline.cli flows edit i-002 "new wording"   # reword; its flow is rebuilt, its old test removed
+python -m website_test_pipeline.cli flows drop i-004 --reason "..."  # remove a sentence and stop testing it
+python -m website_test_pipeline.cli expand                        # sentences -> steps (only new or reworded ones)
+python -m website_test_pipeline.cli expand i-003                  # force one sentence to be rebuilt
+python -m website_test_pipeline.cli verify                        # run every flow in a real browser, record what happened
+python -m website_test_pipeline.cli flowgen                       # write a pytest spec for each verified/approved flow
+python -m website_test_pipeline.cli execute                       # run all specs; flow results feed flow_ratings.json
+python -m website_test_pipeline.cli flows list [--status verified]   # every flow, its status and last real run
+python -m website_test_pipeline.cli flows show <id>               # steps, expected vs observed, full history
+python -m website_test_pipeline.cli flows approve <id> [--reason ".."]   # a person decides: never overwritten
+python -m website_test_pipeline.cli flows reject <id> --reason ".."      # stops verify and removes its test
+python -m website_test_pipeline.cli flows reset <id>              # hand the flow back to the tool
+```
+
+Rules that keep the generated tests trustworthy:
+
+- **Nothing is guessed.** Every page, control and option in a flow must exist in the explored pages;
+  a "pick" step takes its option from what the explorer saw open. A sentence the site cannot support is
+  marked `unbuildable` with the reason and produces no flow.
+- **Only a real run makes a test.** A built flow starts as `candidate`; `flowgen` writes tests only for
+  `verified` or `approved` flows, and every assertion comes from what `verify` observed (landing URL per
+  step, new headings, the query parameters a search produced).
+- **The sentence is the source of truth.** Reword or drop a sentence and its flow is demoted and its test
+  removed on the next `verify`/`flowgen` until `expand` rebuilds it. Rebuilds never overwrite a flow a
+  person approved or rejected.
+- **History is append-only** (`flow_ratings.json`): who judged (model, runner, pytest, human), when, and
+  why. Two failed runs in a row make a verified flow `stale`; one is tolerated.
+- The AI may not write sentences that need credentials or payment, switch language, or only describe
+  widgets appearing; a person may write anything and takes the responsibility.
+
+None of these commands change the page tests: `generate`, `execute` and `report` work as before.
+
 ## Known limitations
 
 - **No product spec**, so the behavioral layer verifies structure/presence, not

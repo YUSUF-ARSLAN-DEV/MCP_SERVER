@@ -204,3 +204,9 @@ def test_safe_print_survives_a_console_that_cannot_show_the_text(monkeypatch, ca
     safe_print("Search البحث")      # Arabic: not in cp1252, plain print() would raise
     console.flush()
     assert console.buffer.getvalue().startswith(b"Search ")
+
+
+def test_list_says_when_a_flow_is_waiting_for_its_reworded_or_dropped_sentence():
+    flow = dict(_flow(A, "candidate"), intent_state="edited")
+    assert "[sentence edited]" in render_list(_doc(flow), _ratings())
+    assert "[sentence" not in render_list(_doc(_flow(A)), _ratings())

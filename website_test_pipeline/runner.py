@@ -14,7 +14,7 @@ from .explorer import (
     _CONTROL_SEL, _CONTROLS_JS, _HEADINGS_JS, _RESULTS_JS, _RESULTS_SEL,
     _close_menus, _pick_multiselect, _plausible_value, _select_first_real,
 )
-from .flows import HUMAN_STATUSES, describe_step, load_flows, save_flows
+from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
 from .pageutils import dismiss_overlays, pick_option, settle_page
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
 
@@ -211,9 +211,11 @@ def _empty(flow: dict) -> dict:
 
 def run_verify(settings, log) -> int:
     from playwright.sync_api import sync_playwright
+    from .intents import sync_files
+    sync_files(settings, log)                    # a flow whose sentence changed must not be re-verified as-is
     doc = load_flows(settings.flows_file)
     ratings = load_ratings(settings.ratings_file)
-    todo = [f for f in doc["flows"] if f.get("status") != "rejected"]
+    todo = [f for f in doc["flows"] if f.get("status") != "rejected" and not is_blocked(f)]
     if not todo:
         log.error("verify: no flows in %s - run explore or propose first", settings.flows_file)
         return 2

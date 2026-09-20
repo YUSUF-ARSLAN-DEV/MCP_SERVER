@@ -41,7 +41,7 @@ browser by code, not predicted by a model.
 | 6 | Single-click rule | `5bdccd9` | A 1-step flow is valid only if it navigates |
 | 7 | `verify` | `f485186` | `runner.py`: run each flow step by step, snapshot after every step, diff, classify (`navigates`/`results`/`reveals`/`no-visible-change`), compare with the prediction, set `verified`/`candidate`, append a runner rating |
 
-Current commands: `crawl`, `explore`, `generate`, `propose`, `verify`, `flowgen`, `flows`, `execute`, `report`.
+Current commands: `crawl`, `explore`, `generate`, `propose`, `intents`, `expand`, `verify`, `flowgen`, `flows`, `execute`, `report`.
 Real data: `runs/sat-stg.aljazeera.tv/flows.json` (8 flows, all verified) and `flow_ratings.json`.
 
 ### Data shapes (source of truth: `flows.py`, `ratings.py`, `runner.py`)
@@ -262,7 +262,7 @@ detail when we reach it.
 | 11c query-string outcome assertion | done, pushed |
 | 11d intents store + commands + AI sentences | done, pushed |
 | 11e expand sentence -> steps | done, pushed |
-| 11f sync, safeguards, acceptance, docs | todo |
+| 11f sync, safeguards, acceptance, docs | done, pushed |
 | 12 report flows section | todo |
 | 13 staleness + healing | todo |
 | 14 coverage + chain | todo |

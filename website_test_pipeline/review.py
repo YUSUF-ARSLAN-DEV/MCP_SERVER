@@ -58,7 +58,7 @@ def render_list(doc: dict, ratings: dict, status: str | None = None) -> str:
     flows = [f for f in doc["flows"] if status in (None, f.get("status"))]
     if not flows:
         return "no flows" + (f" with status {status}" if status else "")
-    rows = [(f["id"], f.get("status", "?"), last_result(ratings["ratings"].get(f["id"], [])), _clip(f.get("goal", ""), 60))
+    rows = [(f["id"], f.get("status", "?"), last_result(ratings["ratings"].get(f["id"], [])), _clip(f.get("goal", ""), 60) + (f' [sentence {f["intent_state"]}]' if f.get("intent_state") else ""))
             for f in flows]
     widths = [max(len(r[i]) for r in rows + [("ID", "STATUS", "LAST RUN", "")]) for i in range(3)]
     header = f'{"ID":<{widths[0]}}  {"STATUS":<{widths[1]}}  {"LAST RUN":<{widths[2]}}  GOAL'

@@ -75,6 +75,13 @@ def flow_from_primary(start_url: str, primary: dict | None, now: str | None = No
     }
 
 
+def is_blocked(flow: dict) -> bool:
+    """A flow whose plain sentence was edited or dropped since it was built (intent_state, set by
+    intents.sync_flows). It is neither verified nor turned into a test until it is rebuilt from the
+    sentence; a person's own decision on the flow always wins."""
+    return bool(flow.get("intent_state")) and flow.get("status") not in HUMAN_STATUSES
+
+
 def load_flows(path: Path) -> dict:
     if not path.exists():
         return {"version": FLOWS_VERSION, "flows": []}

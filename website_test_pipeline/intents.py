@@ -208,6 +208,59 @@ def needs_expansion(intent: dict) -> bool:
     return intent.get("status") != "dropped" and intent.get("expanded_hash") != sentence_hash(intent["sentence"])
 
 
+# ------------------------------------------------------------------ keeping flows honest
+
+def sync_flows(intents: dict, flows: dict) -> list[tuple[str, str]]:
+    """Make flows built from a sentence follow that sentence. A flow whose sentence was reworded (or
+    dropped) since it was built no longer describes what the sentence says, so it must not keep a
+    verified status or a test: it is marked intent_state=edited|dropped and demoted to candidate until
+    `expand` rebuilds it (a rebuild replaces the flow, which clears the mark). Flows a person approved
+    or rejected keep their status. Returns [(flow id, state)] for flows that changed."""
+    by_intent = {i["id"]: i for i in intents["intents"]}
+    changed = []
+    for flow in flows["flows"]:
+        intent = by_intent.get(flow.get("intent_id"))
+        if intent is None or intent.get("flow_id") != flow["id"]:
+            continue                          # not built from a sentence, or the link moved on
+        if intent.get("status") == "dropped":
+            state = "dropped"
+        elif flow.get("intent_hash") and flow["intent_hash"] != sentence_hash(intent["sentence"]):
+            state = "edited"
+        else:
+            state = ""
+        if state == (flow.get("intent_state") or ""):
+            continue
+        if state:
+            flow["intent_state"] = state
+            if flow.get("status") not in {"approved", "rejected"}:
+                flow["status"] = "candidate"
+        else:
+            flow.pop("intent_state", None)
+        changed.append((flow["id"], state or "cleared"))
+    return changed
+
+
+def sync_files(settings, log=None) -> None:
+    """Best effort, used before verify and flowgen: a broken or missing intents file changes nothing."""
+    from .flows import FlowsFileError, load_flows, save_flows
+    path = getattr(settings, "intents_file", None)
+    if path is None or not path.exists():
+        return
+    try:
+        intents = load_intents(path)
+        flows = load_flows(settings.flows_file)
+    except (IntentsFileError, FlowsFileError) as exc:
+        if log:
+            log.warning("intents: not syncing flows with the sentence file (%s)", exc)
+        return
+    changed = sync_flows(intents, flows)
+    if changed:
+        save_flows(settings.flows_file, flows)
+        for flow_id, state in changed:
+            if log:
+                log.info("intents: flow %s -> sentence %s", flow_id, state)
+
+
 # ------------------------------------------------------------------ rendering
 
 def render_intents(doc: dict) -> str:

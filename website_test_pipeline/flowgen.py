@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlsplit
 
 from .explorer import _plausible_value
-from .flows import FlowsFileError, _slug, load_flows
+from .flows import FlowsFileError, _slug, is_blocked, load_flows
 from .runner import _path
 from .sitemap import load_inventories
 from .validator import SpecError, validate_python_spec, _norm
@@ -245,6 +245,8 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
     """(python source, '') for an emittable flow, else (None, reason)."""
     if flow.get("status") not in EMITTABLE:
         return None, f"status is {flow.get('status')!r} - only verified/approved/stale flows become tests"
+    if is_blocked(flow):
+        return None, f'its sentence was {flow["intent_state"]} since this flow was built - run `expand` to rebuild it'
     observed = flow.get("observed")
     if not observed:
         return None, "never run - run `verify` first"
@@ -331,6 +333,8 @@ def _stale_generated(tests_dir: Path, keep: set[str]) -> list[Path]:
 
 
 def run_flowgen(settings, log) -> int:
+    from .intents import sync_files
+    sync_files(settings, log)                    # so a reworded or dropped sentence removes its stale test
     try:
         doc = load_flows(settings.flows_file)
     except FlowsFileError as exc:
