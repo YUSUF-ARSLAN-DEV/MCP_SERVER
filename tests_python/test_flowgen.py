@@ -100,11 +100,20 @@ def test_a_step_can_carry_its_own_role():
     assert emit_flow_spec(flow, [_inventory(controls=[SELECT])])[0] is not None
 
 
-def test_multiselect_steps_are_skipped_for_now():
+def test_a_multiselect_step_picks_the_named_option_through_the_shared_helper():
     flow = _flow()
-    flow["steps"][0] = {"kind": "multiselect", "selector": "#ch", "name": "Channel", "value": "Al Jazeera"}
-    source, reason = emit_flow_spec(flow, [_inventory(controls=[SEARCH])])
-    assert source is None and "multiselect" in reason
+    flow["steps"][1] = {"kind": "multiselect", "selector": None, "name": "Search", "value": "Al Jazeera 2"}
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert reason == ""
+    assert "pick_option(page, control, 'Al Jazeera 2')" in source
+    assert "import open_page, pick_option" in source
+
+
+def test_a_multiselect_step_with_no_option_is_skipped_not_guessed():
+    flow = _flow()
+    flow["steps"][1] = {"kind": "multiselect", "selector": None, "name": "Search", "value": None}
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert source is None and "no option to pick" in reason
 
 
 def test_long_names_match_by_prefix_because_flows_store_them_cut():

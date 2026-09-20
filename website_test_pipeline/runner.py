@@ -15,7 +15,7 @@ from .explorer import (
     _close_menus, _pick_multiselect, _plausible_value, _select_first_real,
 )
 from .flows import HUMAN_STATUSES, describe_step, load_flows, save_flows
-from .pageutils import dismiss_overlays, settle_page
+from .pageutils import dismiss_overlays, pick_option, settle_page
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
 
 _STEP_WAIT_MS = 1200
@@ -152,6 +152,8 @@ def _do_step(page, step: dict) -> None:
             raise RuntimeError("no selectable option")
     elif kind == "fill":
         loc.fill(str(step.get("value") or _plausible_value({})), timeout=2000)
+    elif kind == "multiselect" and step.get("value"):
+        pick_option(page, loc, str(step["value"]))   # open the widget and pick the NAMED option
     elif kind == "multiselect":
         try:
             loc.click(timeout=2000)

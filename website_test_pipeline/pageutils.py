@@ -109,3 +109,47 @@ def _wait_gone(page) -> None:
                 container.first.wait_for(state="hidden", timeout=1500)
         except Exception:
             pass
+
+
+OPEN_MENU_SEL = ('.ui-multiselect-menu:visible, .select2-dropdown:visible, '
+                  '.select2-results:visible, [class*="dropdown-menu"]:visible')
+
+
+def close_menus(page, trigger=None) -> None:
+    """Escape, then re-click the trigger, then click a page corner, until no widget
+    menu is left open. An open jQuery-UI multiselect menu intercepts the next click,
+    which is why the Search click timed out after a channel was picked."""
+    for attempt in range(3):
+        try:
+            if not page.locator(OPEN_MENU_SEL).count():
+                return
+            if attempt == 0:
+                page.keyboard.press("Escape")
+            elif attempt == 1 and trigger is not None:
+                trigger.click(timeout=1000)
+            else:
+                page.mouse.click(2, 2)
+            page.wait_for_timeout(300)
+        except Exception:
+            return
+
+
+def pick_option(page, trigger, text: str) -> None:
+    """Open a dropdown / checkbox-menu widget and pick the option whose text contains `text`.
+
+    Used by both the flow runner and the generated flow specs, so a spec does exactly what
+    the run that verified the flow did. Falls back to the widget's underlying <select multiple>
+    when the menu will not open on a synthetic click. Raises if the option does not exist."""
+    trigger.click(timeout=3000)
+    page.wait_for_timeout(700)
+    option = page.locator(OPEN_MENU_SEL).first.locator('li label, li [role="option"], li a').filter(has_text=text).first
+    if option.count():
+        option.click(timeout=2000)
+        close_menus(page, trigger)
+        return
+    close_menus(page, trigger)
+    native = page.locator("select[multiple]").first
+    if native.count():
+        native.select_option(label=text, timeout=2000)
+        return
+    raise RuntimeError(f'option "{text}" not found in the opened menu')

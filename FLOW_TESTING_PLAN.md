@@ -164,6 +164,31 @@ rejected. **Commit:** `feat(flows): hop-aware runner and specs for multi-page jo
 **Verify:** unit tests; approve/reject one real flow and confirm `flowgen` respects it.
 **Commit:** `feat(flows): flows list/show/approve/reject with recorded reasons`
 
+### Steps 11b-11f - The intent track: plain sentences first
+
+Added 2026-09-20 after Step 11. A human should not write steps like a machine. The
+starting point becomes a file of **plain sentences** (`runs/<site>/intents.json`) that the
+AI populates first and a person can add to or edit. A second AI pass expands each
+sentence into concrete steps from the page DOM; code rejects anything invented; `verify`
+and `flowgen` then work exactly as before. The sentence stays the source of truth, so a
+broken step can be re-expanded from it.
+
+```
+intents.json (sentences) -> expand (AI + code validation) -> flows.json (candidate)
+   -> verify (real browser) -> flowgen (only verified/approved) -> pytest
+```
+
+Guarantees that keep it safe: new files/commands only (existing commands ignore intents);
+expanded flows enter as `candidate` and need a real verified run; a flow that cannot be
+built records why on its intent instead of producing a weak test; editing a sentence
+demotes its flow so a stale test is never kept.
+
+- **11b** multiselect actually picks the named option (runner + `flowgen`, shared `pick_option`). The old runner only opened the menu.
+- **11c** stronger outcome assertion: query-string parameters the run observed after a navigation.
+- **11d** `intents.json` store, `flows add/edit/drop/intents`, and `intents` (AI writes the sentences).
+- **11e** `expand`: sentence -> steps (reuses `validate_flow` + critic), links `intent_id` to the flow, records why on failure.
+- **11f** sync + safeguards (edited sentence demotes its flow), end-to-end acceptance run, docs.
+
 ### Step 12 - Report: a Flows section
 
 **Why:** flow results should be readable next to the page reports.
@@ -233,6 +258,11 @@ detail when we reach it.
 | &nbsp;&nbsp;10c flowgen asserts every hop URL | done, pushed |
 | &nbsp;&nbsp;10d propose encourages cross-page chains | done, pushed |
 | 11 human review commands | done, pushed (`flows list/show/approve/reject/reset`, `review.py`) |
+| 11b multiselect picks the named option | done, pushed |
+| 11c query-string outcome assertion | todo |
+| 11d intents store + commands + AI sentences | todo |
+| 11e expand sentence -> steps | todo |
+| 11f sync, safeguards, acceptance, docs | todo |
 | 12 report flows section | todo |
 | 13 staleness + healing | todo |
 | 14 coverage + chain | todo |
@@ -247,7 +277,7 @@ detail when we reach it.
 
 ## Known limits of Step 8 (carry into later steps)
 
-- `multiselect` steps are not emitted yet (each widget picks options differently); such flows are skipped with a logged reason.
+- (Resolved in 11b) multiselect steps are emitted via the shared `pick_option` helper; a multiselect with no named option is still skipped.
 - A step's control role is read from the explored pages (or an optional `role` on the step); if it cannot be told, the flow is skipped, never guessed. Step 10 should have `propose`/`verify` store `role` on steps.
 - (Resolved in 10c) a mid-flow hop used to be asserted as "body visible"; runs that recorded `step_urls` now assert every hop's landing URL. Flows verified before 10a keep the old behaviour until re-verified.
 

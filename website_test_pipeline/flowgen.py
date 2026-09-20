@@ -174,7 +174,9 @@ def _step_action(step: dict, var: str) -> tuple[str | None, str]:
     if kind == "fill":
         return f"{var}.fill({_lit(str(step.get('value') or _plausible_value({})))})", ""
     if kind == "multiselect":
-        return None, "multiselect steps are not emitted yet (each widget picks options differently)"
+        if not step.get("value"):
+            return None, "a multiselect step names no option to pick"
+        return f"pick_option(page, {var}, {_lit(str(step['value']))})", ""
     if kind in {"click", "submit"}:
         return (f'{var}.press("Enter")' if step.get("value") == "press Enter" else f"{var}.click()"), ""
     return None, f"unknown step kind {kind!r}"
@@ -282,7 +284,7 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
         MARKER, f"# Flow {flow['id']}: {goal}", "import re", "from pathlib import Path", "",
         "from playwright.sync_api import Page, expect",
         "from website_test_pipeline.evidence import action_evidence, observation_evidence",
-        "from website_test_pipeline.pageutils import open_page", "",
+        "from website_test_pipeline.pageutils import open_page, pick_option", "",
         f"URL = {_lit(flow['start_url'])}", "", "",
         "def _open(page: Page) -> None:", "    open_page(page, URL)", "", "",
         f"def {spec_test_name(flow)}(page: Page, evidence_dir: Path) -> None:", "    _open(page)", *body, "",

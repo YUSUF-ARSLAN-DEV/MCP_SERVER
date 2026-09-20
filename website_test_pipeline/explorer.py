@@ -4,6 +4,8 @@ from .models import PageInventory
 from .pageutils import (
     _ACCEPT_NAMES,
     _CLOSE_NAMES,
+    OPEN_MENU_SEL as _OPEN_MENU_SEL,
+    close_menus as _close_menus,
     dismiss_overlays,
     prime_lazy_content,
     settle_page,
@@ -584,29 +586,6 @@ def _plausible_value(control: dict) -> str:
         "email": "test@example.com", "tel": "0123456789", "number": "1",
         "date": "2025-01-01", "search": "a",
     }.get(typ, "test")
-
-
-_OPEN_MENU_SEL = ('.ui-multiselect-menu:visible, .select2-dropdown:visible, '
-                  '.select2-results:visible, [class*="dropdown-menu"]:visible')
-
-
-def _close_menus(page, trigger=None) -> None:
-    """Escape, then re-click the trigger, then click a page corner, until no widget
-    menu is left open. An open jQuery-UI multiselect menu intercepts the next click,
-    which is why the Search click timed out after a channel was picked."""
-    for attempt in range(3):
-        try:
-            if not page.locator(_OPEN_MENU_SEL).count():
-                return
-            if attempt == 0:
-                page.keyboard.press("Escape")
-            elif attempt == 1 and trigger is not None:
-                trigger.click(timeout=1000)
-            else:
-                page.mouse.click(2, 2)
-            page.wait_for_timeout(300)
-        except Exception:
-            return
 
 
 def _pick_multiselect(page, control: dict) -> str | None:
