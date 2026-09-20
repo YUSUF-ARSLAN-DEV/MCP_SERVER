@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qsl, urlsplit
 
 from .explorer import _plausible_value
 from .flows import FlowsFileError, _slug, load_flows
@@ -29,6 +30,8 @@ _TAG_ROLE = {"button": "button", "a": "link", "textarea": "textbox"}
 _INPUT_ROLE = {"checkbox": "checkbox", "radio": "radio", "button": "button", "submit": "button"}
 _NAME_CUT = 40          # flows store control names cut to 40 chars
 _MAX_HEADINGS = 2
+_MAX_PARAMS = 3
+_VOLATILE_PARAM = re.compile(r"^(utm_|_ga|fbclid|gclid|sid$|session|token|nonce|ts$|time|cb$|rand|_$)", re.I)
 
 
 # ------------------------------------------------------------------ small helpers
@@ -122,6 +125,19 @@ def _stable_headings(observed: dict) -> list[str]:
 
 # ------------------------------------------------------------------ outcome assertions
 
+def _query_expects(url: str) -> list[str]:
+    """A navigation that only changes the query string (a search form posting ?country=...) proves
+    nothing with a path check, since the path did not change. The parameters the run observed do:
+    assert each one is present with a value. Names only, never values (they can rotate), and
+    never tracking/session parameters."""
+    keys = []
+    for key, value in parse_qsl(urlsplit(url).query, keep_blank_values=False):
+        if value and not _VOLATILE_PARAM.match(key) and key not in keys:
+            keys.append(key)
+    return [f"expect(page).to_have_url(re.compile({_re_lit('[?&]' + re.escape(key) + '=[^&]')}))"
+            for key in keys[:_MAX_PARAMS]]
+
+
 def _outcome_expects(flow: dict, pool: list[dict]) -> tuple[list[str], list[dict], str]:
     """(expect(...) expressions, synthetic controls the validator must know, reason if none).
     Everything here is read from flow['observed']."""
@@ -139,6 +155,8 @@ def _outcome_expects(flow: dict, pool: list[dict]) -> tuple[list[str], list[dict
             exprs.append(f"expect(page.locator({_lit(key)}).first).to_be_visible()")
             extra.append({"results": key})
             break
+    if observed["effect"] == "navigates":
+        exprs += _query_expects(observed.get("url") or "")
     if not exprs and observed["effect"] == "reveals":
         for entry in observed.get("new_controls") or []:
             tag, _, name = entry.partition(":")

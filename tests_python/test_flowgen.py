@@ -180,7 +180,7 @@ def test_a_navigation_in_the_middle_is_not_asserted_with_a_guessed_url():
     source, _ = emit_flow_spec(flow, [_inventory(controls=[SEARCH])])
     # the hop at step 1 and the step after it happen on a page whose URL the run did not record
     assert source.count('expect(page.locator("body")).to_be_visible()') == 2
-    assert source.count("to_have_url") == 1                                   # only the last hop's landing URL is known
+    assert source.count("?#].*)?$") == 1                                      # only the last hop's landing URL is known
 
 
 def test_run_flowgen_writes_specs_and_removes_only_stale_generated_ones(tmp_path):
@@ -232,4 +232,35 @@ def test_a_run_with_a_different_number_of_step_urls_falls_back_to_the_old_behavi
     flow = _flow()
     flow["observed"]["step_urls"] = ["https://x.test/en/results"]   # 1 url for 2 steps: not trustworthy
     source, reason = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
-    assert reason == "" and source.count("to_have_url") == 1
+    assert reason == "" and source.count("?#].*)?$") == 1
+
+
+def test_a_navigation_asserts_the_query_parameters_the_run_observed():
+    flow = _flow()
+    flow["observed"]["url"] = "https://x.test/en/results?country=Afghanistan&channels=AJ%202&utm_source=x&empty="
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert reason == ""
+    assert '[?&]country=[^&]' in source and '[?&]channels=[^&]' in source
+    assert "utm_source" not in source and "empty" not in source   # tracking and blank parameters are not asserted
+
+
+def test_query_parameter_values_are_never_asserted_only_their_presence():
+    flow = _flow()
+    flow["observed"]["url"] = "https://x.test/en/results?country=Afghanistan"
+    source, _ = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert "country=Afghanistan" not in source
+
+
+def test_a_flow_without_a_query_string_gets_no_parameter_assertions():
+    flow = _flow()
+    flow["observed"]["url"] = "https://x.test/en/results"
+    source, _ = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert "[?&]" not in source
+
+
+def test_a_reveals_flow_does_not_get_query_assertions():
+    flow = _flow(outcome={"effect": "reveals"})
+    flow["observed"].update(effect="reveals", url="https://x.test/en?a=1", new_headings=["Passcode"],
+                            step_effects=["no-visible-change", "reveals"])
+    source, _ = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert "[?&]" not in source

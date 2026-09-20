@@ -259,7 +259,7 @@ detail when we reach it.
 | &nbsp;&nbsp;10d propose encourages cross-page chains | done, pushed |
 | 11 human review commands | done, pushed (`flows list/show/approve/reject/reset`, `review.py`) |
 | 11b multiselect picks the named option | done, pushed |
-| 11c query-string outcome assertion | todo |
+| 11c query-string outcome assertion | done, pushed |
 | 11d intents store + commands + AI sentences | todo |
 | 11e expand sentence -> steps | todo |
 | 11f sync, safeguards, acceptance, docs | todo |
