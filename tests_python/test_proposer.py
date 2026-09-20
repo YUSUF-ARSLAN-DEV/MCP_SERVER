@@ -42,7 +42,7 @@ def test_valid_flow_becomes_a_candidate_with_full_start_url():
     assert flow["start_url"] == "https://x.test/en"
     assert [s["kind"] for s in flow["steps"]] == ["select", "click"]
     assert flow["outcome"] == {"effect": "navigates", "to": "/en/find"}
-    assert flow["proposed_by"] == {"model": "m", "prompt_version": "propose-v1"}
+    assert flow["proposed_by"] == {"model": "m", "prompt_version": "propose-v2"}
 
 def test_unknown_control_rejects_the_whole_flow():
     bad = _flow(steps=[{"page": "/en", "action": "click", "target": "Buy now"}, {"page": "/en", "action": "click", "target": "Search"}])
@@ -141,3 +141,37 @@ def test_pick_on_a_real_select_is_stored_as_select():
                         {"page": "/en", "action": "click", "target": "Search"}])
     accepted, _ = propose([pick], INVS, [])
     assert accepted[0]["steps"][0]["kind"] == "select"
+
+
+def test_a_flow_may_chain_pages_the_site_map_links_in_that_direction():
+    chain = _flow(steps=[{"page": "/en", "action": "click", "target": "Search"},
+                         {"page": "/en/find", "action": "click", "target": "Subscribe Now"}],
+                  outcome={"type": "reveals_panel"})
+    accepted, rejected = propose([chain], INVS, [])
+    assert not rejected and [s["page"] for s in accepted[0]["steps"]] == ["/en", "/en/find"]
+
+
+def test_a_chain_across_pages_the_map_does_not_link_is_rejected():
+    backwards = _flow(start_path="/en/find",
+                      steps=[{"page": "/en/find", "action": "click", "target": "Subscribe Now"},
+                             {"page": "/en", "action": "click", "target": "Search"}],
+                      outcome={"type": "reveals_panel"})
+    accepted, rejected = propose([backwards], INVS, [])
+    assert not accepted and "no link between them" in rejected[0][1]
+
+
+def test_a_shared_nav_link_counts_as_a_link_from_every_page():
+    nav = {"tag": "a", "name": "Home", "href": "/en", "region": "chrome"}
+    home = dict(HOME, controls=HOME["controls"] + [nav])
+    find = dict(FIND, controls=FIND["controls"] + [nav])
+    back = _flow(start_path="/en/find",
+                 steps=[{"page": "/en/find", "action": "click", "target": "Subscribe Now"},
+                        {"page": "/en", "action": "click", "target": "Search"}],
+                 outcome={"type": "reveals_panel"})
+    accepted, _ = propose([back], [home, find], [])
+    assert len(accepted) == 1
+
+
+def test_the_prompt_tells_the_model_it_may_chain_linked_pages():
+    text = prompt_for("SITE MAP (1 pages explored)")
+    assert "may cross pages" in text and "LINKS or NAV" in text

@@ -12,7 +12,7 @@ from .flows import FlowsFileError, flow_id, load_flows, merge_flow, describe_ste
 from .ratings import RatingsFileError, append_rating, load_ratings, save_ratings
 from .sitemap import build_site_map, load_inventories, render_site_map
 
-PROMPT_VERSION = "propose-v1"
+PROMPT_VERSION = "propose-v2"
 MAX_FLOWS = 6
 MAX_STEPS = 8
 MIN_STEPS = 2
@@ -30,6 +30,9 @@ RULES = (
     "Rules:\n"
     "- Use ONLY pages and controls listed in the SITE MAP. Copy control names exactly as written there.\n"
     "- Every step names the page it happens on (its path, e.g. /en/find).\n"
+    "- A flow may cross pages: after a step that navigates, the next step happens on the destination page. "
+    "Chain pages only in the direction the SITE MAP's LINKS or NAV connect them (e.g. /a then /b then /c only if "
+    "/a links to /b and /b links to /c), and name each step's own page.\n"
     "- Step actions: click | select | fill | pick (pick = choose an option in a dropdown or checkbox menu). "
     "select/fill/pick may carry a value; leave it out if unsure.\n"
     "- Outcomes: navigates (give to_path) | shows_results | shows_validation | reveals_panel.\n"
@@ -108,8 +111,14 @@ def _check_step(step: dict, index: dict, pages: set[str]) -> tuple[dict | None, 
             "name": (control.get("name") or str(step.get("target")))[:40], "value": value}, ""
 
 
-def validate_flow(raw: dict, index: dict, pages: set[str],
-                  linked: frozenset = frozenset()) -> tuple[list[dict] | None, dict | None, str]:
+def _transitions(edges: list[dict], nav: list[dict]) -> tuple[frozenset, frozenset]:
+    """(page, page) pairs the site map links, and pages every page links to through shared nav."""
+    return (frozenset((_page_key(e["from"]), _page_key(e["to"])) for e in edges),
+            frozenset(_page_key(n["to"]) for n in nav))
+
+
+def validate_flow(raw: dict, index: dict, pages: set[str], linked: frozenset = frozenset(),
+                  transitions: tuple[frozenset, frozenset] | None = None) -> tuple[list[dict] | None, dict | None, str]:
     """(steps, outcome, '') when every step and the outcome exist on the site; else (None, None, reason)."""
     goal, steps_in = str(raw.get("goal") or "").strip(), raw.get("steps")
     if not goal or not isinstance(steps_in, list) or not 1 <= len(steps_in) <= MAX_STEPS:
@@ -121,6 +130,11 @@ def validate_flow(raw: dict, index: dict, pages: set[str],
         step, reason = _check_step(s if isinstance(s, dict) else {}, index, pages)
         if step is None:
             return None, None, reason
+        if transitions is not None and steps and step["page"] != steps[-1]["page"]:
+            pairs, nav_targets = transitions
+            if (steps[-1]["page"], step["page"]) not in pairs and step["page"] not in nav_targets:
+                return None, None, (f'step on {step["page"]} follows a step on {steps[-1]["page"]}, '
+                                    "but the site map shows no link between them")
         steps.append(step)
     outcome_in = raw.get("outcome") if isinstance(raw.get("outcome"), dict) else {}
     effect = _OUTCOMES.get(outcome_in.get("type"))
@@ -150,13 +164,15 @@ def propose(raw_flows: list[dict], inventories: list[dict], existing: list[dict]
     """Validate the model's flows. Returns (accepted flow entries, [(goal, reason)] rejected)."""
     index = _index(inventories)
     pages = set(index)
-    linked = frozenset(_page_key(e["to"]) for e in build_site_map(inventories)["edges"])
+    site_map = build_site_map(inventories)
+    linked = frozenset(_page_key(e["to"]) for e in site_map["edges"])
+    transitions = _transitions(site_map["edges"], site_map["nav"])
     url_of = {_page_key(re.sub(r"^https?://[^/]+", "", i.get("url", ""))): i.get("url", "") for i in inventories}
     seen = {_signature(f.get("steps") or []) for f in existing}
     accepted, rejected = [], []
     for raw in raw_flows[:MAX_FLOWS]:
         goal = str(raw.get("goal") or "(no goal)")[:120]
-        steps, outcome, reason = validate_flow(raw, index, pages, linked)
+        steps, outcome, reason = validate_flow(raw, index, pages, linked, transitions)
         if steps is None:
             rejected.append((goal, reason))
             continue
