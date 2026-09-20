@@ -83,3 +83,11 @@ def test_corrupt_file_is_refused_not_overwritten(tmp_path):
     with pytest.raises(FlowsFileError):
         record_flow(path, _URL, _PRIMARY)
     assert path.read_text(encoding="utf-8") == "{ not json"
+
+
+def test_describe_step_never_prints_none_for_a_step_with_no_value():
+    from website_test_pipeline.flows import describe_step
+    assert describe_step({"kind": "select", "selector": "#c"}) == "select the first real option in #c"
+    assert describe_step({"kind": "fill", "name": "Email"}) == 'fill "Email"'
+    assert describe_step({"kind": "multiselect", "name": "Channel"}) == 'pick an option in "Channel"'
+    assert describe_step({"kind": "select", "selector": "#c", "value": "Egypt"}) == 'select "Egypt" in #c'

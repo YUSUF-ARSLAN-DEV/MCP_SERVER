@@ -40,11 +40,11 @@ def _target(step: dict) -> str:
 def describe_step(step: dict) -> str:
     kind, value = step.get("kind"), step.get("value")
     if kind == "select":
-        return f'select "{value}" in {_target(step)}'
+        return f'select "{value}" in {_target(step)}' if value else f'select the first real option in {_target(step)}'
     if kind == "fill":
-        return f'fill "{value}" in {_target(step)}'
+        return f'fill "{value}" in {_target(step)}' if value else f'fill {_target(step)}'
     if kind == "multiselect":
-        return f'pick "{value}" in {_target(step)}'
+        return f'pick "{value}" in {_target(step)}' if value else f'pick an option in {_target(step)}'
     if kind == "submit":
         return f'{value} in {_target(step)}' if value == "press Enter" else f'click {_target(step)}'
     if kind == "click":

@@ -189,7 +189,7 @@ demotes its flow so a stale test is never kept.
 - **11e** `expand`: sentence -> steps (reuses `validate_flow` + critic), links `intent_id` to the flow, records why on failure.
 - **11f** sync + safeguards (edited sentence demotes its flow), end-to-end acceptance run, docs.
 
-### Step 12 - Report: a Flows section
+### Step 12 - Report: a Flows section - DONE
 
 **Why:** flow results should be readable next to the page reports.
 **Files:** `report.py`, tests.
@@ -263,7 +263,7 @@ detail when we reach it.
 | 11d intents store + commands + AI sentences | done, pushed |
 | 11e expand sentence -> steps | done, pushed |
 | 11f sync, safeguards, acceptance, docs | done, pushed |
-| 12 report flows section | todo |
+| 12 report flows section | done, pushed (`flowreport.py`, User flows section, failure attribution) |
 | 13 staleness + healing | todo |
 | 14 coverage + chain | todo |
 | 15 docs | todo |

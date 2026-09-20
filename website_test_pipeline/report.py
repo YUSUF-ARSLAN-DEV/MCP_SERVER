@@ -22,6 +22,11 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from .flowgen import file_name as flow_spec_name
+from .flowreport import FlowReport, build_flow_report
+from .flows import FlowsFileError, load_flows
+from .ratings import RatingsFileError, load_ratings
+
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 ATTACH_EXTS = {".webm", ".zip"}
 
@@ -99,25 +104,40 @@ class RunReport:
     started_at: str = ""
     finished_at: str = ""
     url_reports: list[UrlReport] = field(default_factory=list)
+    flow_reports: list[FlowReport] = field(default_factory=list)   # every flow; those with tested=False were not run
+    notes: list[str] = field(default_factory=list)                 # things that happened while writing the documents
+
+    @property
+    def tested_flows(self) -> list[FlowReport]:
+        return [f for f in self.flow_reports if f.tested]
+
+    @property
+    def untested_flows(self) -> list[FlowReport]:
+        return [f for f in self.flow_reports if not f.tested]
+
+    def flows_at(self, url: str) -> list[FlowReport]:
+        return [f for f in self.tested_flows if f.start_url == url]
 
     @property
     def total(self) -> int:
-        return sum(u.total for u in self.url_reports)
+        return sum(u.total for u in self.url_reports) + len(self.tested_flows)
 
     @property
     def passed(self) -> int:
-        return sum(u.passed for u in self.url_reports)
+        return sum(u.passed for u in self.url_reports) + sum(f.passed for f in self.tested_flows)
 
     @property
     def failed(self) -> int:
-        return sum(u.failed for u in self.url_reports)
+        return sum(u.failed for u in self.url_reports) + sum(f.failed for f in self.tested_flows)
 
     @property
     def warnings(self) -> list[str]:
         out: list[str] = []
         for u in self.url_reports:
             out.extend(f"[{u.url}] {w}" for w in u.warnings)
-        return out
+        for f in self.tested_flows:
+            out.extend(f"[flow] {w}" for w in f.warnings)
+        return out + self.notes
 
 
 # ----------------------------------------------------------------------- assertions
@@ -173,39 +193,87 @@ def _pw_slug(nodeid: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", nodeid.lower()).strip("-")
 
 
-def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "") -> RunReport:
+def _row_file(row: dict) -> str:
+    return str(row.get("nodeid", "")).split("::")[0].replace(chr(92), "/").rsplit("/", 1)[-1]
+
+
+def _make_outcome(row: dict, url: str, spec_path: str | None, artifacts_dir: Path) -> TestOutcome:
+    spec = Path(spec_path) if spec_path else None
+    title = row.get("nodeid", "").split("::")[-1].split("[")[0]
+    return TestOutcome(
+        nodeid=row.get("nodeid", ""),
+        title=row.get("title") or title,
+        url=url,
+        status=row.get("status", "error"),
+        duration=float(row.get("duration") or 0.0),
+        error=row.get("error"),
+        assertions=assertions_for(spec, title) if spec and spec.exists() else [],
+        evidence=_find_images(artifacts_dir / "evidence" / _slug(row.get("nodeid", ""))),
+        attachments=_find_attachments(artifacts_dir / "pw", _pw_slug(row.get("nodeid", ""))),
+    )
+
+
+def _worst(rows: list[dict]) -> dict:
+    """One test per flow; if several rows exist a failure is never hidden by a pass."""
+    order = {"failed": 0, "error": 0, "passed": 1}
+    return sorted(rows, key=lambda r: order.get(r.get("status", ""), 2))[0]
+
+
+def _flow_reports(results: dict, tests_dir: Path, artifacts_dir: Path, flows_file: Path | None,
+                  ratings_file: Path | None) -> tuple[list[FlowReport], set[str]]:
+    """(one FlowReport per flow, nodeids of the tests that belong to a flow). A missing or unreadable
+    flows/ratings file means no flow reports at all, so a flow test then stays an ordinary test."""
+    try:
+        flows = load_flows(flows_file)["flows"] if flows_file and flows_file.exists() else []
+        ratings = load_ratings(ratings_file)["ratings"] if ratings_file and ratings_file.exists() else {}
+    except (FlowsFileError, RatingsFileError):
+        return [], set()
+    by_file = {flow_spec_name(f): f for f in flows}
+    rows_by_flow: dict[str, list[dict]] = {}
+    for row in results.get("tests", []):
+        flow = by_file.get(_row_file(row))
+        if flow is not None and row.get("status") in {"passed", "failed", "error", "skipped"}:
+            rows_by_flow.setdefault(flow["id"], []).append(row)
+    reports = []
+    for flow in sorted(flows, key=lambda f: (f.get("start_url", ""), f["id"])):
+        rows = rows_by_flow.get(flow["id"])
+        outcome = None
+        if rows:
+            row = _worst(rows)
+            outcome = _make_outcome(row, flow.get("start_url", ""), _guess_spec(row.get("nodeid", ""), tests_dir), artifacts_dir)
+        reports.append(build_flow_report(flow, ratings.get(flow["id"], []), outcome))
+    return reports, {r.get("nodeid") for rows in rows_by_flow.values() for r in rows}
+
+
+def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: Path | None = None,
+             ratings_file: Path | None = None) -> RunReport:
     results = json.loads((artifacts_dir / "test_results.json").read_text(encoding="utf-8"))
     manifest = _maybe_json(artifacts_dir / "run.json")
+    workspace = artifacts_dir.parent
+    flow_reports, flow_nodeids = _flow_reports(
+        results, tests_dir, artifacts_dir, flows_file or workspace / "flows.json", ratings_file or workspace / "flow_ratings.json")
 
     generated = {url: info.get("status") for url, info in (manifest.get("urls") or {}).items()}
     specs = {url: info.get("spec") for url, info in (manifest.get("urls") or {}).items()}
 
     by_url: dict[str, UrlReport] = {}
     for row in results.get("tests", []):
+        if row.get("nodeid") in flow_nodeids:
+            continue                                   # a flow's test is reported in the flows section
         url = row.get("url") or "(unknown url)"
         report = by_url.setdefault(url, UrlReport(url=url))
         report.spec_path = _resolve_spec(specs.get(url), row.get("nodeid", ""), tests_dir)
         report.generated_status = generated.get(url)
-
-        spec = Path(report.spec_path) if report.spec_path else None
-        title = row.get("nodeid", "").split("::")[-1].split("[")[0]
-        outcome = TestOutcome(
-            nodeid=row.get("nodeid", ""),
-            title=row.get("title") or title,
-            url=url,
-            status=row.get("status", "error"),
-            duration=float(row.get("duration") or 0.0),
-            error=row.get("error"),
-            assertions=assertions_for(spec, title) if spec and spec.exists() else [],
-            evidence=_find_images(artifacts_dir / "evidence" / _slug(row.get("nodeid", ""))),
-            attachments=_find_attachments(artifacts_dir / "pw", _pw_slug(row.get("nodeid", ""))),
-        )
-        report.outcomes.append(outcome)
+        report.outcomes.append(_make_outcome(row, url, report.spec_path, artifacts_dir))
 
     # generated specs that produced no test rows at all
     for url, status in generated.items():
         if status == "generated" and url not in by_url:
             by_url[url] = UrlReport(url=url, spec_path=specs.get(url), generated_status=status)
+    # a flow that ran starts on a page: make sure that page gets a document even if it has no page tests
+    for flow in flow_reports:
+        if flow.tested and flow.start_url not in by_url:
+            by_url[flow.start_url] = UrlReport(url=flow.start_url)
 
     run = RunReport(
         base_url=_common_prefix([u for u in by_url]),
@@ -213,6 +281,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "") -> RunReport
         started_at=manifest.get("started_at", ""),
         finished_at=manifest.get("finished_at", results.get("finished_at", "")),
         url_reports=[by_url[k] for k in sorted(by_url)],
+        flow_reports=flow_reports,
     )
     for report in run.url_reports:
         report.coverage_ceiling = _behaviour_ceiling(_load_inventory(artifacts_dir, report.url))
@@ -222,6 +291,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "") -> RunReport
 
 _ACTION_ROLES = {"button", "checkbox", "radio", "combobox", "tab", "switch", "slider", "menuitem", "menuitemcheckbox"}
 _CAPTCHA_RE = re.compile(r"captcha|recaptcha|hcaptcha|are you human|prove you|robot", re.I)
+
 
 def _inv_slug(url: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", url.lower()).strip("-")[:100]
@@ -417,7 +487,12 @@ def _rel(target: str, base: Path | None) -> str:
 def _render_outcome(document, outcome: TestOutcome, *, embed: bool = True, link_base: Path | None = None) -> None:
     document.add_heading(outcome.title.replace("_", " "), 2)
     _status_line(document, outcome)
+    _render_assertions(document, outcome)
+    _render_evidence(document, outcome, embed=embed, link_base=link_base)
+    _render_failure_detail(document, outcome, link_base=link_base)
 
+
+def _render_assertions(document, outcome: TestOutcome) -> None:
     if outcome.assertions:
         verified = outcome.status == "passed"
         document.add_heading(
@@ -425,6 +500,8 @@ def _render_outcome(document, outcome: TestOutcome, *, embed: bool = True, link_
         for line in outcome.assertions:
             document.add_paragraph(line, style="List Bullet")
 
+
+def _render_evidence(document, outcome: TestOutcome, *, embed: bool = True, link_base: Path | None = None) -> None:
     document.add_heading("Browser evidence", 3)
     if not outcome.evidence:
         para = document.add_paragraph("No screenshot evidence was captured for this test.")
@@ -446,6 +523,8 @@ def _render_outcome(document, outcome: TestOutcome, *, embed: bool = True, link_
             para = document.add_paragraph(f"{path.stem.replace('-', ' ')}  —  ", style="List Bullet")
             _add_hyperlink(para, _rel(str(path), link_base), path.name)
 
+
+def _render_failure_detail(document, outcome: TestOutcome, *, link_base: Path | None = None) -> None:
     if outcome.status in {"failed", "error"}:
         document.add_heading("Failure detail", 3)
         block = document.add_paragraph(outcome.error or "(no traceback captured)")
@@ -455,6 +534,100 @@ def _render_outcome(document, outcome: TestOutcome, *, embed: bool = True, link_
             para = document.add_paragraph("Attachment: ")
             para.runs[0].font.size = Pt(9)
             _add_hyperlink(para, _rel(attachment, link_base), Path(attachment).name)
+
+
+_GREEN, _RED, _GREY = RGBColor(0x1B, 0x7F, 0x37), RGBColor(0xB3, 0x26, 0x1A), RGBColor(0x59, 0x59, 0x59)
+_ARROW = " → "
+
+
+def _render_flow(document, flow: FlowReport, *, embed: bool = True, link_base: Path | None = None) -> None:
+    """One user journey: the sentence as the title, then what it did, what was expected and seen,
+    where it broke if it did, and the recorded history - not just a pytest function name."""
+    outcome = flow.outcome
+    document.add_heading(flow.title, 2)
+    para = document.add_paragraph()
+    run = para.add_run(f"Result: {outcome.status.upper()}")
+    run.bold = True
+    run.font.color.rgb = _GREEN if outcome.passed else _RED
+    para.add_run(f"    Flow status: {flow.status}    Duration: {outcome.duration:.2f}s")
+    where = (f" across {len(flow.pages)} pages: " + _ARROW.join(flow.pages)) if len(flow.pages) > 1 else (
+        f" on {flow.pages[0]}" if flow.pages else "")
+    origin = f" {flow.intent_id} (from the plain-sentence file)" if flow.intent_id else ""
+    source = document.add_paragraph("User flow" + origin + where)
+    source.runs[0].font.color.rgb = _GREY
+
+    document.add_heading("Journey", 3)
+    for n, step in enumerate(flow.steps):
+        landing = flow.lands[n] if n < len(flow.lands) else ""
+        document.add_paragraph(step + (f"  →  {landing}" if landing else ""), style="List Number")
+
+    document.add_heading("Expected vs observed", 3)
+    document.add_paragraph(f"Expected: {flow.expected or 'not stated'}", style="List Bullet")
+    document.add_paragraph(f"Observed in a real run: {flow.observed or 'never run'}", style="List Bullet")
+    if flow.new_headings:
+        document.add_paragraph("New on the page: " + " | ".join(flow.new_headings), style="List Bullet")
+
+    _render_assertions(document, outcome)
+
+    if flow.failure:
+        document.add_heading("Where it broke", 3)
+        para = document.add_paragraph(flow.failure)
+        para.runs[0].font.color.rgb = _RED
+
+    if flow.history:
+        document.add_heading("Review history", 3)
+        for line in flow.history[-12:]:
+            document.add_paragraph(line, style="List Bullet")
+
+    _render_evidence(document, outcome, embed=embed, link_base=link_base)
+    _render_failure_detail(document, outcome, link_base=link_base)
+
+
+def _grid(document, labels: tuple[str, ...]):
+    table = document.add_table(rows=1, cols=len(labels))
+    try:
+        table.style = "Table Grid"
+    except KeyError:
+        pass
+    for cell, label in zip(table.rows[0].cells, labels):
+        cell.paragraphs[0].add_run(label).bold = True
+    return table
+
+
+def _flows_table(document, flows: list[FlowReport]) -> None:
+    table = _grid(document, ("Flow", "Flow status", "Result", "Pages"))
+    for flow in flows:
+        cells = table.add_row().cells
+        cells[0].text = flow.title
+        cells[1].text = flow.status
+        cells[2].text = flow.outcome.status.upper() if flow.outcome else "not run"
+        cells[3].text = _ARROW.join(flow.pages) or "-"
+
+
+def _flows_section(document, flows: list[FlowReport], *, embed: bool, link_base: Path | None) -> None:
+    if not flows:
+        return
+    document.add_heading("User flows", 1)
+    document.add_paragraph(
+        "Each flow is one user journey, tested by a generated spec whose steps and assertions come from a real "
+        "verified browser run. The title is the flow's plain-language description.")
+    _flows_table(document, flows)
+    for flow in flows:
+        document.add_page_break()
+        _render_flow(document, flow, embed=embed, link_base=link_base)
+
+
+def _untested_flows_section(document, flows: list[FlowReport]) -> None:
+    if not flows:
+        return
+    document.add_heading("Flows without a test result in this run", 1)
+    document.add_paragraph("These flows exist but no generated test ran for them (not verified yet, rejected, "
+                           "or waiting to be rebuilt from a changed sentence).")
+    table = _grid(document, ("Flow", "Flow status"))
+    for flow in flows:
+        cells = table.add_row().cells
+        cells[0].text = flow.title
+        cells[1].text = flow.status
 
 
 def _summary_table(document, reports: list[UrlReport]) -> None:
@@ -499,18 +672,36 @@ def _warnings_section(document, warnings: list[str]) -> None:
         para.runs[0].font.color.rgb = RGBColor(0xB3, 0x26, 0x1A)
 
 
+def _save_document(document, destination: Path, run: RunReport) -> Path:
+    """Save the document. If the file is locked (typically open in Word, which holds a ~$ lock file), write
+    a '-new' copy next to it and say so, instead of letting one locked file abort the whole report."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        document.save(destination)
+        return destination
+    except PermissionError:
+        alternative = destination.with_name(destination.stem + "-new" + destination.suffix)
+        document.save(alternative)
+        run.notes.append(f"{destination.name} is open in another program and could not be overwritten; "
+                         f"the new report was written to {alternative.name}")
+        return alternative
+
+
 def build_url_docx(run: RunReport, report: UrlReport, destination: Path) -> None:
     document = Document()
     document.add_heading("Website Test Evidence Report", 0)
     document.add_heading(report.url, 1)
     _metadata(document, run, scope=f"single URL ({report.url})")
     _summary_table(document, [report])
-    _warnings_section(document, report.warnings)
+    flows = run.flows_at(report.url)
+    _warnings_section(document, report.warnings + [w for f in flows for w in f.warnings])
+    if flows:
+        document.add_page_break()
+        _flows_section(document, flows, embed=True, link_base=None)
     for outcome in report.outcomes:
         document.add_page_break()
         _render_outcome(document, outcome)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    document.save(destination)
+    _save_document(document, destination, run)
 
 
 def build_combined_docx(run: RunReport, destination: Path) -> None:
@@ -524,6 +715,10 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
     _summary_table(document, run.url_reports)
     _warnings_section(document, run.warnings)
     link_base = destination.parent
+    if run.tested_flows:
+        document.add_page_break()
+        _flows_section(document, run.tested_flows, embed=True, link_base=link_base)
+    _untested_flows_section(document, run.untested_flows)
     for report in run.url_reports:
         document.add_page_break()
         document.add_heading(report.url, 1)
@@ -533,8 +728,7 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
         for outcome in report.outcomes:
             document.add_page_break()
             _render_outcome(document, outcome, embed=True, link_base=link_base)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    document.save(destination)
+    _save_document(document, destination, run)
 
 
 def name_for(url: str) -> str:
@@ -548,8 +742,10 @@ def create_report(
     *,
     model: str = "",
     combined: bool = False,
+    flows_file: Path | None = None,
+    ratings_file: Path | None = None,
 ) -> RunReport:
-    run = load_run(artifacts_dir, tests_dir, model=model)
+    run = load_run(artifacts_dir, tests_dir, model=model, flows_file=flows_file, ratings_file=ratings_file)
     out_dir.mkdir(parents=True, exist_ok=True)
     for report in run.url_reports:
         build_url_docx(run, report, out_dir / f"{name_for(report.url)}.docx")

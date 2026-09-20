@@ -187,7 +187,7 @@ Rules that keep the generated tests trustworthy:
 - The AI may not write sentences that need credentials or payment, switch language, or only describe
   widgets appearing; a person may write anything and takes the responsibility.
 
-None of these commands change the page tests: `generate`, `execute` and `report` work as before.
+`generate` and `execute` work as before. `report` now shows flow tests in their own **User flows** section instead of mixing them in with the page tests: the plain sentence as the title, the journey step by step with the page each step landed on, expected vs observed, where it broke when it failed (which step, which page), and the recorded history. Flows with no test result are listed separately. If a report file is open in Word, a `-new` copy is written instead of failing.
 
 ## Known limitations
 
