@@ -168,6 +168,7 @@ python -m website_test_pipeline.cli flowgen                       # write a pyte
 python -m website_test_pipeline.cli execute                       # run all specs; flow results feed flow_ratings.json
 python -m website_test_pipeline.cli flows list [--status verified]   # every flow, its status and last real run
 python -m website_test_pipeline.cli flows show <id>               # steps, expected vs observed, full history
+python -m website_test_pipeline.cli flows coverage [N]           # which pages/controls the tested flows touch (N untouched shown per page)
 python -m website_test_pipeline.cli flows approve <id> [--reason ".."]   # a person decides: never overwritten
 python -m website_test_pipeline.cli flows reject <id> --reason ".."      # stops verify and removes its test
 python -m website_test_pipeline.cli flows reset <id>              # hand the flow back to the tool

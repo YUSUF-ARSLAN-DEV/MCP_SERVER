@@ -268,7 +268,11 @@ detail when we reach it.
 | &nbsp;&nbsp;13a `verify [id...] [--failed-only]` | done, pushed |
 | &nbsp;&nbsp;13b heal a control that moved or was renamed | done, pushed |
 | &nbsp;&nbsp;13c heal a default option that returns no content (+ explorer records up to 300 options) | done, pushed |
-| 14 coverage + chain | todo |
+| 14 flow coverage + closed loop (4 commits) | in progress: |
+| &nbsp;&nbsp;14a coverage metric + `flows coverage` | done, pushed |
+| &nbsp;&nbsp;14b uncovered areas fed into the `intents` / `propose` prompts | todo |
+| &nbsp;&nbsp;14c coverage section in the Word report | todo |
+| &nbsp;&nbsp;14d `flows run` chain (intents, expand, verify, flowgen, execute) | todo |
 | 15 docs | todo |
 | 16 vision + attached docs | todo (last) |
 

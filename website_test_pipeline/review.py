@@ -168,6 +168,9 @@ def run_flows_command(settings, words: list[str], reason: str = "", status: str 
         if action == "list":
             out(render_list(doc, ratings, status))
             return 0
+        if action == "coverage":
+            out(_coverage_text(settings, doc, rest))
+            return 0
         if action == "show":
             flow = find_flow(doc, rest[0] if rest else "")
             out(render_show(flow, ratings["ratings"].get(flow["id"], [])))
@@ -179,13 +182,29 @@ def run_flows_command(settings, words: list[str], reason: str = "", status: str 
             save_ratings(settings.ratings_file, ratings)
             out(f'{flow["id"]} -> {flow["status"]}')
             return 0
-        raise ReviewError(f"unknown flows command {action!r}: use list, show, approve, reject, reset, add, edit, drop or intents")
+        raise ReviewError(f"unknown flows command {action!r}: use list, show, coverage, approve, reject, reset, add, edit, drop or intents")
     except ReviewError as exc:
         out(f"flows: {exc}")
         return 2
     except (FlowsFileError, RatingsFileError) as exc:
         out(f"flows: {exc}")
         return 1
+
+
+def _coverage_text(settings, doc: dict, rest: list[str]) -> str:
+    """`flows coverage [N]`: what the tested flows touch, and up to N untouched controls per page."""
+    from .coverage import compute_coverage, render_coverage
+    from .sitemap import load_inventories
+    inventories = load_inventories(settings.artifacts_dir)
+    try:
+        from .urls import read_urls
+        wanted = set(read_urls(settings.urls_file))
+    except Exception:
+        wanted = set()
+    if wanted:
+        inventories = [i for i in inventories if i.get("url") in wanted]
+    limit = int(rest[0]) if rest and rest[0].isdigit() else 4
+    return render_coverage(compute_coverage(inventories, doc["flows"]), limit)
 
 
 def _user() -> str:
