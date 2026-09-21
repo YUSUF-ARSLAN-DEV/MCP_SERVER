@@ -29,32 +29,33 @@ browser by code, not predicted by a model.
    what model + prompt version, when, and why.
 6. **Additive.** Existing per-page generate/execute/report keep working unchanged.
 
-## What exists today (done, all pushed to `origin/master`)
+## What exists today (steps 1-15 done, all pushed to `origin/master`)
 
-| # | Step | Commit | What it gave us |
-|---|------|--------|-----------------|
-| 1 | Explorer records flows | `d91348a` | `flows.json` format (`flows.py`); `explore` writes each verified primary flow via `record_flow()` |
-| 2 | Menu-close probe fix | `3c83a9a` | Open widget menus no longer block the Search click |
-| 3 | Site map | `8e72238` | `sitemap.py`: deterministic evidence pack (pages, controls, links between pages) |
-| 4 | `propose` | `ed7d23f` | Model suggests flows from the site map; `validate_flow()` rejects invented pages/controls/outcomes; accepted as `candidate` |
-| 5 | Smarter proposals | `b7460d9` | Linked-page outcomes, duplicate filter, model critic (`critic.py`), `ratings.py` + `flow_ratings.json` |
-| 6 | Single-click rule | `5bdccd9` | A 1-step flow is valid only if it navigates |
-| 7 | `verify` | `f485186` | `runner.py`: run each flow step by step, snapshot after every step, diff, classify (`navigates`/`results`/`reveals`/`no-visible-change`), compare with the prediction, set `verified`/`candidate`, append a runner rating |
-
-Current commands: `crawl`, `explore`, `generate`, `propose`, `intents`, `expand`, `verify`, `flowgen`, `flows`, `execute`, `report`.
-Real data: `runs/sat-stg.aljazeera.tv/flows.json` (8 flows, all verified) and `flow_ratings.json`.
-
-### Data shapes (source of truth: `flows.py`, `ratings.py`, `runner.py`)
+The complete reference (commands, file formats, statuses, exit codes, troubleshooting, limits) is
+**[docs/FLOWS.md](docs/FLOWS.md)**. `tests_python/test_docs.py` fails if it names a command, stage, status or
+heuristics key that does not exist, so it cannot drift from the code. This plan keeps the history and the reasoning.
 
 ```
-flow = {id, goal, source: explorer|model|human, status: candidate|verified|approved|rejected,
-        start_url, steps: [{kind: click|select|fill|multiselect|submit, selector, name, value, page?}],
-        outcome: {effect: navigates|results|reveals|validation, to?}, evidence?, proposed_by?,
-        observed?: {effect, url, new_headings, new_controls, results, step_effects}, last_run_at?}
-rating entry = {source: model|runner|human|pytest, at, ...}
-   model : scores{coherence, importance, outcome_strength}, reason, kept, model, prompt_version
-   runner: passed, checks{steps_completed, outcome_matched, observed_effect}, error?
+intents.json -> expand -> flows.json -> verify -> flowgen -> tests/flow_*_test.py -> execute / report
+(sentences)     (AI+code)  (steps)       (browser)  (template)                        (results feed back)
 ```
+
+| Step | What it gave us | Commit(s) |
+|------|-----------------|-----------|
+| 1-7 | explorer flows, sitemap, `propose`, critic + ratings, `verify` | `d91348a` ... `f485186` |
+| 8 | `flowgen`: validated pytest specs from verified flows, no model | `60bc16c` |
+| 9 | pytest results feed the ratings; `derive_status`, `stale` | `dac7d87` |
+| 10 | multi-page journeys: per-step URLs, hop-aware errors, per-hop assertions | `a99c215` `52927d6` `1b7b682` `cc82ca1` |
+| 11 | `flows list/show/approve/reject/reset` | `1692716` |
+| 11b-f | the intent track: plain sentences first (`intents`, `expand`, `flows add/edit/drop`), multiselect, query assertions, sync | `ab2b1a4` `fd723ad` `a07c162` `f0ab857` `9959615` |
+| 12 | report: User flows section, per-step failure attribution | `f44e1b7` |
+| fixes | results-loaded / weak-outcome guards; one heuristics file for any site or language | `218e0f7` `3d63c62` |
+| 13 | `verify` selection, control healing, option healing, explorer records 300 options | `bb58745` `9bca6da` `97c5d4b` |
+| 14 | coverage metric, gaps fed to the AI, report section, `flows run`; an unreachable site is not a failed flow | `25da4a8` `fb2c52e` `0e12699` `474b4ed` `5c27beb` |
+| 15 | `docs/FLOWS.md`, docs tests, this plan refreshed | this commit |
+
+Commands: `crawl`, `explore`, `generate`, `propose`, `intents`, `expand`, `verify`, `flowgen`, `flows`, `execute`, `report`.
+Every step is tagged `flows-step-<n>` (`git checkout flows-step-13b`, `git revert <commit>`).
 
 ## Working protocol for every remaining step
 
@@ -84,7 +85,7 @@ on an earlier step's internals except through the JSON formats above.
 
 ---
 
-## Remaining steps
+## Step details (history; everything except step 16 is done)
 
 ### Step 8 - Emit a pytest spec from a verified flow (deterministic, no model) - DONE
 
@@ -229,11 +230,20 @@ demotes its flow so a stale test is never kept.
 **Verify:** unit tests; run the chain on sat-stg (<=3 URLs if it explores).
 **Commit:** `feat(flows): flow coverage metric and propose-verify-flowgen-execute chain`
 
-### Step 15 - Docs and cleanup
+### Step 15 - Docs and cleanup - DONE
 
-`README.md`, `EXPLAIN.md`, and `AI-TEST-GUIDE.md` (flow specs section); document
-the flow/ratings formats and the human-override rules; `graphify update .`; note
-known limits (no login/credentials, see non-goals). **Commit:** `docs(flows): document the flows workflow`
+- **`docs/FLOWS.md`**: the reference for the whole flow workflow (pipeline, stages, every command, exit codes, the
+  four file formats field by field, statuses and what changes them, what a test asserts, healing, coverage,
+  outages, troubleshooting, known limits, how to develop and test it).
+- **`tests_python/test_docs.py`**: every command, `flows` subcommand, stage, status and heuristics key the docs name
+  must exist, and the documented `heuristics.json` example must load without a warning. (`review.SUBCOMMANDS` is the
+  list the docs are checked against.)
+- **README**: links to the reference; flow limits added to Known limitations.
+- **Left alone on purpose:** `AI-TEST-GUIDE.md` is the prompt prefix the model receives when it writes *page* specs,
+  so flow documentation there would change those prompts (flow specs are templated, not model-written).
+  `EXPLAIN.md` is the user's own learning notes.
+- **Decision on the two extra steps in the original list:** removing the multi-hop flag / single-hop paths is moot,
+  because the flag was never built (the flows layer replaced it) and single-page testing is kept as designed.
 
 ### Step 16 - LAST: screenshots/vision and attached documents
 
@@ -273,7 +283,7 @@ detail when we reach it.
 | &nbsp;&nbsp;14b uncovered areas fed into the `intents` / `propose` prompts | done, pushed |
 | &nbsp;&nbsp;14c coverage section in the Word report | done, pushed |
 | &nbsp;&nbsp;14d `flows run` chain (intents, expand, verify, flowgen, execute) | done, pushed |
-| 15 docs | todo |
+| 15 docs and cleanup | done, pushed (`docs/FLOWS.md`, `test_docs.py`) |
 | 16 vision + attached docs | todo (last) |
 
 ## Non-goals
@@ -282,18 +292,16 @@ detail when we reach it.
 - Flows needing payment or a real person's data (the proposer already forbids them).
 - Replacing per-page generation: pages with no chainable action keep single-page tests.
 
-## Known limits of Step 8 (carry into later steps)
+## Known limits
 
-- (Resolved in 11b) multiselect steps are emitted via the shared `pick_option` helper; a multiselect with no named option is still skipped.
-- A step's control role is read from the explored pages (or an optional `role` on the step); if it cannot be told, the flow is skipped, never guessed. Step 10 should have `propose`/`verify` store `role` on steps.
-- (Resolved in 10c) a mid-flow hop used to be asserted as "body visible"; runs that recorded `step_urls` now assert every hop's landing URL. Flows verified before 10a keep the old behaviour until re-verified.
+Maintained in [docs/FLOWS.md](docs/FLOWS.md) section 11 (the earlier per-step limits listed here were all resolved).
 
-## Open questions (decide at the step where they matter)
+## Open questions (all decided; kept for the reasoning)
 
-1. **Step 8:** truncated (40-char) control names - substring match vs storing the full
-   name in `flows.json`. Leaning: store full names going forward, substring for old data.
-2. **Step 9 (decided):** a flow goes `stale` after two failed executions in a row (runner or
-   pytest, any mix); one failure is tolerated. `stale` flows keep their spec so the failure stays loud.
-3. **Step 10:** max hop depth is `MAX_STEPS` (8) today; per-site override needed?
-4. **Step 13:** how far may healing go before a human must approve the changed step?
-   Leaning: never auto-heal an `approved` flow; propose the change instead.
+1. **Truncated (40-char) control names:** flows keep the cut name; the runner and the generated spec match the whole
+   name, or the start of a name stored at the cut, so both behave the same way.
+2. **When does a flow go `stale`:** after two failed executions in a row (runner or pytest, any mix); one failure is
+   tolerated. A definite failure demotes to `candidate` at once. `stale` flows keep their spec so the failure stays loud.
+3. **Hop depth:** `MAX_STEPS` (8) per flow; no per-site override was needed.
+4. **How far may healing go:** it heals only when exactly one control can stand in, keeps the change only if the whole
+   run passes, records the old values, and never rewrites an `approved` or `rejected` flow (it names the candidate instead).

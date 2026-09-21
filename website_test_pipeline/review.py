@@ -15,6 +15,8 @@ from .flows import FlowsFileError, describe_step, load_flows, save_flows
 from .ratings import RatingsFileError, append_rating, derive_status, load_ratings, save_ratings
 
 DECISIONS = {"approve": "approved", "reject": "rejected"}
+# Every `flows <word>` the CLI accepts (add/edit/drop/intents are in intents.py, run is in cli.py); the docs are tested against this.
+SUBCOMMANDS = ("list", "show", "coverage", "approve", "reject", "reset", "add", "edit", "drop", "intents", "run")
 
 
 class ReviewError(Exception):
@@ -182,7 +184,7 @@ def run_flows_command(settings, words: list[str], reason: str = "", status: str 
             save_ratings(settings.ratings_file, ratings)
             out(f'{flow["id"]} -> {flow["status"]}')
             return 0
-        raise ReviewError(f"unknown flows command {action!r}: use list, show, coverage, approve, reject, reset, add, edit, drop or intents")
+        raise ReviewError(f"unknown flows command {action!r}: use {', '.join(SUBCOMMANDS)}")
     except ReviewError as exc:
         out(f"flows: {exc}")
         return 2

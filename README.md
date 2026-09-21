@@ -148,6 +148,8 @@ land on the results). You describe a journey in a plain sentence, the AI turns i
 from the real page DOM, code rejects anything invented, and a browser run must confirm it
 before a test is written. Everything lives in `runs/<site>/`.
 
+**Full reference (formats, statuses, exit codes, troubleshooting, limits): [docs/FLOWS.md](docs/FLOWS.md).**
+
 ```
 intents.json  ->  expand  ->  flows.json  ->  verify  ->  flowgen  ->  tests/flow_*_test.py
 (sentences)      (AI + code)   (steps)         (browser)   (template)    (run with execute)
@@ -227,6 +229,9 @@ some failed, 2 a stage could not run.
 `generate` and `execute` work as before. `report` now shows flow tests in their own **User flows** section instead of mixing them in with the page tests: the plain sentence as the title, the journey step by step with the page each step landed on, expected vs observed, where it broke when it failed (which step, which page), and the recorded history. Flows with no test result are listed separately. If a report file is open in Word, a `-new` copy is written instead of failing. It also has a **Flow coverage** section: pages visited and content controls acted on by a tested flow, with the untouched ones per page (site chrome left out).
 
 ## Known limitations
+- **Flow testing:** no login, credentials or payment journeys (the AI may not write them; a person may).
+  Custom dropdowns need standard ARIA roles or common menu classes, or their selectors added in `heuristics.json`.
+  The default word lists are English (extend them per site). See [docs/FLOWS.md](docs/FLOWS.md) section 11.
 
 - **No product spec**, so the behavioral layer verifies structure/presence, not
   correctness of behavior. This is a property of the task, not a bug.
