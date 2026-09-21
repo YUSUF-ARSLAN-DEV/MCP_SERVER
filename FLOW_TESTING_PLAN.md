@@ -271,7 +271,7 @@ detail when we reach it.
 | 14 flow coverage + closed loop (4 commits) | in progress: |
 | &nbsp;&nbsp;14a coverage metric + `flows coverage` | done, pushed |
 | &nbsp;&nbsp;14b uncovered areas fed into the `intents` / `propose` prompts | done, pushed |
-| &nbsp;&nbsp;14c coverage section in the Word report | todo |
+| &nbsp;&nbsp;14c coverage section in the Word report | done, pushed |
 | &nbsp;&nbsp;14d `flows run` chain (intents, expand, verify, flowgen, execute) | todo |
 | 15 docs | todo |
 | 16 vision + attached docs | todo (last) |

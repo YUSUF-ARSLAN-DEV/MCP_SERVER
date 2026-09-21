@@ -217,7 +217,7 @@ A word ending in `*` matches any ending (`result*`). A missing or malformed file
 defaults with a warning. The same file is read by the runner and by the generated specs, so a flow is
 tested the way it was verified.
 
-`generate` and `execute` work as before. `report` now shows flow tests in their own **User flows** section instead of mixing them in with the page tests: the plain sentence as the title, the journey step by step with the page each step landed on, expected vs observed, where it broke when it failed (which step, which page), and the recorded history. Flows with no test result are listed separately. If a report file is open in Word, a `-new` copy is written instead of failing.
+`generate` and `execute` work as before. `report` now shows flow tests in their own **User flows** section instead of mixing them in with the page tests: the plain sentence as the title, the journey step by step with the page each step landed on, expected vs observed, where it broke when it failed (which step, which page), and the recorded history. Flows with no test result are listed separately. If a report file is open in Word, a `-new` copy is written instead of failing. It also has a **Flow coverage** section: pages visited and content controls acted on by a tested flow, with the untouched ones per page (site chrome left out).
 
 ## Known limitations
 

@@ -22,10 +22,12 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
+from .coverage import Coverage, compute_coverage
 from .flowgen import file_name as flow_spec_name
 from .flowreport import FlowReport, build_flow_report
 from .flows import FlowsFileError, load_flows
 from .ratings import RatingsFileError, load_ratings
+from .sitemap import load_inventories
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 ATTACH_EXTS = {".webm", ".zip"}
@@ -106,6 +108,7 @@ class RunReport:
     url_reports: list[UrlReport] = field(default_factory=list)
     flow_reports: list[FlowReport] = field(default_factory=list)   # every flow; those with tested=False were not run
     notes: list[str] = field(default_factory=list)                 # things that happened while writing the documents
+    coverage: Coverage | None = None                               # what the tested flows touch; None when there are no flows
 
     @property
     def tested_flows(self) -> list[FlowReport]:
@@ -245,6 +248,24 @@ def _flow_reports(results: dict, tests_dir: Path, artifacts_dir: Path, flows_fil
     return reports, {r.get("nodeid") for rows in rows_by_flow.values() for r in rows}
 
 
+def _flows_list(flows_file: Path | None) -> list[dict]:
+    try:
+        return load_flows(flows_file)["flows"] if flows_file and flows_file.exists() else []
+    except FlowsFileError:
+        return []
+
+
+def _coverage(artifacts_dir: Path, manifest: dict, flows: list[dict]) -> Coverage | None:
+    """Flow coverage of the explored pages of this run; nothing when the site has no flows (older reports stay as they were)."""
+    if not flows:
+        return None
+    inventories = load_inventories(artifacts_dir)
+    urls = set((manifest.get("urls") or {}))
+    if urls:
+        inventories = [i for i in inventories if i.get("url") in urls] or inventories
+    return compute_coverage(inventories, flows) if inventories else None
+
+
 def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: Path | None = None,
              ratings_file: Path | None = None) -> RunReport:
     results = json.loads((artifacts_dir / "test_results.json").read_text(encoding="utf-8"))
@@ -282,6 +303,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
         finished_at=manifest.get("finished_at", results.get("finished_at", "")),
         url_reports=[by_url[k] for k in sorted(by_url)],
         flow_reports=flow_reports,
+        coverage=_coverage(artifacts_dir, manifest, _flows_list(flows_file or workspace / "flows.json")),
     )
     for report in run.url_reports:
         report.coverage_ceiling = _behaviour_ceiling(_load_inventory(artifacts_dir, report.url))
@@ -617,6 +639,29 @@ def _flows_section(document, flows: list[FlowReport], *, embed: bool, link_base:
         _render_flow(document, flow, embed=embed, link_base=link_base)
 
 
+def _coverage_section(document, coverage: Coverage | None) -> None:
+    """How much of the explored site the tested flows touch, and where the untested parts are."""
+    if coverage is None or not coverage.pages:
+        return
+    document.add_heading("Flow coverage", 1)
+    document.add_paragraph(
+        f"Pages visited by a tested flow: {coverage.pages_visited} of {coverage.pages_total} ({coverage.percent_pages}%). "
+        f"Content controls a tested flow acts on: {coverage.controls_touched} of {coverage.controls_total} "
+        f"({coverage.percent_controls}%). Flows: {coverage.tested_flows} tested, {coverage.planned_flows} not yet backed by a "
+        "passing run. Header, navigation and footer links are left out of the totals: they repeat on every page and are "
+        "checked by the page tests.")
+    table = _grid(document, ("Page", "Visited", "Touched", "Not touched by any flow"))
+    for page in coverage.pages:
+        cells = table.add_row().cells
+        cells[0].text = page.path
+        cells[1].text = "yes" if page.visited else "no"
+        cells[2].text = f"{page.touched}/{page.total}"
+        shown = "; ".join(page.untouched[:5]) + (f"; +{len(page.untouched) - 5} more" if len(page.untouched) > 5 else "")
+        cells[3].text = shown
+    if coverage.aliases:
+        document.add_paragraph("Counted once: " + ", ".join(f"{a} redirects to {b}" for a, b in sorted(coverage.aliases.items())))
+
+
 def _untested_flows_section(document, flows: list[FlowReport]) -> None:
     if not flows:
         return
@@ -694,6 +739,10 @@ def build_url_docx(run: RunReport, report: UrlReport, destination: Path) -> None
     _metadata(document, run, scope=f"single URL ({report.url})")
     _summary_table(document, [report])
     flows = run.flows_at(report.url)
+    page_cov = next((p for p in (run.coverage.pages if run.coverage else []) if p.url == report.url), None)
+    if page_cov and page_cov.total:
+        document.add_paragraph(f"Flow coverage of this page: {page_cov.touched} of {page_cov.total} content controls are acted on "
+                               f"by a tested flow ({'visited' if page_cov.visited else 'not visited'} by any).")
     _warnings_section(document, report.warnings + [w for f in flows for w in f.warnings])
     if flows:
         document.add_page_break()
@@ -719,6 +768,7 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
         document.add_page_break()
         _flows_section(document, run.tested_flows, embed=True, link_base=link_base)
     _untested_flows_section(document, run.untested_flows)
+    _coverage_section(document, run.coverage)
     for report in run.url_reports:
         document.add_page_break()
         document.add_heading(report.url, 1)

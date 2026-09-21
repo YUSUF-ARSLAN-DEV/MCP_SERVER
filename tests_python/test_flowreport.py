@@ -225,3 +225,57 @@ def test_a_passing_flow_that_only_proves_a_url_change_is_flagged_as_weak():
     reveals = _flow()
     reveals["observed"].update(effect="reveals", new_headings=[])
     assert not build_flow_report(reveals, [], _outcome("passed", evidence=["01-a.png"])).navigation_only
+
+
+# ------------------------------------------------------------------ flow coverage in the report
+
+def _with_inventories(artifacts):
+    """The explored pages of the fake site: the root redirects to /en, the flow acts on Country and Search."""
+    def inv(url, controls):
+        return {"url": url, "title": "t", "headings": [], "forms": [], "revealed": [], "embeds": [], "controls": controls}
+
+    def c(name, tag="button", **extra):
+        return dict({"name": name, "tag": tag, "region": "other", "hidden": False, "selector": None}, **extra)
+
+    pages = [inv("https://x.test/", [c("Search"), c("Details", tag="a", href="/d")]),
+             inv("https://x.test/en", [c("Country", tag="select", selector="#country"), c("Search"), c("Subscribe", tag="a", href="/s")]),
+             inv("https://x.test/en/find", [c("Details", tag="a", href="/d"), c("Export", tag="a", href="/e")]),
+             inv("https://x.test/en/map", [c("Layers")])]
+    for n, page in enumerate(pages):
+        (artifacts / f"p{n}.inventory.json").write_text(json.dumps(page), encoding="utf-8")
+
+
+def test_the_combined_report_says_how_much_of_the_site_the_flows_cover(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    _with_inventories(artifacts)
+    run = load_run(artifacts, tests)
+    assert run.coverage is not None and run.coverage.aliases == {"/": "/en"}
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    for part in ("Flow coverage", "Pages visited by a tested flow", "Content controls a tested flow acts on",
+                 "Not touched by any flow", "Counted once: / redirects to /en", "/en/map", "Layers", "Subscribe"):
+        assert part in joined, part
+    assert "Header, navigation and footer links are left out" in joined
+
+
+def test_a_page_document_says_how_much_of_that_page_the_flows_act_on(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    _with_inventories(artifacts)
+    create_report(artifacts, tests, tmp_path / "report")
+    joined = chr(10).join(_text(tmp_path / "report" / (name_for("https://x.test/") + ".docx")))
+    assert "Flow coverage of this page" not in joined                        # "/" is an alias: it has no numbers of its own
+
+
+def test_the_report_has_no_coverage_section_when_the_site_has_no_flows(tmp_path):
+    artifacts, tests = _workspace(tmp_path, with_flows=False)
+    _with_inventories(artifacts)
+    assert load_run(artifacts, tests).coverage is None
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    assert "Flow coverage" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+def test_coverage_never_breaks_the_report_when_there_are_no_explored_pages(tmp_path):
+    artifacts, tests = _workspace(tmp_path)                                   # flows exist, no inventories on disk
+    assert load_run(artifacts, tests).coverage is None
+    create_report(artifacts, tests, tmp_path / "report", combined=True)       # must not raise
+    assert (tmp_path / "report" / "full-report.docx").exists()
