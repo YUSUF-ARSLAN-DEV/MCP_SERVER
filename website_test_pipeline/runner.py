@@ -9,6 +9,7 @@ to flow_ratings.json. Human decisions (approved / rejected) are never changed.
 from __future__ import annotations
 import re
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from urllib.parse import urlsplit
 
 from .explorer import (
@@ -16,6 +17,7 @@ from .explorer import (
     _close_menus, _pick_multiselect, _plausible_value, _select_first_real,
 )
 from . import heuristics
+from .validator import _ARIA_ROLES
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
 from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
@@ -117,6 +119,20 @@ def sentence_expects_content(flow: dict) -> bool:
     return flow.get("source") == "intent" and heuristics.has_word("content_words", flow.get("goal") or "")
 
 
+def _apply_heals(flow: dict, heals: list[dict], now: str) -> None:
+    """Keep the healed steps in the flow, with the old values in heal_history (nothing is lost). Called only
+    when the whole run passed with them and the flow is not one a person decided."""
+    steps = flow.get("steps") or []
+    for heal in heals:
+        index = heal["step"] - 1
+        if 0 <= index < len(steps):
+            steps[index]["selector"] = heal["now"]["selector"]
+            steps[index]["name"] = heal["now"]["name"]
+            if heal["now"].get("role"):
+                steps[index]["role"] = heal["now"]["role"]
+            flow.setdefault("heal_history", []).append({"at": now, **heal})
+
+
 def apply_result(flow: dict, result: dict, now: str) -> dict:
     """Update the flow from a run and return the evaluation entry for flow_ratings.json."""
     observed = result["observed"]
@@ -124,16 +140,21 @@ def apply_result(flow: dict, result: dict, now: str) -> dict:
     changed = observed["effect"] != "no-visible-change"
     promised = sentence_expects_content(flow) and not content_shown(observed, flow)
     passed = bool(result["ok"] and matched and changed and not promised)
+    heals = result.get("heals") or []
     flow["observed"] = {**observed, "step_effects": result["step_effects"],
                         "landed_url": result.get("landed_url"), "step_urls": result.get("step_urls", [])}
     flow["last_run_at"] = now
     if flow.get("status") not in HUMAN_STATUSES:
         flow["status"] = "verified" if passed else "candidate"
+        if passed and heals:
+            _apply_heals(flow, heals, now)
     evaluation = {
         "source": "runner", "at": now, "passed": passed,
         "checks": {"steps_completed": f'{result["steps_done"]}/{result["steps_total"]}',
                    "outcome_matched": matched, "observed_effect": observed["effect"]},
     }
+    if heals:
+        evaluation["healed" if passed and flow.get("heal_history") else "heal_not_kept"] = heals
     if result.get("error"):
         evaluation["error"] = result["error"]
     elif promised and result["ok"] and matched and changed:
@@ -189,13 +210,103 @@ def snapshots_equal(a: dict, b: dict) -> bool:
             and [(r["key"], r["rows"]) for r in a["results"]] == [(r["key"], r["rows"]) for r in b["results"]])
 
 
+_KIND_TAGS = {"select": {"select"}, "fill": {"input", "textarea"}}   # what can stand in for these kinds of step
+_RENAMED_RATIO = 0.75                                                 # how alike two control names must be
+
+
+def _role_for(control: dict) -> str | None:
+    """The ARIA role to find a control by. The explorer's own role field can hold things that are not roles
+    (a button's input type, 'submit'), so it is only used when it is a real one."""
+    role = str(control.get("role") or "").lower()
+    if role in _ARIA_ROLES:
+        return role
+    tag, typ = control.get("tag"), (control.get("type") or "").lower()
+    if tag == "a":
+        return "link"
+    if tag == "button" or (tag == "input" and typ in {"button", "submit", "reset"}):
+        return "button"
+    if tag == "input" and typ in {"checkbox", "radio"}:
+        return typ
+    if tag in {"input", "textarea"}:
+        return "textbox"
+    return None
+
+
+def _related(stored: str, key: str, control_key: str) -> bool:
+    """Same name. Only a name stored at the 40-character cut may match by its start; a short name like
+    'Search' must not match 'Search results' (that is a different control, or a rename, handled below)."""
+    return bool(control_key) and (control_key == key or (len(stored) >= 40 and control_key.startswith(key)))
+
+
+def _candidate_key(control: dict):
+    selector = None if control.get("volatile_id") else control.get("selector")
+    return (selector, control["name"][:40], _role_for(control))
+
+
+def find_replacement(step: dict, controls: list[dict]) -> tuple[dict | None, str]:
+    """When a step's control can no longer be found, look at the controls the page has NOW and return
+    ({selector, name, role}, how) if exactly one visible control can stand in for it, else (None, why).
+    Deterministic and conservative: the same name with a new selector or role (ids get regenerated), or a
+    name that is nearly the same (a button relabelled 'Search' -> 'Search now'). Several candidates, or
+    none, means no healing: a wrong guess would make the test pass for the wrong reason."""
+    name = (step.get("name") or "").strip()
+    key = _same_heading_key(name)
+    if not key:
+        return None, "the step has no control name to look for"
+    allowed = _KIND_TAGS.get(step.get("kind"))
+    pool = [c for c in controls if c.get("name") and not c.get("hidden") and (not allowed or c.get("tag") in allowed)]
+
+    same = list({_candidate_key(c): c for c in pool if _related(name, key, _same_heading_key(c["name"]))}.values())
+    if len(same) > 1:
+        return None, "several controls have that name: " + ", ".join(sorted({c["name"][:30] for c in same})[:4])
+    if len(same) == 1:
+        selector, cname, role = _candidate_key(same[0])
+        if not selector and not role:
+            return None, "the control is there but has neither a stable selector nor a role to find it by"
+        if selector == step.get("selector") and role == step.get("role"):
+            return None, "the same control is there; it failed for another reason"
+        how = "same control, its selector or role changed" if step.get("selector") else "same control, found by another role"
+        return {"selector": selector, "name": cname, "role": role}, how
+
+    close = list({_candidate_key(c): c for c in pool if min(len(key), len(_same_heading_key(c["name"]))) >= 4
+                  and SequenceMatcher(None, key, _same_heading_key(c["name"])).ratio() >= _RENAMED_RATIO}.values())
+    if len(close) > 1:
+        return None, "several controls look similar: " + ", ".join(sorted({c["name"][:30] for c in close})[:4])
+    if len(close) == 1:
+        selector, cname, role = _candidate_key(close[0])
+        if not selector and not role:
+            return None, "a similar control is there but has neither a stable selector nor a role to find it by"
+        return {"selector": selector, "name": cname, "role": role}, f'control renamed (was "{name}")'
+    return None, "no control on the page looks like it"
+
+
+def _visible_controls(page) -> list[dict]:
+    try:
+        return page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)
+    except Exception:
+        return []
+
+
+def _by_role(page, role: str, name: str):
+    """Find by role and accessible name exactly as the generated spec does: the whole name, or - for a name stored
+    cut at 40 characters - its start. (Substring matching here would let a renamed control pass verify while the
+    spec, which matches exactly, fails.)"""
+    if len(name) >= 40:
+        return page.get_by_role(role, name=re.compile(re.escape(name))).first
+    return page.get_by_role(role, name=name, exact=True).first
+
+
 def _locate(page, step: dict):
     if step.get("selector"):
         loc = page.locator(step["selector"]).first
         return loc if loc.count() else None
     name = (step.get("name") or "").strip()
+    if step.get("role") and name:                       # a role recorded by healing, or by whoever wrote the step
+        loc = _by_role(page, step["role"], name)
+        if loc.count():
+            return loc
     for role in ("button", "link", "checkbox", "textbox"):
-        loc = page.get_by_role(role, name=name, exact=False).first  # names are stored cut to 40 chars
+        loc = _by_role(page, role, name)
         if name and loc.count():
             return loc
     return None
@@ -234,10 +345,13 @@ def _do_step(page, step: dict) -> None:
             loc.click(timeout=3000)
 
 
-def run_flow(page, flow: dict, log=None) -> dict:
+def run_flow(page, flow: dict, log=None, heal: bool = False) -> dict:
+    """Run a flow. With heal=True a step whose control is gone is retried with the one control on the page that can
+    stand in for it (find_replacement); every heal is recorded in result["heals"] and only kept if the whole run
+    passes (apply_result). With heal=False the failure names the control that looks like the missing one."""
     steps = flow.get("steps") or []
     result = {"ok": False, "steps_done": 0, "steps_total": len(steps), "error": None,
-              "step_effects": [], "step_urls": [], "landed_url": None}
+              "step_effects": [], "step_urls": [], "landed_url": None, "heals": []}
     try:
         page.goto(flow["start_url"], wait_until="domcontentloaded")
         settle_page(page)
@@ -252,9 +366,31 @@ def run_flow(page, flow: dict, log=None) -> dict:
         try:
             _do_step(page, step)
         except Exception as exc:
-            result["error"] = (f'step "{describe_step(step)}" failed: {str(exc).splitlines()[0][:120]}'
-                               f'{hop_hint(step, index, page.url)}')
-            break
+            reason = str(exc).splitlines()[0][:120] if str(exc) else exc.__class__.__name__
+            hint = ""
+            if "control not found" in str(exc):
+                replacement, how = find_replacement(step, _visible_controls(page))
+                if replacement and heal:
+                    healed = {**step, "selector": replacement["selector"], "name": replacement["name"], "role": replacement["role"]}
+                    try:
+                        _do_step(page, healed)
+                        result["heals"].append({
+                            "step": index + 1, "how": how,
+                            "was": {"selector": step.get("selector"), "name": step.get("name"), "role": step.get("role")},
+                            "now": {"selector": replacement["selector"], "name": replacement["name"], "role": replacement["role"]}})
+                        reason = ""
+                    except Exception as again:
+                        detail = str(again).splitlines()[0][:60] if str(again) else "it failed too"
+                        hint = f' (tried "{replacement["name"]}" instead: {detail})'
+                elif replacement:
+                    hint = (f' (the page has "{replacement["name"]}", which looks like it - {how}; '
+                            "this flow was decided by a person, so it was not changed)")
+                else:
+                    hint = f" (nothing could stand in for it: {how})"
+            if reason:
+                result["error"] = (f'step "{describe_step(step)}" failed: {reason}{hint}'
+                                   f'{hop_hint(step, index, page.url)}')
+                break
         current = settled_snapshot(page)
         result["step_effects"].append(classify(diff_snapshots(previous, current))["effect"])
         result["step_urls"].append(current["url"])
@@ -314,7 +450,7 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                 page = context.new_page()
                 page.set_default_navigation_timeout(settings.navigation_timeout_ms)
                 try:
-                    result = run_flow(page, flow, log)
+                    result = run_flow(page, flow, log, heal=flow.get("status") not in HUMAN_STATUSES)
                 except Exception as exc:
                     result = {"ok": False, "steps_done": 0, "steps_total": len(flow.get("steps") or []),
                               "error": f"runner crashed: {str(exc).splitlines()[0][:120]}", "step_effects": [],

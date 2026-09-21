@@ -20,7 +20,7 @@ from urllib.parse import parse_qsl, urlsplit
 from .explorer import _plausible_value
 from .heuristics import is_volatile_param
 from .flows import FlowsFileError, _slug, is_blocked, load_flows
-from .runner import _path
+from .runner import _path, _role_for
 from .sitemap import load_inventories
 from .validator import SpecError, validate_python_spec, _norm
 
@@ -53,13 +53,7 @@ def _url_regex(path: str) -> str:
 
 
 def _role_of(control: dict) -> str | None:
-    if control.get("role"):
-        return str(control["role"]).lower()
-    tag = control.get("tag")
-    if tag == "input":
-        typ = (control.get("type") or "text").lower()
-        return _INPUT_ROLE.get(typ, "textbox")
-    return _TAG_ROLE.get(tag or "")
+    return _role_for(control)      # one rule for the runner and the spec, and only real ARIA roles
 
 
 def _distinct_word(text: str) -> str | None:

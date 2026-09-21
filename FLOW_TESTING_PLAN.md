@@ -266,7 +266,7 @@ detail when we reach it.
 | 12 report flows section | done, pushed (`flowreport.py`, User flows section, failure attribution) |
 | 13 staleness + healing (3 commits) | in progress: |
 | &nbsp;&nbsp;13a `verify [id...] [--failed-only]` | done, pushed |
-| &nbsp;&nbsp;13b heal a control that moved or was renamed | todo |
+| &nbsp;&nbsp;13b heal a control that moved or was renamed | done, pushed |
 | &nbsp;&nbsp;13c heal a default option that returns no content (+ explorer records up to 300 options) | todo |
 | 14 coverage + chain | todo |
 | 15 docs | todo |

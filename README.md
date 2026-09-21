@@ -184,6 +184,11 @@ Rules that keep the generated tests trustworthy:
 - **The sentence is the source of truth.** Reword or drop a sentence and its flow is demoted and its test
   removed on the next `verify`/`flowgen` until `expand` rebuilds it. Rebuilds never overwrite a flow a
   person approved or rejected.
+- **Healing is conservative.** If a step's control is gone (its id was regenerated, or a button was
+  relabelled "Search" -> "Search now"), `verify` looks at the controls the page has now and retries with the
+  ONE control that can stand in for it. Several candidates, or none, means no healing. The change is kept
+  only if the whole run then passes, the old values stay in `heal_history` (`flows show`), and a flow a person
+  approved or rejected is never rewritten: the error only says which control looks like the missing one.
 - **History is append-only** (`flow_ratings.json`): who judged (model, runner, pytest, human), when, and
   why. Two failed runs in a row make a verified flow `stale`; one is tolerated.
 - The AI may not write sentences that need credentials or payment, switch language, or only describe
