@@ -245,7 +245,7 @@ demotes its flow so a stale test is never kept.
 - **Decision on the two extra steps in the original list:** removing the multi-hop flag / single-hop paths is moot,
   because the flag was never built (the flows layer replaced it) and single-page testing is kept as designed.
 
-### Step 16 - LAST: screenshots/vision and attached documents
+### Step 16 - LAST: screenshots/vision and attached documents - DONE (16a documents, 16b vision)
 
 Explicitly last, per the user. (a) Vision: send `evidence/*.png` to a vision-capable
 model to *rate* a flow's end state (rating only, never marks verified). (b) Attached
@@ -284,9 +284,9 @@ detail when we reach it.
 | &nbsp;&nbsp;14c coverage section in the Word report | done, pushed |
 | &nbsp;&nbsp;14d `flows run` chain (intents, expand, verify, flowgen, execute) | done, pushed |
 | 15 docs and cleanup | done, pushed (`docs/FLOWS.md`, `test_docs.py`) |
-| 16 attached documents + vision (2 commits) | in progress: |
+| 16 attached documents + vision (2 commits) | done: |
 | &nbsp;&nbsp;16a `intents <file>`: journeys from requirement documents, each with a verified quote | done, pushed |
-| &nbsp;&nbsp;16b `flows judge`: a vision model rates the final screenshot (never changes status) | todo |
+| &nbsp;&nbsp;16b `flows judge`: a vision model rates the final screenshot (never changes status) | done, pushed |
 
 ## Non-goals
 
@@ -296,7 +296,7 @@ detail when we reach it.
 
 ## Known limits
 
-Maintained in [docs/FLOWS.md](docs/FLOWS.md) section 11 (the earlier per-step limits listed here were all resolved).
+Maintained in [docs/FLOWS.md](docs/FLOWS.md) section 12 (the earlier per-step limits listed here were all resolved).
 
 ## Open questions (all decided; kept for the reasoning)
 

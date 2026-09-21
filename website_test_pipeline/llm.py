@@ -40,10 +40,12 @@ class ModelClient:
     def __init__(self, settings: Settings, logger: logging.Logger):
         self.s = settings; self.log = logger
 
-    def generate(self, prompt: str, system: str) -> str:
+    def generate(self, prompt: str, system: str, images: list[str] | None = None) -> str:
+        """Ask the model. `images` are data URLs (data:image/jpeg;base64,...) sent with the prompt for a vision-capable
+        model; a server that does not accept images answers 400/415/422, which callers treat as "no vision"."""
         if not self.s.api_key and self.s.api_url.startswith("https://llm-1.d4done.com"):
             raise ModelError("API_KEY is required for the configured model endpoint")
-        payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt}], "temperature": 0.1, "max_tokens": 3072, "stream": False, "chat_template_kwargs": {"enable_thinking": False}}).encode()
+        payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt if not images else [{"type":"text","text":prompt}, *({"type":"image_url","image_url":{"url":u}} for u in images)]}], "temperature": 0.1, "max_tokens": 3072, "stream": False, "chat_template_kwargs": {"enable_thinking": False}}).encode()
         for attempt in range(1, self.s.model_retries + 2):
             request_id = uuid.uuid4().hex[:10]; started = time.monotonic()
             req = urllib.request.Request(self.s.api_url, data=payload, headers={"Content-Type":"application/json", "User-Agent":"website-test-pipeline/0.1", **({"Authorization": f"Bearer {self.s.api_key}"} if self.s.api_key else {})})

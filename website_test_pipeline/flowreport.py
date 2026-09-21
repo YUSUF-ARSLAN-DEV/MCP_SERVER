@@ -39,6 +39,8 @@ class FlowReport:
     navigation_only: bool = False      # the outcome proves the URL changed and nothing about what the page shows
     failure: str = ""                  # which step / page broke, when the test failed
     warnings: list[str] = field(default_factory=list)
+    vision_broken: bool = False        # the latest vision rating says the final screenshot looks broken (an opinion)
+    vision_reason: str = ""
 
     @property
     def tested(self) -> bool:
@@ -118,6 +120,9 @@ def flow_warnings(fr: FlowReport) -> list[str]:
     if fr.tested and fr.passed and fr.navigation_only:
         out.append(f"flow \"{fr.title}\": passed, but its outcome only proves the URL changed - no heading, results or "
                    "new controls were observed to check what the page shows")
+    if fr.vision_broken:
+        out.append(f'flow "{fr.title}": the vision reviewer thinks the final screenshot looks broken ({fr.vision_reason}) - '
+                   "a reason to look at it, not a test failure")
     if fr.status == "stale":
         out.append(f"flow \"{fr.title}\" is stale: it failed repeatedly - re-run verify or rebuild it")
     return out
@@ -141,6 +146,9 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         navigation_only=(observed.get("effect") == "navigates" and not observed.get("new_headings")
                          and not observed.get("results") and not observed.get("new_controls")),
     )
+    latest = next((e for e in reversed(entries) if e.get("source") == "vision"), None)
+    if latest and latest.get("verdict") == "looks_broken":
+        fr.vision_broken, fr.vision_reason = True, str(latest.get("reason") or "")[:160]
     if outcome is not None and fr.failed:
         stems = [_stem(p) for p in outcome.evidence]
         fr.failure = attribute_failure(flow, stems, outcome.error, outcome.status)

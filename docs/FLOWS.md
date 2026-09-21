@@ -26,7 +26,7 @@ Add your own journeys any time, in plain words: `flows add A visitor picks a cou
 Then `flows run` again: only new or reworded sentences are expanded, and only flows that need it are re-verified.
 
 Working without the model or the site (at home, VPN down)? `flows run` skips what cannot run and says so; see
-[section 9](#9-outages-and-the-model).
+[section 10](#10-outages-and-the-model).
 
 ## 2. The stages
 
@@ -56,6 +56,7 @@ the same checks and also produces `candidate` flows.
 | `report [--combined] [--repair] [--commit]` | Runs the tests and builds the Word report. |
 | `flows list [--status S]` | Every flow, its status, its last real run. |
 | `flows show <id>` | Steps, expected vs observed, the pages it visited, the full history, any heals. |
+| `flows judge [id ...]` | A vision model looks at each tested flow's final screenshot and rates it. An opinion only: it never changes a status. |
 | `flows coverage [N]` | What the tested flows touch; N untouched controls shown per page. |
 | `flows add <sentence>` | A person adds a sentence (quotes optional). |
 | `flows edit <i-id> <sentence>` | Reword a sentence: its flow is demoted and its test removed until it is rebuilt. |
@@ -76,6 +77,7 @@ the same checks and also produces `candidate` flows.
 | `verify` | done | - | no flows, or a fragment matched nothing | no flow could be reached (site down), nothing recorded | - |
 | `flowgen` | done | flows file unreadable | no flows | - | - |
 | `flows ...` | done | a file is unreadable | user error (unknown id, missing reason) | - | - |
+| `flows judge` | something was judged, or all already had been | nothing could be judged (answers unusable) | no flow has a screenshot (`execute` first) | - | model unavailable; **5**: the model does not accept images |
 | `flows run` | fine | the tests ran and some failed | a stage could not run, or no explored pages | - | - |
 
 ## 4. Files
@@ -118,6 +120,7 @@ One list per flow id; entries are never edited or deleted.
 | `model` | the critic: `scores` (`coherence`, `importance`, `outcome_strength`, 1-5), `reason`, `kept`, `model`, `prompt_version` |
 | `runner` | `passed`, `checks` (steps completed, outcome matched, observed effect), `error`, `healed` / `heal_not_kept`, `definite` |
 | `pytest` | `passed`, `test`, `error` |
+| `vision` | `verdict` (`shows_expected`, `looks_broken`, `unclear`), `scores` (`matches_sentence`, `content_visible`), `reason`, `verified_text`, `image` (which screenshot), `model`, `prompt_version` |
 | `human` | `by`, `decision` (`approved`, `rejected`, `reset`), `reason` |
 
 ### `heuristics.json` - adapting to a site or language (optional)
@@ -192,14 +195,28 @@ Everything comes from what `verify` observed. Nothing is predicted.
 - **A sentence changed.** Editing or dropping a sentence marks its flow `edited`/`dropped` and demotes it; its test is
   removed by the next `verify` or `flowgen` until `expand` rebuilds it. Case and spacing changes do nothing.
 
-## 8. Coverage
+## 8. Judging the final screenshot
+
+A passing test proves its assertions held; it cannot notice that the last page is blank, an error page, an empty results
+area or a spinner that never finished. `flows judge` asks a vision-capable model to look at each tested flow's final
+screenshot (`99-outcome`, from the last `execute`) and rate it.
+
+- It is an **opinion**, recorded as a `vision` entry in `flow_ratings.json`. It never verifies or fails a flow and never
+  changes a status. The report shows a `looks_broken` verdict as a warning to look, next to the screenshot.
+- Code checks the model actually saw the picture: it must list a few words it can read in the screenshot, and at least
+  one must really be on that page (its headings, control names, the flow's own steps). Otherwise the answer is discarded
+  and nothing is recorded, so a model that ignores images cannot make up a verdict.
+- The same screenshot is judged once; a new screenshot is judged again. Images are downscaled before they are sent.
+- Needs a model that accepts images. A server that refuses them gives exit code 5 and nothing is written.
+
+## 9. Coverage
 
 `flows coverage` and the report's **Flow coverage** section count, per explored page, whether a tested flow visits it
 and how many of its content controls (visible, enabled links, buttons, selects, text fields; site chrome left out) a
 step acts on. Candidate and stale flows are counted separately and never as coverage. A start page that redirects to
 another explored page is counted once. `intents` and `propose` are told the uncovered parts, so new journeys aim there.
 
-## 9. Outages and the model
+## 10. Outages and the model
 
 - **Model unreachable, or up but timing out** (gateway 524, network error): `intents` and `expand` stop early, change
   nothing, and `flows run` skips them and continues.
@@ -207,7 +224,7 @@ another explored page is counted once. `intents` and `propose` are told the unco
   `execute` records no failures caused by the outage. An outage is not a failed flow.
 - **A Word report file open in Word:** the report is written as `<name>-new.docx` instead of failing.
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | You see | Cause | What to do |
 |---------|-------|------------|
@@ -218,12 +235,14 @@ another explored page is counted once. `intents` and `propose` are told the unco
 | *critic: the steps do not match the sentence* | the model's steps drifted from your wording | reword, then `expand <id>` |
 | a flow stays `candidate` after `verify` | a step failed, the outcome did not match, or the sentence promised content that never appeared | `flows show <id>` shows the reason |
 | a flow is `stale` | two failed executions in a row | fix the site, or `verify --failed-only`; healing may repair it |
+| the report warns *the vision reviewer thinks the final screenshot looks broken* | the model saw a spinner, blank or empty results at the end | open the screenshot; the test may be too weak (see the *only proves the URL changed* warning) |
+| `flows judge` exits 5 | the configured model does not accept images | point `API_URL` / the model at a vision-capable one |
 | a test disappeared after `flows edit` | its flow is waiting for the reworded sentence | `expand`, then `verify`, then `flowgen` |
 | a document journey *rejected: its quote is not in the file* | the AI paraphrased or invented a requirement | nothing to do: only journeys resting on the document's own words are kept |
 | *has no readable text* for a document | a scanned or image-only PDF | attach a text version |
 | *intents/expand skipped: model not reachable* | offline, VPN, or the model is down | run again later; the other stages already ran |
 
-## 11. Known limits
+## 12. Known limits
 
 - No login, credentials or payment flows: the AI may not write them, and `heuristics.json` can extend that list.
   A person may write any sentence and takes responsibility for it.
@@ -236,9 +255,10 @@ another explored page is counted once. `intents` and `propose` are told the unco
 - The default word lists are English. Other languages work by adding words to `heuristics.json`.
 - Documents: text is extracted by code (no OCR for scanned files); at most the first 4 parts (about 6,000 characters each)
   of a document are read per run. A requirement the explored pages cannot show is skipped, never invented.
+- The vision opinion is only as good as the model behind it; it is never used to decide a status.
 - Chromium only. One page per run; no multi-tab flows.
 
-## 12. Developing and testing
+## 13. Developing and testing
 
 - `python -m pytest tests_python -q` runs the unit tests (about a second). They include checks that this document
   names only commands, stages, statuses and heuristic keys that exist.

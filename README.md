@@ -173,6 +173,7 @@ python -m website_test_pipeline.cli flows run [--skip a,b] [--only a,b]   # the 
 python -m website_test_pipeline.cli flows list [--status verified]   # every flow, its status and last real run
 python -m website_test_pipeline.cli flows show <id>               # steps, expected vs observed, full history
 python -m website_test_pipeline.cli flows coverage [N]           # which pages/controls the tested flows touch (N untouched shown per page)
+python -m website_test_pipeline.cli flows judge [id...]         # a vision model rates each final screenshot (an opinion; never changes a status)
 python -m website_test_pipeline.cli flows approve <id> [--reason ".."]   # a person decides: never overwritten
 python -m website_test_pipeline.cli flows reject <id> --reason ".."      # stops verify and removes its test
 python -m website_test_pipeline.cli flows reset <id>              # hand the flow back to the tool
@@ -232,7 +233,7 @@ some failed, 2 a stage could not run.
 ## Known limitations
 - **Flow testing:** no login, credentials or payment journeys (the AI may not write them; a person may).
   Custom dropdowns need standard ARIA roles or common menu classes, or their selectors added in `heuristics.json`.
-  The default word lists are English (extend them per site). See [docs/FLOWS.md](docs/FLOWS.md) section 11.
+  The default word lists are English (extend them per site). See [docs/FLOWS.md](docs/FLOWS.md) section 12.
 
 - **No product spec**, so the behavioral layer verifies structure/presence, not
   correctness of behavior. This is a property of the task, not a bug.

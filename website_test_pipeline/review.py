@@ -16,7 +16,7 @@ from .ratings import RatingsFileError, append_rating, derive_status, load_rating
 
 DECISIONS = {"approve": "approved", "reject": "rejected"}
 # Every `flows <word>` the CLI accepts (add/edit/drop/intents are in intents.py, run is in cli.py); the docs are tested against this.
-SUBCOMMANDS = ("list", "show", "coverage", "approve", "reject", "reset", "add", "edit", "drop", "intents", "run")
+SUBCOMMANDS = ("list", "show", "coverage", "approve", "reject", "reset", "add", "edit", "drop", "intents", "run", "judge")
 
 
 class ReviewError(Exception):
@@ -87,6 +87,10 @@ def _rating_line(entry: dict) -> str:
     if source == "pytest":
         return (f'[pytest] {"pass" if entry.get("passed") else "FAIL"}'
                 + (f' - {_clip(entry.get("error", ""), 110)}' if entry.get("error") else ""))
+    if source == "vision":
+        s = entry.get("scores") or {}
+        return (f'[vision {entry.get("verdict")}] matches {s.get("matches_sentence")}/5, content {s.get("content_visible")}/5'
+                f' - {_clip(entry.get("reason", ""), 110)}')
     if source == "human":
         return f'[human {entry.get("by", "")}] {entry.get("decision")}' + (f' - {entry["reason"]}' if entry.get("reason") else "")
     return f"[{source}]"

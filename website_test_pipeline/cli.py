@@ -33,7 +33,7 @@ PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--traci
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
     parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report'], nargs='?', default='generate')
-    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run | (intents: <file>... requirement documents)')
+    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run | judge [id...] (a vision model rates the final screenshot) | (intents: <file>... requirement documents)')
     parser.add_argument('--reason', default='', help='flows reject/approve: why (required to reject)')
     parser.add_argument('--status', default=None, help='flows list: only flows with this status')
     parser.add_argument('--skip', default='', help='flows run: stages to skip, comma separated (intents,expand,verify,flowgen,execute)')
@@ -67,6 +67,9 @@ def main() -> int:
     if args.command == 'verify':
         from .runner import run_verify
         return run_verify(settings, log, args.words, args.failed_only)
+    if args.command == 'flows' and args.words[:1] == ['judge']:
+        from .vision import run_judge
+        return run_judge(settings, ModelClient(settings, log), log, args.words[1:])
     if args.command == 'flows' and args.words[:1] == ['run']:
         from .pipeline import parse_stage_list, run_chain
         try:
