@@ -151,3 +151,92 @@ def test_the_command_takes_an_optional_limit_and_works_with_no_flows(tmp_path):
     assert code == 0 and "pages visited 0/2" in text and "+" in text
     (tmp_path / "urls.txt").unlink()                                                     # no url list: all explored pages
     assert "pages visited 0/3" in _run(settings, "coverage")[1]
+
+
+# ------------------------------------------------------------------ the gaps reach the AI prompts
+
+class _Client:
+    def __init__(self, answer):
+        self.answer, self.prompts = answer, []
+
+    def generate(self, prompt, system):
+        self.prompts.append(prompt)
+        return self.answer
+
+
+def _prompt_settings(tmp_path, flows):
+    settings = _settings(tmp_path, flows)
+    settings.model = "m"
+    return settings
+
+
+URLS = ["https://x.test/en", "https://x.test/en/find"]
+
+
+def test_the_prompts_end_with_the_uncovered_list_only_when_there_is_one():
+    from website_test_pipeline import intents, proposer
+    gaps = "NOT YET COVERED by any tested flow (prefer journeys that reach these):" + chr(10) + "  /en/map: not acted on: Layers"
+    assert intents.prompt_for("MAP", ["a"], gaps).endswith(gaps) and proposer.prompt_for("MAP", gaps).endswith(gaps)
+    assert "NOT YET COVERED by any" not in intents.prompt_for("MAP", ["a"]) and "NOT YET COVERED by any" not in proposer.prompt_for("MAP")
+    assert "NOT YET COVERED list" in intents.RULES and "NOT YET COVERED list" in proposer.RULES     # the model is told what it means
+
+
+def test_the_prompt_versions_changed_because_the_prompts_did():
+    from website_test_pipeline import intents, proposer
+    assert intents.PROMPT_VERSION == "intents-v2" and proposer.PROMPT_VERSION == "propose-v3"
+
+
+def test_intents_aims_the_model_at_what_no_tested_flow_covers(tmp_path):
+    from website_test_pipeline.intents import run_intents
+    client = _Client(json.dumps({"intents": []}))
+    settings = _prompt_settings(tmp_path, [_flow()])
+    assert run_intents(settings, URLS, client, logging.getLogger("t")) == 0
+    prompt = client.prompts[0]
+    assert "NOT YET COVERED" in prompt and "/en: not acted on: Subscribe; Zoom in" in prompt
+
+
+def test_propose_aims_the_model_at_the_gaps_and_still_works_without_flows(tmp_path):
+    from website_test_pipeline.proposer import run_propose
+    client = _Client(json.dumps({"flows": []}))
+    assert run_propose(_prompt_settings(tmp_path, []), URLS, client, logging.getLogger("t")) == 0
+    assert "NOT YET COVERED" in client.prompts[0] and "pages no flow visits" in client.prompts[0]
+
+
+def test_nothing_is_added_to_the_prompt_when_the_tested_flows_cover_everything(tmp_path):
+    from website_test_pipeline.intents import run_intents
+    # steps 1-4 happen on /en (the first four pages in step_pages), steps 5-6 on /en/find
+    everything = [{"kind": "select", "selector": "#country", "name": "Country"}]         + [{"kind": "click", "name": n} for n in ("Search", "Subscribe", "Zoom in", "Filter results", "Details")]
+    flow = _flow(steps=everything, urls=("https://x.test/en",) * 3 + ("https://x.test/en/find",) * 3)
+    settings = _prompt_settings(tmp_path, [flow])
+    (tmp_path / "urls.txt").write_text("https://x.test/en\nhttps://x.test/en/find\n", encoding="utf-8")
+    client = _Client(json.dumps({"intents": []}))
+    inventories = [i for i in INVENTORIES if i["url"] in URLS]
+    from website_test_pipeline.coverage import compute_coverage
+    assert render_uncovered(compute_coverage(inventories, [flow])) == ""
+    assert run_intents(settings, URLS, client, logging.getLogger("t")) == 0 and "NOT YET COVERED by any" not in client.prompts[0]
+
+
+def test_a_broken_flows_file_does_not_crash_propose_before_it_can_report_it(tmp_path):
+    from website_test_pipeline.proposer import run_propose
+    settings = _prompt_settings(tmp_path, [])
+    settings.flows_file.write_text("not json", encoding="utf-8")
+    assert run_propose(settings, URLS, _Client(json.dumps({"flows": []})), logging.getLogger("t")) == 1
+
+
+# ------------------------------------------------------------------ a redirecting start page is the same page
+
+def test_a_start_page_that_redirects_to_another_explored_page_is_counted_once():
+    root = {"url": "https://x.test/", "controls": [_c("Search"), _c("Zoom in")]}
+    flow = _flow(start="https://x.test/", landed="https://x.test/en")
+    cov = compute_coverage([root, HOME, FIND], [flow])
+    assert cov.aliases == {"/": "/en"} and "/" not in [p.path for p in cov.pages] and cov.pages_total == 2
+    text = render_coverage(cov)
+    assert "counted once: / redirects to /en" in text
+    assert "/: not acted on" not in render_uncovered(cov)                     # the AI is not told to "cover" a forwarding page
+
+
+def test_a_redirect_is_only_believed_when_a_run_saw_it_and_the_target_was_explored():
+    root = {"url": "https://x.test/", "controls": [_c("Search")]}
+    assert compute_coverage([root, HOME], [_flow(start="https://x.test/", landed="https://x.test/nowhere")]).aliases == {}
+    assert compute_coverage([root, HOME], [_flow(start="https://x.test/", landed="https://x.test/en", status="candidate")]).aliases == {"/": "/en"}
+    assert compute_coverage([root, HOME], []).aliases == {}                   # never run: nothing observed, nothing merged

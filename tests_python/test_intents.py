@@ -136,7 +136,7 @@ def test_ai_sentences_are_checked_before_they_are_stored():
     ]
     added, rejected = accept_intents(rows, doc, {"/en"}, "t2", model="m")
     assert [i["id"] for i in added] == ["i-002"] and added[0]["source"] == "ai" and added[0]["start_path"] == "/en"
-    assert added[0]["proposed_by"] == {"model": "m", "prompt_version": "intents-v1"}
+    assert added[0]["proposed_by"] == {"model": "m", "prompt_version": "intents-v2"}
     reasons = " | ".join(r for _, r in rejected)
     assert "duplicate" in reasons and "reads like code" in reasons and "not explored" in reasons and "too short" in reasons
 

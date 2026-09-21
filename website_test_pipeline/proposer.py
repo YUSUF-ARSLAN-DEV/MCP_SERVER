@@ -7,12 +7,13 @@ from __future__ import annotations
 import json
 import re
 
+from .coverage import compute_coverage, render_uncovered
 from .critic import MIN_COHERENCE, rate_flows
 from .flows import FlowsFileError, flow_id, load_flows, merge_flow, describe_step, FLOWS_VERSION
 from .ratings import RatingsFileError, append_rating, load_ratings, save_ratings
 from .sitemap import build_site_map, load_inventories, render_site_map
 
-PROMPT_VERSION = "propose-v2"
+PROMPT_VERSION = "propose-v3"
 MAX_FLOWS = 6
 MAX_STEPS = 8
 MIN_STEPS = 2
@@ -36,6 +37,7 @@ RULES = (
     "- Step actions: click | select | fill | pick (pick = choose an option in a dropdown or checkbox menu). "
     "select/fill/pick may carry a value; leave it out if unsure.\n"
     "- Outcomes: navigates (give to_path) | shows_results | shows_validation | reveals_panel.\n"
+    "- If the input ends with a NOT YET COVERED list, prefer flows that reach those pages or act on those controls.\n"
     "- Do not propose flows that need an account, payment, or a real person's data. Do not repeat a flow. "
     "Do not propose a flow for a page the map does not show.\n"
     "- evidence: one sentence citing the page and controls that make you believe the flow exists.\n"
@@ -44,8 +46,10 @@ RULES = (
 ) % (MAX_FLOWS, MIN_STEPS, MAX_STEPS)
 
 
-def prompt_for(site_map_text: str) -> str:
-    return f"{RULES}\n\n{site_map_text}"
+def prompt_for(site_map_text: str, uncovered: str = "") -> str:
+    """`uncovered` (coverage.render_uncovered) lists what no tested flow touches yet, so new proposals aim there."""
+    extra = f"\n\n{uncovered}" if uncovered else ""
+    return f"{RULES}\n\n{site_map_text}{extra}"
 
 
 def _norm(text: str) -> str:
@@ -234,9 +238,15 @@ def run_propose(settings, urls: list[str], client, log) -> int:
         log.error("propose: no inventories for the URLs in %s - run explore first", settings.urls_file)
         return 2
     text = render_site_map(build_site_map(inventories))
-    log.info("propose: site map of %d page(s), %d chars", len(inventories), len(text))
     try:
-        raw_flows = parse_response(client.generate(prompt_for(text), SYSTEM))
+        known = load_flows(settings.flows_file)["flows"]
+    except FlowsFileError:
+        known = []                       # reported properly below; coverage just has nothing to go on
+    uncovered = render_uncovered(compute_coverage(inventories, known))
+    log.info("propose: site map of %d page(s), %d chars%s", len(inventories), len(text),
+             ", aiming at what no tested flow covers yet" if uncovered else "")
+    try:
+        raw_flows = parse_response(client.generate(prompt_for(text, uncovered), SYSTEM))
     except Exception as exc:
         log.error("propose: model response unusable (%s)", exc)
         return 1

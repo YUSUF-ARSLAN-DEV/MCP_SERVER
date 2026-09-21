@@ -43,6 +43,7 @@ class Coverage:
     pages: list[PageCoverage] = field(default_factory=list)
     tested_flows: int = 0
     planned_flows: int = 0          # candidate or stale: written but not (or no longer) backed by a passing run
+    aliases: dict[str, str] = field(default_factory=dict)   # start page -> the page it redirects to (counted once)
 
     @property
     def pages_total(self) -> int:
@@ -130,6 +131,15 @@ def compute_coverage(inventories: list[dict], flows: list[dict]) -> Coverage:
         path = _path(inv.get("url", ""))
         if path not in by_page:                                   # the same page explored twice counts once
             by_page[path] = PageCoverage(path=path, url=inv.get("url", ""))
+    # A start page that a run showed redirecting to another explored page (/ -> /en) is the same page: counting
+    # it twice would tell the AI to "cover" a page that only forwards.
+    for flow in flows:
+        observed = flow.get("observed") or {}
+        start, landed = _path(flow.get("start_url", "")), _path(observed.get("landed_url") or "")
+        if observed.get("landed_url") and start != landed and start in by_page and landed in by_page:
+            coverage.aliases[start] = landed
+    for alias in coverage.aliases:
+        by_page.pop(alias, None)
     inv_by_path = {_path(i.get("url", "")): i for i in inventories}
     acted: dict[str, list[dict]] = {p: [] for p in by_page}
     for flow in tested:
@@ -171,6 +181,8 @@ def render_coverage(coverage: Coverage, limit: int = 4) -> str:
         rest = len(p.untouched) - limit
         shown = "; ".join(p.untouched[:limit]) + (f"; +{rest} more" if rest > 0 else "")
         lines.append(f'{p.path:<{width}}  {"yes" if p.visited else "no ":<7}  {f"{p.touched}/{p.total}":<7}  {shown}')
+    if coverage.aliases:
+        lines += ["", "counted once: " + ", ".join(f"{a} redirects to {b}" for a, b in sorted(coverage.aliases.items()))]
     return "\n".join(lines)
 
 

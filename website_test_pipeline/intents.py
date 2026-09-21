@@ -20,10 +20,11 @@ import re
 from pathlib import Path
 
 from . import heuristics
+from .coverage import compute_coverage, render_uncovered
 from .sitemap import build_site_map, load_inventories, render_site_map
 
 INTENTS_VERSION = 1
-PROMPT_VERSION = "intents-v1"
+PROMPT_VERSION = "intents-v2"
 MAX_NEW = 8
 MIN_LEN, MAX_LEN = 15, 240
 DUPLICATE_OVERLAP = 0.8
@@ -41,7 +42,8 @@ RULES = (
     "- Only journeys the SITE MAP supports. Do not invent pages, buttons, or results.\n"
     "- Never a journey that needs an account, password, payment or a real person's data, a language switch, or one "
     "that only shows widgets appearing. Each sentence must describe something a visitor achieves.\n"
-    "- Do not repeat or reword anything in EXISTING.\n"
+    "- Do not repeat or reword anything in EXISTING. If the input ends with a NOT YET COVERED list, prefer journeys "
+    "that reach those pages or act on those controls.\n"
     "- start_path is the page the visitor starts on (a path from the SITE MAP). evidence is one sentence citing the "
     "page and controls that make you believe the journey exists.\n"
     'Output: {"intents":[{"sentence":"...","start_path":"/...","evidence":"..."}]}'
@@ -273,9 +275,11 @@ def render_intents(doc: dict) -> str:
 
 # ------------------------------------------------------------------ AI writes the sentences
 
-def prompt_for(site_map_text: str, existing: list[str]) -> str:
+def prompt_for(site_map_text: str, existing: list[str], uncovered: str = "") -> str:
+    """`uncovered` (coverage.render_uncovered) lists what no tested flow touches yet, so new sentences aim there."""
     shown = "\n".join(f"- {s}" for s in existing[:40]) or "(none yet)"
-    return f"{RULES}\n\nEXISTING\n{shown}\n\n{site_map_text}"
+    extra = f"\n\n{uncovered}" if uncovered else ""
+    return f"{RULES}\n\nEXISTING\n{shown}\n\n{site_map_text}{extra}"
 
 
 def first_json_object(raw: str):
@@ -335,7 +339,8 @@ def run_intents(settings, urls: list[str], client, log) -> int:
     site_map = build_site_map(inventories)
     existing = [i["sentence"] for i in doc["intents"] if i.get("status") != "dropped"] + [f.get("goal", "") for f in flows]
     try:
-        rows = parse_response(client.generate(prompt_for(render_site_map(site_map), existing), SYSTEM))
+        uncovered = render_uncovered(compute_coverage(inventories, flows))
+        rows = parse_response(client.generate(prompt_for(render_site_map(site_map), existing, uncovered), SYSTEM))
     except Exception as exc:
         log.error("intents: model response unusable (%s)", exc)
         return 1

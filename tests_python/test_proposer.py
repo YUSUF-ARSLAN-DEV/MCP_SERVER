@@ -42,7 +42,7 @@ def test_valid_flow_becomes_a_candidate_with_full_start_url():
     assert flow["start_url"] == "https://x.test/en"
     assert [s["kind"] for s in flow["steps"]] == ["select", "click"]
     assert flow["outcome"] == {"effect": "navigates", "to": "/en/find"}
-    assert flow["proposed_by"] == {"model": "m", "prompt_version": "propose-v2"}
+    assert flow["proposed_by"] == {"model": "m", "prompt_version": "propose-v3"}
 
 def test_unknown_control_rejects_the_whole_flow():
     bad = _flow(steps=[{"page": "/en", "action": "click", "target": "Buy now"}, {"page": "/en", "action": "click", "target": "Search"}])
