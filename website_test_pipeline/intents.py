@@ -342,6 +342,10 @@ def run_intents(settings, urls: list[str], client, log) -> int:
         uncovered = render_uncovered(compute_coverage(inventories, flows))
         rows = parse_response(client.generate(prompt_for(render_site_map(site_map), existing, uncovered), SYSTEM))
     except Exception as exc:
+        from .llm import is_unavailable
+        if is_unavailable(exc):
+            log.error("intents: the model is unavailable (%s) - nothing was changed; run it again when it is back", exc)
+            return 4
         log.error("intents: model response unusable (%s)", exc)
         return 1
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")

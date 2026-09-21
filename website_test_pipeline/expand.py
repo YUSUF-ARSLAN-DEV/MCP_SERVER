@@ -211,6 +211,10 @@ def _flow_signatures(flows: list[dict], skip_id: str | None) -> dict[tuple, str]
     return {_signature(f.get("steps") or []): f["id"] for f in flows if f.get("id") != skip_id}
 
 
+class ModelDown(Exception):
+    """The model service itself is unavailable (down, unreachable, timing out): stop asking, do not retry per sentence."""
+
+
 def expand_intent(intent: dict, client, inventories: list[dict], site_map: dict, site_map_text: str,
                   flows: list[dict], model: str, now: str, log=None) -> tuple[dict | None, dict | None, str]:
     """Try to build one flow. Returns (flow, rating entry, '') on success, (None, None, reason) when the sentence
@@ -218,6 +222,9 @@ def expand_intent(intent: dict, client, inventories: list[dict], site_map: dict,
     try:
         raw, cannot = parse_expansion(client.generate(prompt_for(intent["sentence"], intent.get("start_path"), site_map_text), SYSTEM))
     except Exception as exc:
+        from .llm import is_unavailable
+        if is_unavailable(exc):
+            raise ModelDown(str(exc)) from exc
         if log:
             log.warning("expand: %s - model answer unusable (%s); will retry", intent["id"], exc)
         return None, None, ""
@@ -303,9 +310,15 @@ def run_expand(settings, urls: list[str], client, log, only: list[str] | None = 
     site_map_text = render_site_map(site_map)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     built = failed = retry = 0
+    model_down = False
     for intent in todo:
-        flow, rating, reason = expand_intent(intent, client, inventories, site_map, site_map_text,
-                                             flows["flows"], settings.model, now, log)
+        try:
+            flow, rating, reason = expand_intent(intent, client, inventories, site_map, site_map_text,
+                                                 flows["flows"], settings.model, now, log)
+        except ModelDown as exc:
+            log.error("expand: the model is unavailable (%s) - stopping; the remaining sentences stay as they were", exc)
+            model_down = True
+            break
         if flow is None and not reason:
             retry += 1                      # transient model trouble: leave the intent as it was
             continue
@@ -335,4 +348,6 @@ def run_expand(settings, urls: list[str], client, log, only: list[str] | None = 
     save_flows(settings.flows_file, flows)
     save_ratings(settings.ratings_file, ratings)
     log.info("EXPAND SUMMARY sentences=%d built=%d unbuildable_or_kept=%d retry_later=%d", len(todo), built, failed, retry)
+    if model_down:
+        return 4                            # 4: the model service is unavailable (nothing else went wrong)
     return 1 if retry else 0

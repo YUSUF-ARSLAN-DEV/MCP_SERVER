@@ -216,7 +216,7 @@ demotes its flow so a stale test is never kept.
 **Verify:** unit tests with a renamed selector; real re-verify on sat-stg.
 **Commit:** `feat(flows): stale detection and deterministic selector healing`
 
-### Step 14 - Flow coverage and a closed loop
+### Step 14 - Flow coverage and a closed loop - DONE
 
 **Why:** know what journeys are still untested and let `propose` target them.
 **Files:** `sitemap.py`, `proposer.py`, `report.py`, tests.
@@ -268,11 +268,11 @@ detail when we reach it.
 | &nbsp;&nbsp;13a `verify [id...] [--failed-only]` | done, pushed |
 | &nbsp;&nbsp;13b heal a control that moved or was renamed | done, pushed |
 | &nbsp;&nbsp;13c heal a default option that returns no content (+ explorer records up to 300 options) | done, pushed |
-| 14 flow coverage + closed loop (4 commits) | in progress: |
+| 14 flow coverage + closed loop (4 commits, plus an outage fix) | done: |
 | &nbsp;&nbsp;14a coverage metric + `flows coverage` | done, pushed |
 | &nbsp;&nbsp;14b uncovered areas fed into the `intents` / `propose` prompts | done, pushed |
 | &nbsp;&nbsp;14c coverage section in the Word report | done, pushed |
-| &nbsp;&nbsp;14d `flows run` chain (intents, expand, verify, flowgen, execute) | todo |
+| &nbsp;&nbsp;14d `flows run` chain (intents, expand, verify, flowgen, execute) | done, pushed |
 | 15 docs | todo |
 | 16 vision + attached docs | todo (last) |
 

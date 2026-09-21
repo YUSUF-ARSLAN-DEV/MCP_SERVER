@@ -166,6 +166,7 @@ python -m website_test_pipeline.cli verify --failed-only            # only flows
 python -m website_test_pipeline.cli verify <id-fragment>...        # only the flows whose id contains it
 python -m website_test_pipeline.cli flowgen                       # write a pytest spec for each verified/approved flow
 python -m website_test_pipeline.cli execute                       # run all specs; flow results feed flow_ratings.json
+python -m website_test_pipeline.cli flows run [--skip a,b] [--only a,b]   # the whole chain: intents, expand, verify, flowgen, execute
 python -m website_test_pipeline.cli flows list [--status verified]   # every flow, its status and last real run
 python -m website_test_pipeline.cli flows show <id>               # steps, expected vs observed, full history
 python -m website_test_pipeline.cli flows coverage [N]           # which pages/controls the tested flows touch (N untouched shown per page)
@@ -216,6 +217,12 @@ extra entries; they are added to the defaults, or replace them if the key is lis
 A word ending in `*` matches any ending (`result*`). A missing or malformed file falls back to the
 defaults with a warning. The same file is read by the runner and by the generated specs, so a flow is
 tested the way it was verified.
+
+**One command, and it survives an outage.** `flows run` runs the five stages in order and prints what happened to
+each. If the model cannot be reached (offline, VPN down) or times out, the two AI stages are skipped and the rest
+still run; if the site cannot be reached, `verify` and `execute` are skipped and nothing is recorded against your
+flows (an outage is not a failed flow). It ends with the coverage line. Exit code: 0 fine, 1 generated tests ran and
+some failed, 2 a stage could not run.
 
 `generate` and `execute` work as before. `report` now shows flow tests in their own **User flows** section instead of mixing them in with the page tests: the plain sentence as the title, the journey step by step with the page each step landed on, expected vs observed, where it broke when it failed (which step, which page), and the recorded history. Flows with no test result are listed separately. If a report file is open in Word, a `-new` copy is written instead of failing. It also has a **Flow coverage** section: pages visited and content controls acted on by a tested flow, with the untouched ones per page (site chrome left out).
 

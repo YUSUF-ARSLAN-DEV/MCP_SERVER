@@ -10,6 +10,18 @@ class ModelError(RuntimeError):
     def __init__(self, message: str, *, status: int | None = None, body: str = ""):
         super().__init__(message); self.status = status; self.body = body
 
+# HTTP statuses that mean "the model service is not available", as opposed to "it answered badly".
+UNAVAILABLE = {401, 403, 429, 500, 502, 503, 504, 524, 530}
+
+
+def is_unavailable(exc: BaseException) -> bool:
+    """True when a failed model call says the service is down, unreachable, timing out or refusing us (so trying the
+    next sentence or stage is pointless), False when the model answered but the answer was unusable."""
+    if isinstance(exc, ModelError):
+        return exc.status in UNAVAILABLE
+    return isinstance(exc, (urllib.error.URLError, TimeoutError, OSError))
+
+
 def diagnose_error(status: int | None, body: str = "", message: str = "") -> str:
     text = f"{message} {body}".lower()
     if status in {401, 403}:

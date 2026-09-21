@@ -33,9 +33,11 @@ PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--traci
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
     parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report'], nargs='?', default='generate')
-    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents')
+    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run')
     parser.add_argument('--reason', default='', help='flows reject/approve: why (required to reject)')
     parser.add_argument('--status', default=None, help='flows list: only flows with this status')
+    parser.add_argument('--skip', default='', help='flows run: stages to skip, comma separated (intents,expand,verify,flowgen,execute)')
+    parser.add_argument('--only', default='', help='flows run: run only these stages')
     parser.add_argument('--failed-only', action='store_true', help='verify: only flows that are candidate or stale (re-check after a site change)')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
@@ -65,6 +67,13 @@ def main() -> int:
     if args.command == 'verify':
         from .runner import run_verify
         return run_verify(settings, log, args.words, args.failed_only)
+    if args.command == 'flows' and args.words[:1] == ['run']:
+        from .pipeline import parse_stage_list, run_chain
+        try:
+            run_urls = read_urls(settings.urls_file)
+        except OSError:
+            run_urls = []
+        return run_chain(settings, run_urls, log, parse_stage_list(args.skip), parse_stage_list(args.only))
     if args.command == 'flows':
         from .review import run_flows_command
         return run_flows_command(settings, args.words, args.reason, args.status)
@@ -82,10 +91,8 @@ def main() -> int:
         from .proposer import run_propose
         return run_propose(settings, urls, ModelClient(settings, log), log)
     if args.command == 'execute':
-        result = subprocess.run([sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q'], cwd=settings.root, env=pytest_env)
-        from .flowresults import feed_results
-        feed_results(settings, log)
-        return result.returncode
+        from .pipeline import run_execute
+        return run_execute(settings, log)
     if args.command == 'report':
         from . import report as report_mod
         pw_out = settings.artifacts_dir/'pw'
