@@ -85,7 +85,7 @@ def fake_browser(monkeypatch):
 
         def goto(self, *a, **k): pass
 
-    def do_step(page, step):
+    def do_step(page, step, seen=None):
         log["steps"].append((step.get("selector"), step.get("name")))
         if step.get("selector") == "#old-search":
             raise RuntimeError("control not found")
@@ -131,7 +131,7 @@ def test_no_replacement_gives_a_clear_reason(fake_browser, monkeypatch):
 def test_a_replacement_that_also_fails_is_reported_and_not_kept(fake_browser, monkeypatch):
     page, _ = fake_browser
 
-    def always_fail(page, step):
+    def always_fail(page, step, seen=None):
         raise RuntimeError("control not found" if step.get("selector") == "#old-search" else "Timeout 2000ms exceeded")
 
     monkeypatch.setattr(runner, "_do_step", always_fail)
@@ -141,7 +141,7 @@ def test_a_replacement_that_also_fails_is_reported_and_not_kept(fake_browser, mo
 
 def test_other_failures_are_not_treated_as_a_missing_control(fake_browser, monkeypatch):
     page, log = fake_browser
-    monkeypatch.setattr(runner, "_do_step", lambda p, s: (_ for _ in ()).throw(RuntimeError("no selectable option")))
+    monkeypatch.setattr(runner, "_do_step", lambda p, s, seen=None: (_ for _ in ()).throw(RuntimeError("no selectable option")))
     result = run_flow(page, _flow(), heal=True)
     assert not result["ok"] and result["heals"] == [] and "no selectable option" in result["error"]
 
@@ -245,3 +245,105 @@ def test_names_are_matched_exactly_or_by_prefix_when_cut_like_the_generated_spec
     runner._by_role(_Page(), "link", long_name)
     role, name, exact = calls[-1]
     assert role == "link" and isinstance(name, re.Pattern) and name.search(long_name + " and more") and exact is None
+
+
+# ------------------------------------------------------------------ choosing another option when the default shows nothing
+
+def _promise_flow(status="candidate", value=None):
+    return {"id": "f", "source": "intent", "status": status, "goal": "A visitor picks a country and sees the results.",
+            "start_url": "https://x.test/en", "outcome": {"effect": "navigates", "to": "/en/find"},
+            "steps": [{"kind": "select", "selector": "#country", "name": "Country", "value": value},
+                      {"kind": "click", "selector": None, "name": "Search"}]}
+
+
+def _run_result(content, choices=None):
+    observed = {"effect": "navigates", "url": "https://x.test/en/find", "new_headings": ["Results"] if content else [],
+                "new_controls": [], "results": []}
+    return {"ok": True, "steps_done": 2, "steps_total": 2, "error": None, "step_effects": ["no-visible-change", "navigates"],
+            "step_urls": ["a", "b"], "landed_url": "a", "heals": [], "observed": observed,
+            "select_choices": choices if choices is not None else {}}
+
+
+DEFAULTED = {0: {"options": ["Afghanistan", "Albania", "Algeria", "Andorra"], "chosen": "Afghanistan"}}
+
+
+def test_judge_gives_the_verdict_without_recording_anything():
+    from website_test_pipeline.runner import judge
+    flow = _promise_flow()
+    assert judge(flow, _run_result(True))["passed"] is True
+    empty = judge(flow, _run_result(False))
+    assert empty["passed"] is False and empty["promised"] is True and empty["matched"] and empty["changed"]
+    assert "observed" not in flow and flow["status"] == "candidate"               # judging changes nothing
+
+
+def test_the_next_options_are_tried_in_order_until_one_shows_content():
+    from website_test_pipeline.runner import try_other_options
+    tried = []
+
+    def run_once(overrides):
+        tried.append(overrides[0])
+        return _run_result(content=overrides[0] == "Algeria", choices=DEFAULTED)
+
+    better = try_other_options(_promise_flow(), _run_result(False, DEFAULTED), run_once)
+    assert tried == ["Albania", "Algeria"]                                          # the default is not retried; it stops at the first hit
+    heal = better["heals"][-1]
+    assert heal["kind"] == "option" and heal["step"] == 1 and heal["now"] == {"value": "Algeria"}
+    assert '"Afghanistan"' in heal["how"] and '"Algeria"' in heal["how"]
+
+
+def test_the_search_is_bounded_and_gives_up_without_changing_the_result():
+    from website_test_pipeline.runner import try_other_options, MAX_OPTION_TRIES
+    calls = []
+    original = _run_result(False, DEFAULTED | {0: {"options": [f"C{n}" for n in range(30)], "chosen": "C0"}})
+    out = try_other_options(_promise_flow(), original, lambda o: calls.append(o) or _run_result(False))
+    assert out is original and len(calls) == MAX_OPTION_TRIES
+
+
+def test_a_step_with_a_value_already_chosen_by_someone_is_never_changed():
+    from website_test_pipeline.runner import try_other_options
+    calls = []
+    original = _run_result(False, DEFAULTED)
+    assert try_other_options(_promise_flow(value="Afghanistan"), original, lambda o: calls.append(o)) is original and calls == []
+
+
+def test_a_trial_that_crashes_is_skipped_not_fatal():
+    from website_test_pipeline.runner import try_other_options
+
+    def run_once(overrides):
+        if overrides[0] == "Albania":
+            raise RuntimeError("browser died")
+        return _run_result(True, DEFAULTED)
+
+    assert try_other_options(_promise_flow(), _run_result(False, DEFAULTED), run_once)["heals"][-1]["now"]["value"] == "Algeria"
+
+
+def test_a_chosen_option_becomes_the_steps_explicit_value_and_is_remembered():
+    from website_test_pipeline.runner import try_other_options
+    flow = _promise_flow()
+    better = try_other_options(flow, _run_result(False, DEFAULTED), lambda o: _run_result(True, DEFAULTED))
+    evaluation = apply_result(flow, better, "t1")
+    assert evaluation["passed"] and flow["status"] == "verified" and evaluation["healed"][0]["kind"] == "option"
+    assert flow["steps"][0]["value"] == "Albania"                                   # the spec will now select this label
+    assert flow["heal_history"][0]["now"] == {"value": "Albania"} and flow["heal_history"][0]["at"] == "t1"
+
+
+def test_the_option_history_reads_clearly_for_a_person():
+    heal = {"at": "2026-09-21T10:00:00", "kind": "option", "step": 1, "how": 'the default option "A" showed no content; "B" does',
+            "was": {"value": None, "name": "Country"}, "now": {"value": "B"}}
+    flow = dict(_promise_flow(), goal="g", observed=None, heal_history=[heal])
+    text = render_show(flow, [])
+    assert 'the default option "A" showed no content; "B" does' in text
+    line = _rating_line({"source": "runner", "passed": True, "checks": {"steps_completed": "2/2", "observed_effect": "navigates"},
+                         "healed": [heal]})
+    assert "healed step 1" in line and '"B" does' in line and "None" not in line
+
+
+def test_real_options_leave_out_placeholders():
+    class _Sel:
+        def evaluate(self, js):
+            return [{"v": "", "t": "Please select a country"}, {"v": "1", "t": "Egypt"}, {"v": "-1", "t": "All"}, {"v": "2", "t": "Qatar"}]
+
+    assert runner._real_options(_Sel()) == ["Egypt", "Qatar"]
+    class _Broken:
+        def evaluate(self, js): raise RuntimeError("detached")
+    assert runner._real_options(_Broken()) == []

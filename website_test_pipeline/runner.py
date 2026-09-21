@@ -13,7 +13,7 @@ from difflib import SequenceMatcher
 from urllib.parse import urlsplit
 
 from .explorer import (
-    _CONTROL_SEL, _CONTROLS_JS, _HEADINGS_JS, _RESULTS_JS, _RESULTS_SEL,
+    _PLACEHOLDER_OPT, _PLACEHOLDER_VAL, _CONTROL_SEL, _CONTROLS_JS, _HEADINGS_JS, _RESULTS_JS, _RESULTS_SEL,
     _close_menus, _pick_multiselect, _plausible_value, _select_first_real,
 )
 from . import heuristics
@@ -126,20 +126,32 @@ def _apply_heals(flow: dict, heals: list[dict], now: str) -> None:
     for heal in heals:
         index = heal["step"] - 1
         if 0 <= index < len(steps):
-            steps[index]["selector"] = heal["now"]["selector"]
-            steps[index]["name"] = heal["now"]["name"]
-            if heal["now"].get("role"):
-                steps[index]["role"] = heal["now"]["role"]
+            if heal.get("kind") == "option":
+                steps[index]["value"] = heal["now"]["value"]
+            else:
+                steps[index]["selector"] = heal["now"]["selector"]
+                steps[index]["name"] = heal["now"]["name"]
+                if heal["now"].get("role"):
+                    steps[index]["role"] = heal["now"]["role"]
             flow.setdefault("heal_history", []).append({"at": now, **heal})
+
+
+def judge(flow: dict, result: dict) -> dict:
+    """The verdict on one run, without recording anything: did every step run, did the outcome match the
+    prediction, did anything change, and - for a flow built from a sentence that promises content - was there any."""
+    observed = result["observed"]
+    matched = bool(result["ok"] and outcome_matches(flow.get("outcome") or {}, observed))
+    changed = observed["effect"] != "no-visible-change"
+    promised = sentence_expects_content(flow) and not content_shown(observed, flow)
+    return {"matched": matched, "changed": changed, "promised": promised,
+            "passed": bool(result["ok"] and matched and changed and not promised)}
 
 
 def apply_result(flow: dict, result: dict, now: str) -> dict:
     """Update the flow from a run and return the evaluation entry for flow_ratings.json."""
     observed = result["observed"]
-    matched = result["ok"] and outcome_matches(flow.get("outcome") or {}, observed)
-    changed = observed["effect"] != "no-visible-change"
-    promised = sentence_expects_content(flow) and not content_shown(observed, flow)
-    passed = bool(result["ok"] and matched and changed and not promised)
+    verdict = judge(flow, result)
+    matched, changed, promised, passed = verdict["matched"], verdict["changed"], verdict["promised"], verdict["passed"]
     heals = result.get("heals") or []
     flow["observed"] = {**observed, "step_effects": result["step_effects"],
                         "landed_url": result.get("landed_url"), "step_urls": result.get("step_urls", [])}
@@ -312,7 +324,18 @@ def _locate(page, step: dict):
     return None
 
 
-def _do_step(page, step: dict) -> None:
+def _real_options(loc) -> list[str]:
+    """The labels of a <select>'s real options (placeholders like "Please select" left out), read from the live page."""
+    try:
+        opts = loc.evaluate("el => [...el.options].map(o => ({v: o.value, t: (o.textContent||'').trim()}))")
+    except Exception:
+        return []
+    return [(o.get("t") or o.get("v") or "") for o in opts
+            if (o.get("v") or "").strip().lower() not in _PLACEHOLDER_VAL and not _PLACEHOLDER_OPT.match(o.get("t") or "")
+            and (o.get("t") or o.get("v"))]
+
+
+def _do_step(page, step: dict, seen: dict | None = None) -> None:
     loc = _locate(page, step)
     if loc is None:
         raise RuntimeError("control not found")
@@ -324,8 +347,12 @@ def _do_step(page, step: dict) -> None:
                 return
             except Exception:
                 pass
-        if _select_first_real(loc) is None:
+        options = _real_options(loc)
+        chosen = _select_first_real(loc)
+        if chosen is None:
             raise RuntimeError("no selectable option")
+        if seen is not None:
+            seen.update(options=options, chosen=chosen)      # so a default that shows nothing can be swapped for another
     elif kind == "fill":
         loc.fill(str(step.get("value") or _plausible_value({})), timeout=2000)
     elif kind == "multiselect" and step.get("value"):
@@ -345,13 +372,16 @@ def _do_step(page, step: dict) -> None:
             loc.click(timeout=3000)
 
 
-def run_flow(page, flow: dict, log=None, heal: bool = False) -> dict:
+def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | None = None) -> dict:
     """Run a flow. With heal=True a step whose control is gone is retried with the one control on the page that can
     stand in for it (find_replacement); every heal is recorded in result["heals"] and only kept if the whole run
     passes (apply_result). With heal=False the failure names the control that looks like the missing one."""
-    steps = flow.get("steps") or []
+    steps = [dict(s) for s in (flow.get("steps") or [])]
+    for index, value in (overrides or {}).items():            # try_other_options: a specific option for a defaulted select
+        if 0 <= index < len(steps):
+            steps[index]["value"] = value
     result = {"ok": False, "steps_done": 0, "steps_total": len(steps), "error": None,
-              "step_effects": [], "step_urls": [], "landed_url": None, "heals": []}
+              "step_effects": [], "step_urls": [], "landed_url": None, "heals": [], "select_choices": {}}
     try:
         page.goto(flow["start_url"], wait_until="domcontentloaded")
         settle_page(page)
@@ -363,8 +393,11 @@ def run_flow(page, flow: dict, log=None, heal: bool = False) -> dict:
     first = previous = take_snapshot(page)
     result["landed_url"] = first["url"]  # where the start URL really ended up (it may redirect)
     for index, step in enumerate(steps):
+        seen: dict = {}
         try:
-            _do_step(page, step)
+            _do_step(page, step, seen)
+            if seen.get("options"):
+                result["select_choices"][index] = seen
         except Exception as exc:
             reason = str(exc).splitlines()[0][:120] if str(exc) else exc.__class__.__name__
             hint = ""
@@ -403,6 +436,37 @@ def run_flow(page, flow: dict, log=None, heal: bool = False) -> dict:
 
 def _empty(flow: dict) -> dict:
     return {"url": flow.get("start_url", ""), "headings": [], "controls": [], "results": []}
+
+
+MAX_OPTION_TRIES = 4        # other options tried when the default one shows nothing
+
+
+def try_other_options(flow: dict, result: dict, run_once, tries: int = MAX_OPTION_TRIES) -> dict:
+    """A flow built from a sentence that promises content, whose select has no chosen value, ran with the default
+    (first real) option and the page showed nothing: that combination may simply have no data (a filter that
+    matches nothing). Try up to `tries` other real options, in order; the first run that passes is returned with
+    the option recorded as a heal (kept only if the run passes, see apply_result), else the original result.
+    run_once(overrides) -> a fresh run with {step index: option label}. Never used for a flow a person decided."""
+    choices = result.get("select_choices") or {}
+    for index in sorted(choices):
+        step = (flow.get("steps") or [])[index] if index < len(flow.get("steps") or []) else {}
+        if step.get("value"):
+            continue
+        default, options = choices[index].get("chosen"), choices[index].get("options") or []
+        for option in [o for o in options if o != default][:tries]:
+            try:
+                trial = run_once({index: option})
+            except Exception:
+                continue
+            steps = [dict(s, value=option) if i == index else s for i, s in enumerate(flow.get("steps") or [])]
+            if judge(dict(flow, steps=steps), trial)["passed"]:
+                trial["heals"] = list(trial.get("heals") or []) + [{
+                    "kind": "option", "step": index + 1,
+                    "how": f'the default option "{default}" showed no content; "{option}" does',
+                    "was": {"value": None, "name": step.get("name")}, "now": {"value": option}}]
+                return trial
+        return result                    # only the first defaulted select is explored: one at a time
+    return result
 
 
 def select_flows(flows: list[dict], only: list[str] | None = None, failed_only: bool = False) -> tuple[list[dict], list[str]]:
@@ -457,6 +521,21 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                               "observed": classify(diff_snapshots(_empty(flow), _empty(flow)))}
                 finally:
                     context.close()
+                if flow.get("status") not in HUMAN_STATUSES and result.get("ok"):
+                    verdict = judge(flow, result)
+                    if verdict["promised"] and verdict["matched"] and verdict["changed"]:
+                        def run_once(overrides, flow=flow):
+                            ctx = browser.new_context()
+                            try:
+                                trial_page = ctx.new_page()
+                                trial_page.set_default_navigation_timeout(settings.navigation_timeout_ms)
+                                return run_flow(trial_page, flow, log, heal=True, overrides=overrides)
+                            finally:
+                                ctx.close()
+                        better = try_other_options(flow, result, run_once)
+                        if better is not result:
+                            log.info("verify: %s - %s", flow["id"], better["heals"][-1]["how"])
+                        result = better
                 now = datetime.now(timezone.utc).isoformat(timespec="seconds")
                 before = flow.get("status")
                 evaluation = apply_result(flow, result, now)

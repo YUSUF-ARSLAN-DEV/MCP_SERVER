@@ -202,7 +202,7 @@ demotes its flow so a stale test is never kept.
 **Verify:** unit tests; `report` on sat-stg and open the `.docx`.
 **Commit:** `feat(report): flows section with per-hop failure attribution`
 
-### Step 13 - Staleness and healing
+### Step 13 - Staleness and healing - DONE
 
 **Why:** sites change; a flow whose control disappeared should be flagged, then fixed.
 **Files:** `runner.py`/`flows.py`, `cli.py`, tests.
@@ -264,10 +264,10 @@ detail when we reach it.
 | 11e expand sentence -> steps | done, pushed |
 | 11f sync, safeguards, acceptance, docs | done, pushed |
 | 12 report flows section | done, pushed (`flowreport.py`, User flows section, failure attribution) |
-| 13 staleness + healing (3 commits) | in progress: |
+| 13 staleness + healing (3 commits) | done: |
 | &nbsp;&nbsp;13a `verify [id...] [--failed-only]` | done, pushed |
 | &nbsp;&nbsp;13b heal a control that moved or was renamed | done, pushed |
-| &nbsp;&nbsp;13c heal a default option that returns no content (+ explorer records up to 300 options) | todo |
+| &nbsp;&nbsp;13c heal a default option that returns no content (+ explorer records up to 300 options) | done, pushed |
 | 14 coverage + chain | todo |
 | 15 docs | todo |
 | 16 vision + attached docs | todo (last) |

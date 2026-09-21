@@ -122,7 +122,7 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             // value list is often opaque Drupal/WP term ids it then can't match
             // (or hallucinates a label for). Fall back to the value when an
             // <option> has no text.
-            options: e.tagName === 'SELECT' ? [...e.options].slice(0,25).map(o => (o.textContent||'').trim().slice(0,60) || o.value) : null
+            options: e.tagName === 'SELECT' ? [...e.options].slice(0,300).map(o => (o.textContent||'').trim().slice(0,60) || o.value) : null
         };
     });
 }"""

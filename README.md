@@ -189,6 +189,11 @@ Rules that keep the generated tests trustworthy:
   ONE control that can stand in for it. Several candidates, or none, means no healing. The change is kept
   only if the whole run then passes, the old values stay in `heal_history` (`flows show`), and a flow a person
   approved or rejected is never rewritten: the error only says which control looks like the missing one.
+- **A default that shows nothing is tried again.** A flow built from a sentence that promises content, whose
+  select has no chosen value, runs with the first real option. If the page then shows nothing (that value may
+  simply have no data), `verify` tries up to 4 other real options and keeps the first that shows content as the
+  flow's explicit value (so its test is deterministic), recording why in `heal_history`. A value someone chose,
+  and any flow a person decided, is never changed.
 - **History is append-only** (`flow_ratings.json`): who judged (model, runner, pytest, human), when, and
   why. Two failed runs in a row make a verified flow `stale`; one is tolerated.
 - The AI may not write sentences that need credentials or payment, switch language, or only describe

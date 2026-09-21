@@ -77,7 +77,8 @@ def _rating_line(entry: dict) -> str:
                 f'{s.get("importance")} outcome {s.get("outcome_strength")} - {_clip(entry.get("reason", ""), 110)}')
     if source == "runner":
         c = entry.get("checks") or {}
-        healed = "".join(f' | healed step {h["step"]}: {h["how"]} ({h["was"].get("name")} -> {h["now"].get("name")})'
+        healed = "".join(f' | healed step {h["step"]}: {h["how"]}'
+                         + ("" if h.get("kind") == "option" else f' ({h["was"].get("name")} -> {h["now"].get("name")})')
                          for h in entry.get("healed") or [])
         return (f'[runner] {"pass" if entry.get("passed") else "FAIL"} steps {c.get("steps_completed")} '
                 f'observed {c.get("observed_effect")}' + healed + (f' - {entry["error"]}' if entry.get("error") else ""))
@@ -112,8 +113,11 @@ def render_show(flow: dict, entries: list[dict]) -> str:
         out.append("  healed (the tool re-found a control that moved or was renamed; the old values are kept here):")
         for heal in flow["heal_history"]:
             was, now = heal.get("was") or {}, heal.get("now") or {}
-            out.append(f'    {heal.get("at", "")[:19]}  step {heal.get("step")}: {heal.get("how")} - '
-                       f'was {was.get("selector") or was.get("name")!r}, now {now.get("selector") or now.get("name")!r}')
+            if heal.get("kind") == "option":
+                out.append(f'    {heal.get("at", "")[:19]}  step {heal.get("step")}: {heal.get("how")}')
+            else:
+                out.append(f'    {heal.get("at", "")[:19]}  step {heal.get("step")}: {heal.get("how")} - '
+                           f'was {was.get("selector") or was.get("name")!r}, now {now.get("selector") or now.get("name")!r}')
     out.append("  history:")
     out += [f"    {e.get('at', '')[:19]}  {_rating_line(e)}" for e in entries] or ["    (none)"]
     return "\n".join(out)
