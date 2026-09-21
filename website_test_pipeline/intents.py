@@ -9,6 +9,7 @@ sentence into concrete steps that code checks against the explored pages.
 A sentence cannot be fact-checked on its own, so this file never produces a test: it only
 holds intent. Everything downstream still needs a verified run before a test exists.
 
+  source: ai | human | doc (written by the AI from an attached requirements document; see documents.py)
   status: new (not expanded yet) | expanded (has a flow) | unbuildable (see reason) |
           covered (an existing flow already does this) | dropped (a person removed it)
 The sentence is the source of truth: editing it makes the intent due for expansion again.
@@ -21,6 +22,7 @@ from pathlib import Path
 
 from . import heuristics
 from .coverage import compute_coverage, render_uncovered
+from .documents import PROMPT_VERSION as DOC_PROMPT_VERSION, quote_in_text
 from .sitemap import build_site_map, load_inventories, render_site_map
 
 INTENTS_VERSION = 1
@@ -304,9 +306,11 @@ def parse_response(raw: str) -> list[dict]:
     return [r for r in rows if isinstance(r, dict)]
 
 
-def accept_intents(raw_rows: list[dict], doc: dict, pages: set[str], now: str, model: str = ""
-                   ) -> tuple[list[dict], list[tuple[str, str]]]:
-    """Add the model's sentences that pass the checks. Returns (added intents, [(sentence, reason)] rejected)."""
+def accept_intents(raw_rows: list[dict], doc: dict, pages: set[str], now: str, model: str = "",
+                   document: tuple[str, str] | None = None) -> tuple[list[dict], list[tuple[str, str]]]:
+    """Add the model's sentences that pass the checks. Returns (added intents, [(sentence, reason)] rejected).
+    With `document` = (file name, the text the model was shown) every sentence must also carry a quote that really is
+    in that text (documents.quote_in_text); it is then stored as a `doc` intent with `from_doc` and `quote`."""
     added, rejected = [], []
     for row in raw_rows[:MAX_NEW]:
         sentence = str(row.get("sentence") or "").strip()
@@ -314,9 +318,17 @@ def accept_intents(raw_rows: list[dict], doc: dict, pages: set[str], now: str, m
         if start not in pages:
             rejected.append((sentence[:120], f"start page {start} was not explored"))
             continue
+        quote = str(row.get("quote") or "").strip()
+        if document is not None and not quote_in_text(quote, document[1]):
+            rejected.append((sentence[:120], f"its quote is not in {document[0]}: a journey must rest on something the document says"))
+            continue
         try:
-            added.append(add_intent(doc, sentence, "ai", now, start, str(row.get("evidence") or ""),
-                                    {"model": model, "prompt_version": PROMPT_VERSION}))
+            source, version = ("doc", DOC_PROMPT_VERSION) if document is not None else ("ai", PROMPT_VERSION)
+            intent = add_intent(doc, sentence, source, now, start, str(row.get("evidence") or ""),
+                                {"model": model, "prompt_version": version})
+            if document is not None:
+                intent["from_doc"], intent["quote"] = document[0], quote[:300]
+            added.append(intent)
         except IntentError as exc:
             rejected.append((sentence[:120], str(exc)))
     return added, rejected

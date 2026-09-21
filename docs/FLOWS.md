@@ -48,6 +48,7 @@ the same checks and also produces `candidate` flows.
 | Command | What it does |
 |---------|--------------|
 | `intents` | The AI writes up to 8 plain sentences from the explored pages, aimed at what no tested flow covers yet. |
+| `intents <file> ...` | The AI reads requirement documents (`.txt`, `.md`, `.rst`, `.docx`, `.pdf`) and writes journeys that test what they state; each must carry an exact quote from the document. |
 | `expand [i-003 ...]` | Turns sentences that are new or reworded into steps. Names force a rebuild of those sentences. |
 | `verify [id-fragment ...] [--failed-only]` | Runs flows in a real browser. Fragments pick flows; `--failed-only` runs only `candidate` and `stale` ones. |
 | `flowgen` | Writes a spec for every `verified`, `approved` or `stale` flow and removes specs whose flow no longer qualifies. |
@@ -85,12 +86,13 @@ the same checks and also produces `candidate` flows.
 |-------|---------|
 | `id` | `i-001`, never reused |
 | `sentence` | the journey in plain words; **the source of truth** |
-| `source` | `ai` or `human` |
+| `source` | `ai`, `human`, or `doc` (written by the AI from a requirements document) |
 | `status` | see [section 5](#5-statuses-and-what-changes-them) |
 | `flow_id` | the flow built from it (or the existing flow that already covers it) |
 | `expanded_hash` | hash of the sentence when it was last expanded; a reworded sentence no longer matches and is expanded again |
 | `reason` | why it is `unbuildable` or `dropped` |
 | `start_path`, `evidence`, `proposed_by` | for AI sentences: the page it starts on, why the AI believes it exists, model and prompt version |
+| `from_doc`, `quote` | for `doc` sentences: the file, and the exact sentence copied from it that the journey rests on |
 
 ### `flows.json` - the journeys
 
@@ -217,6 +219,8 @@ another explored page is counted once. `intents` and `propose` are told the unco
 | a flow stays `candidate` after `verify` | a step failed, the outcome did not match, or the sentence promised content that never appeared | `flows show <id>` shows the reason |
 | a flow is `stale` | two failed executions in a row | fix the site, or `verify --failed-only`; healing may repair it |
 | a test disappeared after `flows edit` | its flow is waiting for the reworded sentence | `expand`, then `verify`, then `flowgen` |
+| a document journey *rejected: its quote is not in the file* | the AI paraphrased or invented a requirement | nothing to do: only journeys resting on the document's own words are kept |
+| *has no readable text* for a document | a scanned or image-only PDF | attach a text version |
 | *intents/expand skipped: model not reachable* | offline, VPN, or the model is down | run again later; the other stages already ran |
 
 ## 11. Known limits
@@ -230,6 +234,8 @@ another explored page is counted once. `intents` and `propose` are told the unco
 - Explorer-recorded flows can be poor (for example a probe that fills a field the page does not really offer);
   they stay `candidate` and never produce a test.
 - The default word lists are English. Other languages work by adding words to `heuristics.json`.
+- Documents: text is extracted by code (no OCR for scanned files); at most the first 4 parts (about 6,000 characters each)
+  of a document are read per run. A requirement the explored pages cannot show is skipped, never invented.
 - Chromium only. One page per run; no multi-tab flows.
 
 ## 12. Developing and testing

@@ -33,7 +33,7 @@ PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--traci
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
     parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report'], nargs='?', default='generate')
-    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run')
+    parser.add_argument('words', nargs='*', help='flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run | (intents: <file>... requirement documents)')
     parser.add_argument('--reason', default='', help='flows reject/approve: why (required to reject)')
     parser.add_argument('--status', default=None, help='flows list: only flows with this status')
     parser.add_argument('--skip', default='', help='flows run: stages to skip, comma separated (intents,expand,verify,flowgen,execute)')
@@ -82,6 +82,9 @@ def main() -> int:
         return run_flowgen(settings, log)
     urls = read_urls(settings.urls_file)
     if args.command == 'intents':
+        if args.words:                                          # intents <file>...: journeys from requirement documents
+            from .documents import run_documents
+            return run_documents(settings, urls, ModelClient(settings, log), log, args.words)
         from .intents import run_intents
         return run_intents(settings, urls, ModelClient(settings, log), log)
     if args.command == 'expand':

@@ -157,6 +157,7 @@ intents.json  ->  expand  ->  flows.json  ->  verify  ->  flowgen  ->  tests/flo
 
 ```powershell
 python -m website_test_pipeline.cli intents                       # AI writes plain sentences from the explored site
+python -m website_test_pipeline.cli intents requirements.docx    # or journeys from a requirements document (each must quote it)
 python -m website_test_pipeline.cli flows add Go to the landing page, pick a country and a channel, search
 python -m website_test_pipeline.cli flows intents                 # list sentences: status, and why one could not be built
 python -m website_test_pipeline.cli flows edit i-002 "new wording"   # reword; its flow is rebuilt, its old test removed

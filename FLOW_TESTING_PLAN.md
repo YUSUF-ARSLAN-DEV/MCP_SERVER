@@ -284,7 +284,9 @@ detail when we reach it.
 | &nbsp;&nbsp;14c coverage section in the Word report | done, pushed |
 | &nbsp;&nbsp;14d `flows run` chain (intents, expand, verify, flowgen, execute) | done, pushed |
 | 15 docs and cleanup | done, pushed (`docs/FLOWS.md`, `test_docs.py`) |
-| 16 vision + attached docs | todo (last) |
+| 16 attached documents + vision (2 commits) | in progress: |
+| &nbsp;&nbsp;16a `intents <file>`: journeys from requirement documents, each with a verified quote | done, pushed |
+| &nbsp;&nbsp;16b `flows judge`: a vision model rates the final screenshot (never changes status) | todo |
 
 ## Non-goals
 
