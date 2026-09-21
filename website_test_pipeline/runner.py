@@ -22,6 +22,17 @@ from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_f
 from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
 
+# What the browser says when it could not reach the site at all (not when a flow broke): DNS failure, no
+# connection, a refused or timed-out connection. A run that ends this way says nothing about the flow.
+OUTAGE_MARKERS = ("ERR_NAME_NOT_RESOLVED", "ERR_INTERNET_DISCONNECTED", "ERR_CONNECTION", "ERR_ADDRESS_UNREACHABLE",
+                  "ERR_NETWORK", "ERR_TIMED_OUT", "ERR_PROXY", "ERR_TUNNEL")
+
+
+def is_outage(text: str) -> bool:
+    """True when an error message is the browser failing to reach the site rather than the page misbehaving."""
+    return any(marker in (text or "") for marker in OUTAGE_MARKERS)
+
+
 _STEP_WAIT_MS = 1200
 _LOADER_WAIT_MS = 5000     # longest we wait for a loading spinner to go away after a step
 _SETTLE_POLL_MS = 500
@@ -388,6 +399,7 @@ def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | N
         dismiss_overlays(page)
     except Exception as exc:
         result["error"] = f"could not open start page: {str(exc).splitlines()[0][:120]}"
+        result["unreachable"] = is_outage(str(exc))
         result["observed"] = classify(diff_snapshots(_empty(flow), _empty(flow)))
         return result
     first = previous = take_snapshot(page)
@@ -505,7 +517,7 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
         else:
             log.info("verify: nothing to run for this selection")
         return 2 if unmatched or not (only or failed_only) else 0
-    verified = 0
+    verified = unreachable = 0
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=settings.headless)
         try:
@@ -521,6 +533,11 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                               "observed": classify(diff_snapshots(_empty(flow), _empty(flow)))}
                 finally:
                     context.close()
+                if result.get("unreachable"):
+                    unreachable += 1
+                    log.warning("verify: %s - skipped: %s. The site could not be reached, which says nothing about the "
+                                "flow, so nothing was recorded.", flow["id"], result["error"])
+                    continue
                 if flow.get("status") not in HUMAN_STATUSES and result.get("ok"):
                     verdict = judge(flow, result)
                     if verdict["promised"] and verdict["matched"] and verdict["changed"]:
@@ -549,5 +566,5 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                 save_ratings(settings.ratings_file, ratings)
         finally:
             browser.close()
-    log.info("VERIFY SUMMARY flows=%d passed=%d", len(todo), verified)
-    return 0
+    log.info("VERIFY SUMMARY flows=%d passed=%d unreachable=%d", len(todo), verified, unreachable)
+    return 3 if unreachable == len(todo) else 0      # 3: the site could not be reached for any flow (nothing recorded)

@@ -12,6 +12,7 @@ import re
 
 from .flowgen import file_name
 from .flows import FlowsFileError, load_flows, save_flows
+from .runner import is_outage
 from .ratings import RatingsFileError, append_rating, derive_status, load_ratings, save_ratings
 
 _RAN = {"passed", "failed", "error"}
@@ -24,6 +25,8 @@ def match_results(results: dict, flows: list[dict]) -> dict[str, dict]:
     for row in results.get("tests", []):
         if row.get("status") not in _RAN:
             continue
+        if row.get("status") != "passed" and is_outage(str(row.get("error") or "")):
+            continue                     # the site could not be reached: that is not a verdict on the flow
         base = re.split(r"[\\/]", str(row.get("nodeid", "")).split("::")[0])[-1]
         flow_id = by_file.get(base)
         if flow_id is None:
