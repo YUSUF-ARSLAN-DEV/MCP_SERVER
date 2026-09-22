@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from website_test_pipeline.findings import (
     Finding, classify_failure, collect_findings, detect_flapping, environment_block,
-    recorded_roles, role_mismatch_finding, url_after_non_navigating_step,
+    mojibake_finding, recorded_roles, role_mismatch_finding, url_after_non_navigating_step,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -152,6 +152,53 @@ def test_the_real_wizard_failure_is_correctly_diagnosed_as_a_test_defect():
     assert why and 'role="group"' in why and "Passcode (default)" in why
 
 
+# ------------------------------------------------------------------ heuristic 3: corrupted captured text
+
+def test_mojibake_finding_flags_the_unicode_replacement_character():
+    f = mojibake_finding("t", "page", "https://x.test/en", "footer: � 2026 Al Jazeera Media Network")
+    assert f and f.kind == "capture_corruption" and f.severity == "P2" and "U+FFFD" in f.summary
+    assert "2026 Al Jazeera" in f.summary
+
+
+def test_mojibake_finding_is_silent_on_clean_text():
+    assert mojibake_finding("t", "page", "https://x.test/en", "footer: © 2026 Al Jazeera Media Network") is None
+    assert mojibake_finding("t", "page", "https://x.test/en", "") is None
+    assert mojibake_finding("t", "page", "https://x.test/en", None) is None
+
+
+def test_mojibake_finding_is_silent_on_legitimately_accented_text():
+    # a real risk with a byte-pattern guess (e.g. "Ã©") is flagging correctly-decoded French/Arabic text;
+    # U+FFFD never appears in correctly decoded text, so there is nothing to guess here.
+    assert mojibake_finding("t", "page", "https://x.test/ar", "مرحبا بك") is None
+    assert mojibake_finding("t", "page", "https://x.test/fr", "Bienvenue à la Cafétéria") is None
+
+
+def test_collect_findings_flags_mojibake_in_an_outcome_error_and_in_a_page_inventory():
+    outcome = SimpleNamespace(title="t", status="passed", error=None, evidence=[], attachments=[])
+    bad = SimpleNamespace(title="t_bad", status="passed", error="E footer: � 2026", evidence=[], attachments=[])
+    report = SimpleNamespace(url="https://x.test/en", spec_path=None, outcomes=[outcome, bad])
+    inv = [{"url": "https://x.test/ar", "accessibility": "text: � 2026"}]
+    run = SimpleNamespace(url_reports=[report], tested_flows=[])
+    findings = collect_findings(run, Path("/nope"), inv, {}, {})
+    kinds = {f.test: f.kind for f in findings}
+    assert kinds["t_bad"] == "capture_corruption"
+    assert kinds["page capture: https://x.test/ar"] == "capture_corruption"
+
+
+def test_the_real_footer_corruption_found_live_is_caught(tmp_path=None):
+    # found while scoping this feature: the real run's own test_results.json has a replacement character
+    # where the copyright symbol should be - proof this check earns its keep on real captured data.
+    results = ROOT / "runs" / "sat-stg.aljazeera.tv" / "artifacts" / "test_results.json"
+    if not results.exists():
+        return
+    import json
+    data = json.loads(results.read_text(encoding="utf-8"))
+    errors = " ".join(t.get("error") or "" for t in data.get("tests", []))
+    if "�" not in errors:
+        return                                        # the corruption may already be fixed upstream by then
+    assert mojibake_finding("t", "page", "https://sat-stg.aljazeera.tv/en", errors) is not None
+
+
 # ------------------------------------------------------------------ flapping
 
 def test_detect_flapping_finds_a_mixed_recent_history_and_names_the_cause():
@@ -192,7 +239,7 @@ def test_collect_findings_covers_page_and_flow_failures_and_skips_passes():
     report = SimpleNamespace(url="https://x.test/en", spec_path=None, outcomes=[outcome_bad, outcome_good])
     flow_outcome = SimpleNamespace(status="failed", error="E   Locator expected to be visible")
     flow = SimpleNamespace(flow_id="f1", title="flow one", start_url="https://x.test/en", failed=True, outcome=flow_outcome)
-    passing_flow = SimpleNamespace(flow_id="f2", failed=False)
+    passing_flow = SimpleNamespace(flow_id="f2", failed=False, title="flow two", start_url="https://x.test/en", outcome=None)
     run = SimpleNamespace(url_reports=[report], tested_flows=[flow, passing_flow])
     findings = collect_findings(run, Path("/nope"), [], {}, {})
     assert [f.test for f in findings] == ["flow one", "t_bad"]              # P1 (flow) sorts before P2 (page)

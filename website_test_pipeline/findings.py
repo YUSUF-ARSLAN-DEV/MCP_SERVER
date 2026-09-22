@@ -15,6 +15,12 @@ Two kinds of failure are told apart automatically:
   - flaky_data: the flow's own evaluation already recorded "definite": True for missing content (see
     runner.apply_result) - a live, content-dependent failure, not a locator problem.
 Anything else is left "unclear" rather than guessed at, with the honest instruction to look at the trace.
+
+A few more findings are not tied to any one failing test - they are deterministic checks over text and
+pages the run already captured, regardless of pass/fail:
+  - capture_corruption: some captured text contains the Unicode replacement character (U+FFFD), which a
+    decoder only ever produces when a byte sequence could not be turned into text - proof something in the
+    capture chain (or the source page itself) mangled it, never a guess.
 """
 from __future__ import annotations
 import ast
@@ -25,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 SEVERITIES = ("P1", "P2")          # P1: a user journey (flow) is broken or unproven; P2: a page-level check
-KINDS = ("test_defect", "flaky_data", "unclear")
+KINDS = ("test_defect", "flaky_data", "unclear", "capture_corruption")
 FLAP_WINDOW = 6                     # how many recent real executions are looked at per test/flow
 
 
@@ -142,6 +148,29 @@ def url_after_non_navigating_step(source: str) -> str | None:
     return None
 
 
+# ------------------------------------------------------------------ heuristic 3: corrupted captured text
+
+# U+FFFD is emitted ONLY when a decoder could not map a byte sequence to a character - a browser, pytest,
+# or our own subprocess/file I/O actually failed to decode something. Unlike a mojibake byte-pattern guess
+# (which a legitimately-accented word could trigger by coincidence), this one character is unambiguous.
+_MOJIBAKE_RE = re.compile("�")
+
+
+def mojibake_finding(test: str, scope: str, url: str, text: str) -> Finding | None:
+    """None unless `text` contains the Unicode replacement character - else a Finding pointing at where."""
+    match = _MOJIBAKE_RE.search(text or "")
+    if not match:
+        return None
+    i = match.start()
+    sample = re.sub(r"\s+", " ", text[max(0, i - 25):i + 25]).strip()
+    return Finding(
+        test=test, scope=scope, url=url, severity="P2", kind="capture_corruption",
+        summary=f'captured text could not be decoded cleanly (U+FFFD) near: "...{sample}..."',
+        repro=f'{test}: search the captured text for "\\ufffd"',
+        next_action="check the capture path's text encoding (subprocess/stdout/file I/O); could also be a "
+                    "real encoding bug on the source page - open it and compare")
+
+
 # ------------------------------------------------------------------ building findings
 
 def _spec_source(path: str | None) -> str:
@@ -182,7 +211,9 @@ def _last_definite(entries: list[dict] | None) -> bool:
 
 def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id: dict[str, dict],
                      ratings: dict[str, list[dict]] | None = None) -> list[Finding]:
-    """Every failed/errored outcome in the run, as Findings. `run` is a report.RunReport."""
+    """Every failed/errored outcome in the run, as Findings, plus deterministic signals that are not tied
+    to any one failing test - captured text that could not be decoded cleanly, wherever it turns up.
+    `run` is a report.RunReport."""
     ratings = ratings or {}
     findings: list[Finding] = []
     for report in run.url_reports:
@@ -190,14 +221,24 @@ def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id:
         for outcome in report.outcomes:
             if outcome.status in {"failed", "error"}:
                 findings.append(classify_failure(outcome.title, "page", report.url, outcome.error, source, inventories))
+            corrupt = mojibake_finding(outcome.title, "page", report.url, outcome.error or "")
+            if corrupt:
+                findings.append(corrupt)
     for flow in run.tested_flows:
-        if not flow.failed:
-            continue
         flow_dict = flows_by_id.get(flow.flow_id)
-        spec_path = tests_dir / _flow_spec_name(flow.flow_id)
-        definite = _last_definite(ratings.get(flow.flow_id))
-        findings.append(classify_failure(flow.title, "flow", flow.start_url, flow.outcome.error,
-                                         _spec_source(str(spec_path)), inventories, flow_dict, definite))
+        if flow.failed:
+            spec_path = tests_dir / _flow_spec_name(flow.flow_id)
+            definite = _last_definite(ratings.get(flow.flow_id))
+            findings.append(classify_failure(flow.title, "flow", flow.start_url, flow.outcome.error,
+                                             _spec_source(str(spec_path)), inventories, flow_dict, definite))
+        corrupt = mojibake_finding(flow.title, "flow", flow.start_url, (flow.outcome.error or "") if flow.outcome else "")
+        if corrupt:
+            findings.append(corrupt)
+    for inv in inventories:
+        corrupt = mojibake_finding(f"page capture: {inv.get('url', '')}", "page", inv.get("url", ""),
+                                   inv.get("accessibility") or "")
+        if corrupt:
+            findings.append(corrupt)
     order = {"P1": 0, "P2": 1}
     return sorted(findings, key=lambda f: (order.get(f.severity, 9), f.test))
 

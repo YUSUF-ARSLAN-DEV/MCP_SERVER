@@ -671,7 +671,9 @@ def _findings_section(document, run: RunReport) -> None:
                            "P2 = a page-level check. test_defect means the assertion itself is provably wrong "
                            "against what was actually observed; flaky_data means the run completed but the site "
                            "did not return the content the sentence promised (may be content-dependent, not a "
-                           "defect); unclear means it could not be classified automatically - read the trace.")
+                           "defect); capture_corruption means some captured text could not be decoded cleanly "
+                           "(a real data-integrity bug, in the pipeline or the source page - not a guess); "
+                           "unclear means it could not be classified automatically - read the trace.")
     table = _grid(document, ("Sev", "Kind", "Test", "Summary", "Next action"))
     for finding in run.findings:
         cells = table.add_row().cells
