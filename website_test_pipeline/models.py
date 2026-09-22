@@ -6,6 +6,10 @@ from typing import Any
 class PageInventory:
     url: str
     title: str
+    # the <html> element's declared writing direction / language, as captured live - None when the page
+    # never sets the attribute at all (the HTML default is then "ltr", applied where this is read, not here)
+    dir: str | None = None
+    lang: str | None = None
     headings: list[dict[str, Any]] = field(default_factory=list)
     controls: list[dict[str, Any]] = field(default_factory=list)
     accessibility: str = ""

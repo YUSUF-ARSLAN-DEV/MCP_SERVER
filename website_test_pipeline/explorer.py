@@ -815,6 +815,14 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     dismiss_overlays(page)  # snapshot the real page, not consent / ad overlays
     prime_lazy_content(page)  # mount lazy footers / newsletter widgets before scraping
     title = page.title()
+    try:
+        direction = page.evaluate("() => document.documentElement.getAttribute('dir')")
+    except Exception:
+        direction = None
+    try:
+        lang = page.evaluate("() => document.documentElement.getAttribute('lang')")
+    except Exception:
+        lang = None
     headings = page.locator('h1,h2,h3,h4,h5,h6,[role="heading"]').evaluate_all(_HEADINGS_JS)
     controls = page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)
     # Flag accessible names the crawl saw on more than one element - a bare
@@ -862,4 +870,5 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
         except Exception as exc:
             if log:
                 log.info("primary-flow: probe errored (%s)", str(exc).splitlines()[0][:150])
-    return PageInventory(url, title, headings, controls, signals, forms, revealed, embeds, primary_flow)
+    return PageInventory(url=url, title=title, dir=direction, lang=lang, headings=headings, controls=controls,
+                         accessibility=signals, forms=forms, revealed=revealed, embeds=embeds, primary_flow=primary_flow)

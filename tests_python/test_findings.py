@@ -2,8 +2,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from website_test_pipeline.findings import (
-    Finding, classify_failure, collect_findings, detect_flapping, environment_block,
-    mojibake_finding, recorded_roles, role_mismatch_finding, url_after_non_navigating_step,
+    Finding, classify_failure, collect_findings, detect_flapping, direction_mismatch_finding,
+    environment_block, mojibake_finding, recorded_roles, role_mismatch_finding, url_after_non_navigating_step,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -197,6 +197,42 @@ def test_the_real_footer_corruption_found_live_is_caught(tmp_path=None):
     if "�" not in errors:
         return                                        # the corruption may already be fixed upstream by then
     assert mojibake_finding("t", "page", "https://sat-stg.aljazeera.tv/en", errors) is not None
+
+
+# ------------------------------------------------------------------ heuristic 4: declared direction vs actual script
+
+AR_TEXT = "heading: الجزيرة بحث ترددات"
+EN_TEXT = "heading: Al Jazeera frequency search results"
+
+
+def test_direction_mismatch_finding_flags_rtl_content_on_a_page_not_marked_rtl():
+    f = direction_mismatch_finding({"url": "https://x.test/ar", "dir": None, "accessibility": AR_TEXT})
+    assert f and f.kind == "localization_mismatch" and f.severity == "P2"
+    assert 'dir="ltr"' in f.summary and "rtl-script" in f.summary
+
+
+def test_direction_mismatch_finding_flags_ltr_content_on_a_page_marked_rtl():
+    f = direction_mismatch_finding({"url": "https://x.test/ar", "dir": "rtl", "accessibility": EN_TEXT})
+    assert f and 'dir="rtl"' in f.summary and "ltr-script" in f.summary
+
+
+def test_direction_mismatch_finding_is_silent_when_direction_and_script_agree():
+    assert direction_mismatch_finding({"url": "https://x.test/ar", "dir": "rtl", "accessibility": AR_TEXT}) is None
+    assert direction_mismatch_finding({"url": "https://x.test/en", "dir": None, "accessibility": EN_TEXT}) is None
+    assert direction_mismatch_finding({"url": "https://x.test/en", "dir": "ltr", "accessibility": EN_TEXT}) is None
+
+
+def test_direction_mismatch_finding_is_silent_when_there_is_nothing_to_judge_from():
+    assert direction_mismatch_finding({"url": "https://x.test", "dir": "rtl", "accessibility": ""}) is None
+    assert direction_mismatch_finding({"url": "https://x.test", "dir": "rtl", "accessibility": "2026"}) is None
+    assert direction_mismatch_finding({"url": "https://x.test", "dir": "auto", "accessibility": AR_TEXT}) is None
+
+
+def test_collect_findings_flags_a_real_direction_mismatch_from_an_inventory():
+    run = SimpleNamespace(url_reports=[], tested_flows=[])
+    inv = [{"url": "https://x.test/ar", "dir": None, "accessibility": AR_TEXT}]
+    findings = collect_findings(run, Path("/nope"), inv, {}, {})
+    assert len(findings) == 1 and findings[0].kind == "localization_mismatch"
 
 
 # ------------------------------------------------------------------ flapping

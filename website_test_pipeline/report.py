@@ -673,7 +673,9 @@ def _findings_section(document, run: RunReport) -> None:
                            "did not return the content the sentence promised (may be content-dependent, not a "
                            "defect); capture_corruption means some captured text could not be decoded cleanly "
                            "(a real data-integrity bug, in the pipeline or the source page - not a guess); "
-                           "unclear means it could not be classified automatically - read the trace.")
+                           "localization_mismatch means a page's declared writing direction does not match "
+                           "what its own captured text actually is; unclear means it could not be classified "
+                           "automatically - read the trace.")
     table = _grid(document, ("Sev", "Kind", "Test", "Summary", "Next action"))
     for finding in run.findings:
         cells = table.add_row().cells

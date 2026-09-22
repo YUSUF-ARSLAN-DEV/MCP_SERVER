@@ -44,6 +44,12 @@ DEFAULTS: dict[str, list] = {
                        "[role=\"listbox\"]", "[role=\"menu\"]"],
     "option_selectors": ["li label", "li [role=\"option\"]", "li a", "[role=\"option\"]", "[role=\"menuitemcheckbox\"]",
                          "[role=\"menuitemradio\"]", "[role=\"menuitem\"]"],
+    # Unicode codepoint ranges (hex, inclusive, "START-END") of right-to-left scripts, used to detect a
+    # page's actual writing direction from its captured text - not from a language code or URL pattern,
+    # which a site could get wrong. Covers Hebrew, Arabic (+ supplement/extended-A/presentation forms),
+    # Syriac, Thaana and N'Ko; add more (e.g. Samaritan, Mandaic) for a site that needs them.
+    "rtl_script_ranges": ["0590-05FF", "FB1D-FB4F", "0600-06FF", "0750-077F", "08A0-08FF", "FB50-FDFF",
+                          "FE70-FEFF", "0700-074F", "0780-07BF", "07C0-07FF"],
     # sentences the AI may not write, as {"pattern": regex, "reason": text}
     "unsuitable": [
         {"pattern": "\\b(password|passcode|log ?in|sign ?in|sign ?up|credit card|payment|checkout)\\b",
@@ -180,6 +186,37 @@ def menu_selector() -> str:
 
 def option_selector() -> str:
     return ", ".join(words("option_selectors"))
+
+
+def _rtl_char_class() -> str:
+    parts = []
+    for item in words("rtl_script_ranges"):
+        match = re.match(r"^([0-9A-Fa-f]{4,6})-([0-9A-Fa-f]{4,6})$", item.strip())
+        if match:
+            parts.append(f"\\U{int(match.group(1), 16):08x}-\\U{int(match.group(2), 16):08x}")
+    return "".join(parts)
+
+
+def rtl_script_regex() -> re.Pattern:
+    """Matches one character of a right-to-left script (see rtl_script_ranges), cached until reconfigured."""
+    listed = tuple(words("rtl_script_ranges"))
+    cached = _cache.get(("rtl", listed))
+    if cached is None:
+        cls = _rtl_char_class()
+        cached = _cache[("rtl", listed)] = re.compile("[" + cls + "]") if cls else re.compile("(?!)")
+    return cached
+
+
+def dominant_script(text: str) -> str:
+    """'rtl' when right-to-left-script characters are the majority of the alphabetic characters in `text`,
+    'ltr' when they are a minority, 'unknown' when there is no alphabetic content to judge from at all
+    (numbers, icons, an empty string) - never guessed on text too thin to say anything about."""
+    rtl = len(rtl_script_regex().findall(text or ""))
+    alpha = sum(1 for ch in (text or "") if ch.isalpha())
+    ltr = alpha - rtl
+    if rtl == 0 and ltr == 0:
+        return "unknown"
+    return "rtl" if rtl >= ltr else "ltr"
 
 
 def loader_selector() -> str:

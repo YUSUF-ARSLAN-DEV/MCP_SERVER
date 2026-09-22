@@ -21,6 +21,9 @@ pages the run already captured, regardless of pass/fail:
   - capture_corruption: some captured text contains the Unicode replacement character (U+FFFD), which a
     decoder only ever produces when a byte sequence could not be turned into text - proof something in the
     capture chain (or the source page itself) mangled it, never a guess.
+  - localization_mismatch: a page's declared <html dir> does not match the writing direction its own
+    captured text actually is (heuristics.dominant_script, detected from Unicode ranges - not from the
+    page's own lang code or the run's URL pattern, either of which a site could get wrong).
 """
 from __future__ import annotations
 import ast
@@ -31,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 SEVERITIES = ("P1", "P2")          # P1: a user journey (flow) is broken or unproven; P2: a page-level check
-KINDS = ("test_defect", "flaky_data", "unclear", "capture_corruption")
+KINDS = ("test_defect", "flaky_data", "unclear", "capture_corruption", "localization_mismatch")
 FLAP_WINDOW = 6                     # how many recent real executions are looked at per test/flow
 
 
@@ -171,6 +174,29 @@ def mojibake_finding(test: str, scope: str, url: str, text: str) -> Finding | No
                     "real encoding bug on the source page - open it and compare")
 
 
+# ------------------------------------------------------------------ heuristic 4: declared direction vs actual script
+
+def direction_mismatch_finding(inv: dict) -> Finding | None:
+    """None if the page's declared writing direction agrees with what its captured text actually is -
+    else a Finding explaining the mismatch. A missing dir attribute is treated as the HTML default
+    ("ltr"), same as a real browser does - nothing here is guessed beyond that spec default. Silent
+    whenever the captured text is too thin to judge a script from at all (dominant_script == "unknown"),
+    or when dir is something other than ltr/rtl (auto, or simply not a direction value)."""
+    from . import heuristics
+    script = heuristics.dominant_script(inv.get("accessibility") or "")
+    if script == "unknown":
+        return None
+    declared = (inv.get("dir") or "ltr").strip().lower()
+    if declared not in {"ltr", "rtl"} or declared == script:
+        return None
+    url = inv.get("url", "")
+    return Finding(
+        test=f"page direction: {url}", scope="page", url=url, severity="P2", kind="localization_mismatch",
+        summary=f'the page declares dir="{declared}" but its captured text is predominantly {script}-script',
+        repro=f'open {url} and compare <html dir="{declared}"> to the visible text',
+        next_action="set dir to match the rendered content, or check whether this is an untranslated/fallback page")
+
+
 # ------------------------------------------------------------------ building findings
 
 def _spec_source(path: str | None) -> str:
@@ -212,8 +238,9 @@ def _last_definite(entries: list[dict] | None) -> bool:
 def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id: dict[str, dict],
                      ratings: dict[str, list[dict]] | None = None) -> list[Finding]:
     """Every failed/errored outcome in the run, as Findings, plus deterministic signals that are not tied
-    to any one failing test - captured text that could not be decoded cleanly, wherever it turns up.
-    `run` is a report.RunReport."""
+    to any one failing test - captured text that could not be decoded cleanly, wherever it turns up, and
+    a page whose declared writing direction does not match its own captured text. `run` is a
+    report.RunReport."""
     ratings = ratings or {}
     findings: list[Finding] = []
     for report in run.url_reports:
@@ -239,6 +266,9 @@ def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id:
                                    inv.get("accessibility") or "")
         if corrupt:
             findings.append(corrupt)
+        mismatch = direction_mismatch_finding(inv)
+        if mismatch:
+            findings.append(mismatch)
     order = {"P1": 0, "P2": 1}
     return sorted(findings, key=lambda f: (order.get(f.severity, 9), f.test))
 

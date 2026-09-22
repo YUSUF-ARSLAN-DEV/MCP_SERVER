@@ -130,6 +130,40 @@ def test_loading_indicators_are_found_by_configurable_class_hints_and_aria(tmp_p
     assert "chargement" in _loader_js()
 
 
+# ------------------------------------------------------------------ writing direction: detected, not declared
+
+def test_dominant_script_recognises_arabic_and_hebrew_as_rtl():
+    assert heuristics.dominant_script("مرحبا بك في الجزيرة") == "rtl"
+    assert heuristics.dominant_script("שלום עולם") == "rtl"
+
+
+def test_dominant_script_recognises_latin_and_other_scripts_as_ltr():
+    assert heuristics.dominant_script("Welcome to Al Jazeera") == "ltr"
+    assert heuristics.dominant_script("Bienvenue à la Cafétéria") == "ltr"
+
+
+def test_dominant_script_is_unknown_for_text_with_no_alphabetic_content():
+    assert heuristics.dominant_script("") == "unknown"
+    assert heuristics.dominant_script("2026 | +1 (555) 000-0000") == "unknown"
+    assert heuristics.dominant_script(None) == "unknown"
+
+
+def test_dominant_script_uses_the_majority_not_a_single_word():
+    # a brand name in Latin script on an otherwise-Arabic page (very common - "Al Jazeera", "AJ+") must
+    # not flip the whole page's detected script.
+    mostly_arabic = "الجزيرة ترددات Al Jazeera"
+    assert heuristics.dominant_script(mostly_arabic) == "rtl"
+
+
+def test_rtl_script_ranges_can_be_extended_for_a_language_not_in_the_defaults(tmp_path):
+    # a script outside the defaults (e.g. Mandaic, 0840-085F) reads as ltr (correctly - it is not flagged
+    # rtl) until a site adds it; once added, the same text is recognised.
+    mandaic_like = "\U00000840\U00000841\U00000842\U00000843"
+    assert heuristics.dominant_script(mandaic_like) == "ltr"
+    heuristics.configure(_file(tmp_path, {"rtl_script_ranges": ["0840-085F"]}))
+    assert heuristics.dominant_script(mandaic_like) == "rtl"
+
+
 class _Loc:
     def __init__(self, page, name, count=1):
         self.page, self.name, self._count, self.first = page, name, count, self

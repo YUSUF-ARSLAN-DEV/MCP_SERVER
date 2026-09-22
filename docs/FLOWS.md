@@ -140,6 +140,7 @@ matches any ending (`result*`). A missing or malformed file means the defaults, 
 | `loader_hints` | class fragments of loading spinners |
 | `menu_selectors` | containers of an open dropdown or menu |
 | `option_selectors` | what an option inside one looks like |
+| `rtl_script_ranges` | Unicode codepoint ranges (`"0600-06FF"`) of right-to-left scripts, used to detect a page's actual writing direction from its captured text |
 | `unsuitable` | sentences the AI may not write: `{"pattern": regex, "reason": text}` |
 
 ```json
