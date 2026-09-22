@@ -159,13 +159,21 @@ def judge(flow: dict, result: dict) -> dict:
 
 
 def apply_result(flow: dict, result: dict, now: str) -> dict:
-    """Update the flow from a run and return the evaluation entry for flow_ratings.json."""
+    """Update the flow from a run and return the evaluation entry for flow_ratings.json.
+
+    flow["observed"] is overwritten only when this run PASSED. A single failed run is tolerated (see
+    ratings.derive_status) and leaves the flow "verified", but if its thin or empty observation were kept,
+    flowgen would rebuild the spec from it and could end up asserting nothing concrete - a green flow
+    with no real evidence behind it. Freezing "observed" at the last passing run means a tolerated
+    failure changes nothing about what the generated test proves; only an actual pass updates the
+    evidence, and a flow that has never passed still has none (flowgen already refuses to emit for it)."""
     observed = result["observed"]
     verdict = judge(flow, result)
     matched, changed, promised, passed = verdict["matched"], verdict["changed"], verdict["promised"], verdict["passed"]
     heals = result.get("heals") or []
-    flow["observed"] = {**observed, "step_effects": result["step_effects"],
-                        "landed_url": result.get("landed_url"), "step_urls": result.get("step_urls", [])}
+    if passed:
+        flow["observed"] = {**observed, "step_effects": result["step_effects"],
+                            "landed_url": result.get("landed_url"), "step_urls": result.get("step_urls", [])}
     flow["last_run_at"] = now
     if flow.get("status") not in HUMAN_STATUSES:
         flow["status"] = "verified" if passed else "candidate"
@@ -180,7 +188,12 @@ def apply_result(flow: dict, result: dict, now: str) -> dict:
         evaluation["healed" if passed and flow.get("heal_history") else "heal_not_kept"] = heals
     if result.get("error"):
         evaluation["error"] = result["error"]
-    elif promised and result["ok"] and matched and changed:
+    elif promised and result["ok"] and changed:
+        # not "and matched": for a "results"-type outcome, matched already REQUIRES content to be visible
+        # (outcome_matches), so a promised-but-empty result already implies matched is False here - requiring
+        # both meant this branch (and the identical guard in run_verify that tries another option) could
+        # never fire for exactly the flows it exists for. Found live: a flow lost its content-loss reason and
+        # its automatic retry both silently, and a tolerated failure then overwrote its evidence (see above).
         evaluation["error"] = ("the sentence promises content but the run only saw the URL change "
                                "(no new heading, results or controls appeared)")
         evaluation["definite"] = True      # deterministic, so no benefit of the doubt (see ratings.derive_status)
@@ -540,7 +553,7 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                     continue
                 if flow.get("status") not in HUMAN_STATUSES and result.get("ok"):
                     verdict = judge(flow, result)
-                    if verdict["promised"] and verdict["matched"] and verdict["changed"]:
+                    if verdict["promised"] and verdict["changed"]:  # not "and matched": see apply_result's comment
                         def run_once(overrides, flow=flow):
                             ctx = browser.new_context()
                             try:

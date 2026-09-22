@@ -1,8 +1,12 @@
+import logging
+
 import pytest
 
 from website_test_pipeline import runner
 from website_test_pipeline.review import render_show, _rating_line
-from website_test_pipeline.runner import apply_result, find_replacement, run_flow
+from website_test_pipeline.runner import apply_result, find_replacement, run_flow, run_verify
+
+LOG = logging.getLogger("test_heal")
 
 
 def _c(name, tag="button", selector=None, **extra):
@@ -347,3 +351,59 @@ def test_real_options_leave_out_placeholders():
     class _Broken:
         def evaluate(self, js): raise RuntimeError("detached")
     assert runner._real_options(_Broken()) == []
+
+
+# ------------------------------------------------------------------ option-healing end to end through run_verify,
+# for a "results" predicted outcome - real bug, found live: outcome_matches's "results" case already requires
+# content to be visible, so a guard of "promised (no content) AND matched (outcome achieved)" can never be true
+# together for this outcome type, and neither the automatic retry nor the "definite failure" reason ever fired.
+
+def test_option_healing_fires_through_run_verify_for_a_results_outcome_with_a_real_browser(tmp_path):
+    import json
+    import threading
+    import http.server
+    import socketserver
+    from types import SimpleNamespace
+
+    HOME = (b"<html><body><h1>Find frequencies</h1><select id=c>"
+            b"<option value=''>Please select</option><option>Alpha</option><option>Bravo</option><option>Charlie</option></select>"
+            b"<button onclick=\"location.href='/results?c='+document.getElementById('c').value\">Search</button></body></html>")
+
+    def results(country: str) -> bytes:
+        if country == "Charlie":
+            return b"<html><body><h1>Here are the results</h1><table><tr><td>row</td></tr></table></body></html>"
+        return b"<html><body><h1>Find frequencies</h1><p>Nothing to show</p></body></html>"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = results(self.path.split("c=")[-1]) if self.path.startswith("/results") else HOME
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        flow = {"id": "demo", "source": "intent", "status": "candidate",
+                "goal": "A visitor picks a country and sees the frequency results.", "start_url": base + "/",
+                "outcome": {"effect": "results"},                    # the outcome type this bug affected
+                "steps": [{"kind": "select", "selector": "#c", "name": "Country", "value": None},
+                          {"kind": "click", "selector": None, "name": "Search"}]}
+        flows_file = tmp_path / "flows.json"
+        flows_file.write_text(json.dumps({"version": 1, "flows": [flow]}), encoding="utf-8")
+        settings = SimpleNamespace(flows_file=flows_file, ratings_file=tmp_path / "ratings.json", headless=True,
+                                   navigation_timeout_ms=15000, intents_file=tmp_path / "i.json")
+        code = run_verify(settings, LOG)
+        assert code == 0
+        saved = json.loads(flows_file.read_text(encoding="utf-8"))["flows"][0]
+        assert saved["status"] == "verified" and saved["steps"][0]["value"] == "Charlie"
+        assert saved["observed"]["new_headings"] == ["Here are the results"]
+        heal = saved["heal_history"][-1]
+        assert heal["kind"] == "option" and 'showed no content; "Charlie" does' in heal["how"]
+    finally:
+        server.shutdown()

@@ -166,6 +166,39 @@ def test_sentences_that_promise_nothing_and_machine_goals_are_not_judged_this_wa
     assert apply_result(_intent_flow("A visitor opens the subscribe page."), _nav_result(), "now")["passed"] is True
 
 
+def test_missing_content_is_still_caught_when_the_predicted_outcome_is_results_not_navigates():
+    # real bug, found live: for a "results" outcome, outcome_matches already REQUIRES content to be visible,
+    # so "promised" (no content) and "matched" (outcome achieved) can never both be true - a guard that asked
+    # for both (as apply_result and run_verify's option-healing trigger once did) could never fire for exactly
+    # the flows it exists for, and a failure like this one recorded no reason and no "definite" flag at all.
+    flow = _intent_flow("A visitor picks a country and sees the frequency results.")
+    flow["outcome"] = {"effect": "results"}
+    evaluation = apply_result(flow, _nav_result(), "now")           # steps ran, only the URL changed - no content
+    assert evaluation["passed"] is False and evaluation["definite"] is True
+    assert "promises content" in evaluation["error"] and flow["status"] == "candidate"
+
+
+def test_a_tolerated_failure_never_overwrites_the_evidence_behind_a_verified_flow():
+    # real bug, found live: one failed run used to overwrite flow["observed"] even though ratings.derive_status
+    # tolerates a single failure and keeps the flow "verified" - so flowgen would then rebuild the spec from
+    # that thin/failed observation, and a "verified" flow could end up with a test that proves nothing.
+    flow = _intent_flow("A visitor picks a country and sees the frequency results.")
+    flow["outcome"] = {"effect": "results"}
+    good = apply_result(flow, _nav_result(new_headings=["Here are the results"]), "t1")
+    assert good["passed"] is True and flow["observed"]["new_headings"] == ["Here are the results"]
+    bad = apply_result(flow, _nav_result(), "t2")                   # a later run that shows nothing
+    assert bad["passed"] is False and flow["status"] == "candidate"
+    assert flow["observed"]["new_headings"] == ["Here are the results"], "the last real evidence must survive a failed run"
+    assert flow["last_run_at"] == "t2"                               # still records that it WAS re-run
+
+
+def test_a_flow_with_no_passing_run_yet_has_no_observed_evidence():
+    flow = _intent_flow("A visitor picks a country and sees the frequency results.")
+    flow["outcome"] = {"effect": "results"}
+    apply_result(flow, _nav_result(), "t1")
+    assert "observed" not in flow and flow["status"] == "candidate"
+
+
 def test_settled_snapshot_waits_for_content_that_arrives_late(monkeypatch):
     from website_test_pipeline import runner
     states = iter([_snap(headings=["Form"]), _snap(headings=["Form", "Results"]), _snap(headings=["Form", "Results"])])
