@@ -23,6 +23,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from .coverage import Coverage, compute_coverage
+from .findings import Finding, FlapRecord, collect_findings, detect_flapping, environment_block
 from .flowgen import file_name as flow_spec_name
 from .flowreport import FlowReport, build_flow_report
 from .flows import FlowsFileError, load_flows
@@ -109,6 +110,8 @@ class RunReport:
     flow_reports: list[FlowReport] = field(default_factory=list)   # every flow; those with tested=False were not run
     notes: list[str] = field(default_factory=list)                 # things that happened while writing the documents
     coverage: Coverage | None = None                               # what the tested flows touch; None when there are no flows
+    findings: list[Finding] = field(default_factory=list)          # triaged failures: severity, kind, one-line reason
+    flapping: list[FlapRecord] = field(default_factory=list)       # flows/tests whose recent runs mix pass and fail
 
     @property
     def tested_flows(self) -> list[FlowReport]:
@@ -255,6 +258,13 @@ def _flows_list(flows_file: Path | None) -> list[dict]:
         return []
 
 
+def _ratings_dict(ratings_file: Path | None) -> dict[str, list[dict]]:
+    try:
+        return load_ratings(ratings_file)["ratings"] if ratings_file and ratings_file.exists() else {}
+    except RatingsFileError:
+        return {}
+
+
 def _coverage(artifacts_dir: Path, manifest: dict, flows: list[dict]) -> Coverage | None:
     """Flow coverage of the explored pages of this run; nothing when the site has no flows (older reports stay as they were)."""
     if not flows:
@@ -296,6 +306,8 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
         if flow.tested and flow.start_url not in by_url:
             by_url[flow.start_url] = UrlReport(url=flow.start_url)
 
+    flows_list = _flows_list(flows_file or workspace / "flows.json")
+    ratings = _ratings_dict(ratings_file or workspace / "flow_ratings.json")
     run = RunReport(
         base_url=_common_prefix([u for u in by_url]),
         model=model or manifest.get("model", ""),
@@ -303,11 +315,16 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
         finished_at=manifest.get("finished_at", results.get("finished_at", "")),
         url_reports=[by_url[k] for k in sorted(by_url)],
         flow_reports=flow_reports,
-        coverage=_coverage(artifacts_dir, manifest, _flows_list(flows_file or workspace / "flows.json")),
+        coverage=_coverage(artifacts_dir, manifest, flows_list),
     )
     for report in run.url_reports:
         report.coverage_ceiling = _behaviour_ceiling(_load_inventory(artifacts_dir, report.url))
         validate_url(report)
+    flows_by_id = {f["id"]: f for f in flows_list}
+    inventories = load_inventories(artifacts_dir)
+    run.findings = collect_findings(run, tests_dir, inventories, flows_by_id, ratings)
+    names = {f["id"]: (f.get("goal") or f["id"]) for f in flows_list}
+    run.flapping = detect_flapping(ratings, names)
     return run
 
 
@@ -616,6 +633,60 @@ def _grid(document, labels: tuple[str, ...]):
     return table
 
 
+def _findings_section(document, run: RunReport) -> None:
+    """The headline of the report: what to trust, what to fix, and what to look at first - ahead of the
+    raw counts and the page-by-page detail. Environment, then which recent results are unsettled (a
+    tested flow whose own history flips between pass and fail is not a fact to rely on yet), then every
+    failure this run classified by kind (a wrong assertion vs. a live, content-dependent result vs.
+    genuinely unclear) with a one-line reproduction and what to do about it."""
+    document.add_heading("Findings", 1)
+    env = environment_block(run)
+    document.add_paragraph(" | ".join(f"{k}: {v}" for k, v in env.items()))
+    if run.coverage and run.coverage.pages:
+        cov = run.coverage
+        para = document.add_paragraph()
+        para.add_run(f"Coverage: {cov.pages_visited}/{cov.pages_total} pages visited by a tested flow "
+                     f"({cov.percent_pages}%), {cov.controls_touched}/{cov.controls_total} content controls acted "
+                     f"on ({cov.percent_controls}%). Detail below in “Flow coverage”.").bold = True
+
+    if run.flapping:
+        para = document.add_paragraph()
+        run_ = para.add_run(f"{len(run.flapping)} flow(s) changed verdict across recent runs - "
+                            "their current status is provisional, not settled:")
+        run_.bold = True
+        run_.font.color.rgb = _RED
+        table = _grid(document, ("Flow", "Recent sequence (oldest -> newest)", "Why"))
+        for flap in run.flapping:
+            cells = table.add_row().cells
+            cells[0].text = flap.test
+            cells[1].text = flap.sequence
+            cells[2].text = flap.note
+        document.add_paragraph()
+
+    if not run.findings:
+        para = document.add_paragraph("No failures to triage this run.")
+        para.runs[0].italic = True
+        return
+    document.add_paragraph(f"{len(run.findings)} failure(s), classified below. P1 = a user journey (flow); "
+                           "P2 = a page-level check. test_defect means the assertion itself is provably wrong "
+                           "against what was actually observed; flaky_data means the run completed but the site "
+                           "did not return the content the sentence promised (may be content-dependent, not a "
+                           "defect); unclear means it could not be classified automatically - read the trace.")
+    table = _grid(document, ("Sev", "Kind", "Test", "Summary", "Next action"))
+    for finding in run.findings:
+        cells = table.add_row().cells
+        cells[0].text = finding.severity
+        cells[1].text = finding.kind
+        cells[2].text = finding.test
+        cells[3].text = finding.summary
+        cells[4].text = finding.next_action
+        if finding.kind != "test_defect":
+            for cell in cells:
+                for p in cell.paragraphs:
+                    for r in p.runs:
+                        r.italic = True
+
+
 def _flows_table(document, flows: list[FlowReport]) -> None:
     table = _grid(document, ("Flow", "Flow status", "Result", "Pages"))
     for flow in flows:
@@ -761,6 +832,8 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
         "Screenshots are embedded beneath each test. Traces and videos remain "
         "linked; open this report from beside the artifacts/ folder so those links resolve."
     )
+    _findings_section(document, run)
+    document.add_page_break()
     _summary_table(document, run.url_reports)
     _warnings_section(document, run.warnings)
     link_base = destination.parent
