@@ -116,6 +116,24 @@ def test_a_multiselect_step_with_no_option_is_skipped_not_guessed():
     assert source is None and "no option to pick" in reason
 
 
+def test_a_multiselect_step_never_asserts_checked_state_on_its_own():
+    # that verification moved to pageutils.pick_option() itself, which runs while the widget's menu is
+    # still open (see its docstring: several widgets remove the checkbox from the DOM once the menu
+    # closes, which made a downstream get_by_role().to_be_checked() lookup indistinguishable from a
+    # genuinely broken click - confirmed live). flowgen must not reintroduce that separately.
+    flow = _flow()
+    flow["steps"] = [{"kind": "multiselect", "selector": None, "name": "Please pick a channel", "value": "Al Jazeera 2"}]
+    flow["outcome"] = {"effect": "reveals"}
+    flow["observed"] = {"effect": "reveals", "url": START, "new_headings": [], "new_controls": ["input:Al Jazeera 2"],
+                        "results": [], "step_effects": ["reveals"]}
+    trigger = {"tag": "button", "role": None, "name": "Please pick a channel", "selector": None, "hidden": False}
+    checkbox = {"tag": "input", "type": "checkbox", "name": "Al Jazeera 2", "hidden": False}
+    revealed = [{"trigger": "Please pick a channel", "effect": "reveals", "controls": [checkbox]}]
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SEARCH, trigger], revealed=revealed)])
+    assert reason == "" and "pick_option(page, control, 'Al Jazeera 2')" in source
+    assert source.count("to_be_checked()") == 0
+
+
 def test_long_names_match_by_prefix_because_flows_store_them_cut():
     stored = "Use our interactive map to find the nearest"[:40]
     button = {"tag": "a", "role": None, "name": stored + " frequency", "hidden": False}

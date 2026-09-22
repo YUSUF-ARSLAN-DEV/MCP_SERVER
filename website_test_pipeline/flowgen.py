@@ -173,6 +173,12 @@ def _step_verify(step: dict, effect: str | None, path_after: str | None, var: st
         return f'expect({var}).not_to_have_value("")'
     if effect != "navigates" and step.get("kind") == "fill":
         return f"expect({var}).to_have_value({_lit(str(step.get('value') or _plausible_value({})))})"
+    # A multiselect pick's real proof of behaviour - that the option actually ended up checked, not just that
+    # the menu opened - is verified inside pick_option() itself (pageutils.py) while the menu is still open.
+    # Asserting it again here, after the action, was tried and reverted: the widget this was built against
+    # closes its dropdown at the end of pick_option(), and closing it removes the checkbox from the
+    # accessibility tree entirely (confirmed live - "element(s) not found", not "not checked"), so a
+    # downstream get_by_role() lookup here cannot tell a real defect from the widget's own normal behaviour.
     if path_after:
         return f"expect(page).to_have_url(re.compile({_re_lit(_url_regex(path_after))}))"
     return 'expect(page.locator("body")).to_be_visible()'

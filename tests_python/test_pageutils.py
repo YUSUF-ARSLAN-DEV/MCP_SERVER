@@ -12,6 +12,8 @@ class _Loc:
         return self._count
 
     def locator(self, selector):
+        if self.name.startswith("option:") and "input[type" in selector and self.page.checked is not None:
+            return _CheckState(self.page, self.page.checked)
         return _Loc(self.page, f"option:{selector}", self.page.option_count)
 
     def filter(self, has_text):
@@ -21,15 +23,31 @@ class _Loc:
     def click(self, timeout=None):
         self.page.log.append(("click", self.name))
         if self.name.startswith("option:"):
+            self.page.picked = True           # a real widget's box is now checked (until close_menus runs)
             self.page.menu_open = False       # picking an option closes the menu
 
     def select_option(self, label=None, timeout=None):
         self.page.log.append(("select_option", label))
 
 
+class _CheckState:
+    """The option element itself, when the fake widget's checked state is known - so is_checked() can be
+    tested directly on `option`, matching _confirm_checked's first candidate before its input[] fallback."""
+    def __init__(self, page, checked):
+        self.page, self._checked, self.first = page, checked, self
+
+    def count(self):
+        return 1
+
+    def is_checked(self, timeout=None):
+        self.page.log.append(("is_checked", self._checked))
+        return self._checked
+
+
 class _Page:
-    def __init__(self, option_count=1, native_count=0):
-        self.option_count, self.native_count, self.log, self.menu_open = option_count, native_count, [], True
+    def __init__(self, option_count=1, native_count=0, checked=None):
+        self.option_count, self.native_count, self.checked = option_count, native_count, checked
+        self.log, self.picked, self.menu_open = [], False, True
 
     def locator(self, selector):
         if selector == OPEN_MENU_SEL:
@@ -66,6 +84,27 @@ def test_pick_option_raises_when_the_option_exists_nowhere():
     page = _Page(option_count=0, native_count=0)
     with pytest.raises(RuntimeError, match='option "Nope" not found'):
         pick_option(page, _Loc(page, "trigger"), "Nope")
+
+
+def test_pick_option_confirms_the_click_actually_checked_the_box():
+    # real gap, found live: a click that silently does nothing (a dead handler) looked identical to a
+    # working pick. When a checked state is confirmed False, that is now caught, not trusted.
+    page = _Page(checked=True)
+    pick_option(page, _Loc(page, "trigger"), "Al Jazeera 2")
+    assert ("is_checked", True) in page.log
+
+
+def test_pick_option_raises_when_the_click_did_not_actually_check_it():
+    page = _Page(checked=False)
+    with pytest.raises(RuntimeError, match='picking "Al Jazeera 2" did not check it'):
+        pick_option(page, _Loc(page, "trigger"), "Al Jazeera 2")
+
+
+def test_pick_option_never_guesses_when_no_checked_state_can_be_determined():
+    # a custom div-based widget with no native input and no aria-checked: _confirm_checked already covers
+    # this (the default _Page has no is_checked support), kept here as an explicit regression marker.
+    page = _Page()
+    pick_option(page, _Loc(page, "trigger"), "Al Jazeera 2")   # must not raise
 
 
 # ------------------------------------------------------------------ waiting for spinners

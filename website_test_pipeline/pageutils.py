@@ -161,17 +161,39 @@ def _menu_for(page, trigger):
     return page.locator(menu_selector()).first
 
 
+def _confirm_checked(option, text: str) -> None:
+    """After clicking an option, confirm it actually ended up checked - a click that silently did nothing
+    (a dead handler, a disabled option) would otherwise look identical to a working pick. Checked WHILE the
+    menu is still open: several widgets remove their checkbox list from the accessibility tree entirely once
+    the menu closes, which would make a check done afterward indistinguishable from "the click did nothing"
+    (found live - see flowgen._step_verify). Only raises when a real checked state was found and it is False;
+    a widget with no native input and no aria-checked (a plain div/li) is left unverified rather than guessed."""
+    for candidate in (option, option.locator('input[type="checkbox"], input[type="radio"]').first):
+        try:
+            if candidate.count() == 0:
+                continue
+            if candidate.is_checked(timeout=800) is False:
+                raise RuntimeError(f'picking "{text}" did not check it - the click may not be wired up')
+            return
+        except RuntimeError:
+            raise
+        except Exception:
+            continue          # is_checked() does not apply to this element; try the next, or give up quietly
+
+
 def pick_option(page, trigger, text: str) -> None:
     """Open a dropdown / checkbox-menu widget and pick the option whose text contains `text`.
 
     Used by both the flow runner and the generated flow specs, so a spec does exactly what
     the run that verified the flow did. Falls back to the widget's underlying <select multiple>
-    when the menu will not open on a synthetic click. Raises if the option does not exist."""
+    when the menu will not open on a synthetic click. Raises if the option does not exist, or if
+    it was clicked but never actually became checked."""
     trigger.click(timeout=3000)
     page.wait_for_timeout(700)
     option = _menu_for(page, trigger).locator(heuristics.option_selector()).filter(has_text=text).first
     if option.count():
         option.click(timeout=2000)
+        _confirm_checked(option, text)
         close_menus(page, trigger)
         return
     close_menus(page, trigger)
