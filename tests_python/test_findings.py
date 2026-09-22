@@ -3,7 +3,8 @@ from types import SimpleNamespace
 
 from website_test_pipeline.findings import (
     Finding, classify_failure, collect_findings, detect_flapping, direction_mismatch_finding,
-    environment_block, mojibake_finding, recorded_roles, role_mismatch_finding, url_after_non_navigating_step,
+    environment_block, flow_language_shift_finding, mojibake_finding, recorded_roles, role_mismatch_finding,
+    url_after_non_navigating_step,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -233,6 +234,52 @@ def test_collect_findings_flags_a_real_direction_mismatch_from_an_inventory():
     inv = [{"url": "https://x.test/ar", "dir": None, "accessibility": AR_TEXT}]
     findings = collect_findings(run, Path("/nope"), inv, {}, {})
     assert len(findings) == 1 and findings[0].kind == "localization_mismatch"
+
+
+# ------------------------------------------------------------------ heuristic 5: a flow that changes script mid-journey
+
+AR_INV = {"url": "https://x.test/ar", "dir": "rtl", "accessibility": AR_TEXT}
+EN_INV = {"url": "https://x.test/en", "dir": "ltr", "accessibility": EN_TEXT}
+INV_BY_URL = {"https://x.test/ar": AR_INV, "https://x.test/en": EN_INV}
+
+
+def _lang_flow(start, end, **over):
+    flow = {"id": "f1", "goal": "A visitor subscribes.", "start_url": start,
+           "observed": {"landed_url": start, "url": end}}
+    flow.update(over)
+    return flow
+
+
+def test_flow_language_shift_finding_flags_a_flow_that_lands_on_a_different_script():
+    f = flow_language_shift_finding(_lang_flow("https://x.test/ar", "https://x.test/en"), INV_BY_URL)
+    assert f and f.kind == "localization_mismatch" and f.severity == "P1"
+    assert "rtl-script" in f.summary and "ltr-script" in f.summary and "silent language fallback" in f.summary
+
+
+def test_flow_language_shift_finding_is_silent_when_start_and_end_agree():
+    assert flow_language_shift_finding(_lang_flow("https://x.test/ar", "https://x.test/ar"), INV_BY_URL) is None
+    same_script = {"https://x.test/ar": AR_INV, "https://x.test/ar2": {"url": "https://x.test/ar2", "accessibility": AR_TEXT}}
+    assert flow_language_shift_finding(_lang_flow("https://x.test/ar", "https://x.test/ar2"), same_script) is None
+
+
+def test_flow_language_shift_finding_is_silent_when_a_page_was_never_explored():
+    assert flow_language_shift_finding(_lang_flow("https://x.test/ar", "https://x.test/unexplored"), INV_BY_URL) is None
+
+
+def test_flow_language_shift_finding_falls_back_to_the_last_step_url_when_no_final_url_is_recorded():
+    flow = _lang_flow("https://x.test/ar", None)
+    flow["observed"] = {"landed_url": "https://x.test/ar", "step_urls": ["https://x.test/ar", "https://x.test/en"]}
+    f = flow_language_shift_finding(flow, INV_BY_URL)
+    assert f and "https://x.test/en" in f.summary
+
+
+def test_collect_findings_flags_a_real_flow_language_shift():
+    run = SimpleNamespace(url_reports=[], tested_flows=[
+        SimpleNamespace(flow_id="f1", title="flow one", start_url="https://x.test/ar", failed=False,
+                       outcome=SimpleNamespace(status="passed", error=None))])
+    findings = collect_findings(run, Path("/nope"), [AR_INV, EN_INV],
+                                {"f1": _lang_flow("https://x.test/ar", "https://x.test/en")}, {})
+    assert len(findings) == 1 and findings[0].kind == "localization_mismatch" and findings[0].scope == "flow"
 
 
 # ------------------------------------------------------------------ flapping

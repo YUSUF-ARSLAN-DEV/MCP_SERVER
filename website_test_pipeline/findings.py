@@ -23,7 +23,8 @@ pages the run already captured, regardless of pass/fail:
     capture chain (or the source page itself) mangled it, never a guess.
   - localization_mismatch: a page's declared <html dir> does not match the writing direction its own
     captured text actually is (heuristics.dominant_script, detected from Unicode ranges - not from the
-    page's own lang code or the run's URL pattern, either of which a site could get wrong).
+    page's own lang code or the run's URL pattern, either of which a site could get wrong); or a flow
+    starts on a page of one script and lands on a page of the other, a possible silent language fallback.
 """
 from __future__ import annotations
 import ast
@@ -197,6 +198,36 @@ def direction_mismatch_finding(inv: dict) -> Finding | None:
         next_action="set dir to match the rendered content, or check whether this is an untranslated/fallback page")
 
 
+# ------------------------------------------------------------------ heuristic 5: a flow that silently changes script mid-journey
+
+def flow_language_shift_finding(flow: dict, inventories_by_url: dict[str, dict]) -> Finding | None:
+    """None unless a flow starts on an explored page with a confidently-detected script and lands on a
+    DIFFERENT explored page whose script flips (rtl <-> ltr) - a real, well-known localization bug: a
+    translated journey silently falling back to the other language partway through. Only fires when both
+    pages were actually explored (their inventories are on disk) and both scripts are confidently
+    detected - never guessed from a URL pattern or a language code."""
+    observed = flow.get("observed") or {}
+    start_url = observed.get("landed_url") or flow.get("start_url") or ""
+    end_url = observed.get("url") or next(reversed(observed.get("step_urls") or []), None)
+    if not end_url or end_url == start_url:
+        return None
+    start_inv, end_inv = inventories_by_url.get(start_url), inventories_by_url.get(end_url)
+    if not start_inv or not end_inv:
+        return None
+    from . import heuristics
+    start_script = heuristics.dominant_script(start_inv.get("accessibility") or "")
+    end_script = heuristics.dominant_script(end_inv.get("accessibility") or "")
+    if start_script == "unknown" or end_script == "unknown" or start_script == end_script:
+        return None
+    return Finding(
+        test=flow.get("goal") or flow.get("id", ""), scope="flow", url=flow.get("start_url", ""), severity="P1",
+        kind="localization_mismatch",
+        summary=f"the flow starts on a {start_script}-script page ({start_url}) but lands on a "
+                f"{end_script}-script page ({end_url}) - a possible silent language fallback",
+        repro=f"run the flow from {start_url} and check the language of {end_url}",
+        next_action="confirm the destination is meant to change language; if not, this is a translation/routing bug")
+
+
 # ------------------------------------------------------------------ building findings
 
 def _spec_source(path: str | None) -> str:
@@ -238,11 +269,12 @@ def _last_definite(entries: list[dict] | None) -> bool:
 def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id: dict[str, dict],
                      ratings: dict[str, list[dict]] | None = None) -> list[Finding]:
     """Every failed/errored outcome in the run, as Findings, plus deterministic signals that are not tied
-    to any one failing test - captured text that could not be decoded cleanly, wherever it turns up, and
-    a page whose declared writing direction does not match its own captured text. `run` is a
-    report.RunReport."""
+    to any one failing test - captured text that could not be decoded cleanly, wherever it turns up; a page
+    whose declared writing direction does not match its own captured text; and a flow whose start and
+    landing pages have different scripts. `run` is a report.RunReport."""
     ratings = ratings or {}
     findings: list[Finding] = []
+    inv_by_url = {inv.get("url"): inv for inv in inventories if inv.get("url")}
     for report in run.url_reports:
         source = _spec_source(report.spec_path)
         for outcome in report.outcomes:
@@ -261,6 +293,10 @@ def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id:
         corrupt = mojibake_finding(flow.title, "flow", flow.start_url, (flow.outcome.error or "") if flow.outcome else "")
         if corrupt:
             findings.append(corrupt)
+        if flow_dict:
+            shift = flow_language_shift_finding(flow_dict, inv_by_url)
+            if shift:
+                findings.append(shift)
     for inv in inventories:
         corrupt = mojibake_finding(f"page capture: {inv.get('url', '')}", "page", inv.get("url", ""),
                                    inv.get("accessibility") or "")
