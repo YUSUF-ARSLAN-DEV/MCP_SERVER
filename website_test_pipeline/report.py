@@ -687,6 +687,62 @@ def _findings_section(document, run: RunReport) -> None:
                         r.italic = True
 
 
+def _shorten(text: str, limit: int = 90) -> str:
+    text = re.sub(r"\s+", " ", text or "").strip()
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _short_error(error: str | None) -> str:
+    match = re.search(r"^E\s+(.+)$", error or "", re.M)
+    return _shorten(match.group(1) if match else (error or ""))
+
+
+def _page_row(outcome: TestOutcome) -> tuple[str, str, str, str, str]:
+    """(scope, test, url, expected, observed) for a page-level test - no verdict, added by the caller."""
+    if outcome.assertions:
+        extra = f" (+{len(outcome.assertions) - 1} more)" if len(outcome.assertions) > 1 else ""
+        expected = _shorten(outcome.assertions[0]) + extra
+    else:
+        expected = "(no assertion captured)"
+    observed = "as expected" if outcome.passed else (_short_error(outcome.error) or outcome.status)
+    return "page", outcome.title.replace("_", " "), outcome.url, expected, observed
+
+
+def _flow_row(flow: FlowReport) -> tuple[str, str, str, str, str]:
+    return "flow", flow.title, flow.start_url, flow.expected or "(not stated)", flow.observed or "(never ran)"
+
+
+def _test_summary_section(document, run: RunReport) -> None:
+    """One row per test, page or flow, in one place - so a reader can scan what was tested, what it
+    expected, and what actually happened without opening the per-page/per-flow sections at all.
+    Failing tests are listed first (severity of the finding, if any, in the last column); the rest
+    keep the report's normal order. Full detail (screenshots, ARIA snapshots, traces) stays in the
+    per-page and per-flow sections below - this table is the index into them, not a replacement."""
+    rows = [(*_page_row(o), not o.passed) for u in run.url_reports for o in u.outcomes]
+    rows += [(*_flow_row(f), not f.passed) for f in run.tested_flows]
+    if not rows:
+        return
+    severity_of = {f.test: f.severity for f in run.findings}
+    document.add_heading("Test summary", 1)
+    document.add_paragraph(f"{len(rows)} test(s): {sum(1 for r in rows if not r[-1])} passed, "
+                           f"{sum(1 for r in rows if r[-1])} failed. Failing tests are listed first; "
+                           "each links to full evidence in its own section below.")
+    table = _grid(document, ("Scope", "Test", "URL", "Expected", "Observed", "Verdict"))
+    for scope, test, url, expected, observed, failed in sorted(rows, key=lambda r: (not r[-1], r[0], r[1])):
+        cells = table.add_row().cells
+        cells[0].text = scope
+        cells[1].text = test + (f" [{severity_of[test]}]" if failed and test in severity_of else "")
+        cells[2].text = url
+        cells[3].text = expected
+        cells[4].text = observed
+        cells[5].text = "FAILED" if failed else "PASSED"
+        if failed:
+            for p in cells[5].paragraphs:
+                for r in p.runs:
+                    r.font.color.rgb = _RED
+                    r.bold = True
+
+
 def _flows_table(document, flows: list[FlowReport]) -> None:
     table = _grid(document, ("Flow", "Flow status", "Result", "Pages"))
     for flow in flows:
@@ -833,6 +889,8 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
         "linked; open this report from beside the artifacts/ folder so those links resolve."
     )
     _findings_section(document, run)
+    document.add_page_break()
+    _test_summary_section(document, run)
     document.add_page_break()
     _summary_table(document, run.url_reports)
     _warnings_section(document, run.warnings)

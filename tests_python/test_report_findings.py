@@ -99,6 +99,51 @@ def test_the_combined_report_leads_with_a_findings_section(tmp_path):
         assert part in joined, part
 
 
+def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verdict(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
+    assert headings.index("Findings") < headings.index("Test summary") < headings.index("User flows")
+    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Scope", "Test", "URL", "Expected", "Observed", "Verdict"])
+    rows = [[c.text for c in r.cells] for r in table.rows[1:]]
+    by_test = {r[1].split(" [")[0]: r for r in rows}
+    assert by_test["wizard step"][0] == "page" and by_test["wizard step"][5] == "FAILED"
+    assert "Passcode" in by_test["wizard step"][3] or "get_by_role" in by_test["wizard step"][3]
+    assert by_test["wizard step"][4] and by_test["wizard step"][4] != "as expected"
+    assert "[P2]" in rows[0][1] if rows[0][5] == "FAILED" else True             # the failing row carries its severity
+    flow_row = next(r for r in rows if r[1] == "A visitor picks a country and sees the results.")
+    assert flow_row[0] == "flow" and flow_row[3] == "navigates -> /en/find" and flow_row[5] == "PASSED"
+    assert flow_row[4] and flow_row[4] != "(never ran)"
+
+
+def test_the_failing_test_is_listed_before_the_passing_ones(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Scope", "Test", "URL", "Expected", "Observed", "Verdict"])
+    verdicts = [r.cells[5].text for r in table.rows[1:]]
+    assert verdicts[0] == "FAILED" and verdicts.count("FAILED") == 1
+    assert all(v == "PASSED" for v in verdicts[1:])
+
+
+def test_a_page_test_with_no_captured_assertion_says_so_plainly(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    (tests / "https-x-test-en_test.py").write_text(
+        "def test_wizard_step(page):\n    pass\n", encoding="utf-8")    # no expect()/assert - nothing to extract
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "(no assertion captured)" in joined
+
+
+def test_no_test_summary_heading_when_there_is_nothing_to_summarise(tmp_path):
+    from website_test_pipeline.report import RunReport, _test_summary_section
+    from docx import Document as _Doc
+    document = _Doc()
+    _test_summary_section(document, RunReport())
+    assert [p.text for p in document.paragraphs if p.style.name.startswith("Heading")] == []
+
+
 def test_a_run_with_nothing_failing_says_so_plainly(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
