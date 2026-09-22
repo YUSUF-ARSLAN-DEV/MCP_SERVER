@@ -258,6 +258,24 @@ def test_the_combined_report_says_how_much_of_the_site_the_flows_cover(tmp_path)
     assert "Header, navigation and footer links are left out" in joined
 
 
+def test_the_combined_report_puts_full_evidence_in_an_appendix(tmp_path):
+    # the body (Findings, Test summary, User flows table, coverage) must stay skimmable - no screenshots
+    # or per-test detail until the reader reaches the appendix.
+    artifacts, tests = _workspace(tmp_path)
+    _with_inventories(artifacts)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
+    assert headings.index("User flows") < headings.index("Flow coverage") < headings.index("Appendix: full evidence")
+    assert headings.index("Appendix: full evidence") < headings.index("Flow evidence") < headings.index("Journey")
+    assert headings.index("Flow evidence") < headings.index("Page evidence")
+    assert headings.index("Appendix: full evidence") < headings.index("Browser evidence")
+    body = headings[:headings.index("Appendix: full evidence")]
+    for heavy in ("Journey", "Expected vs observed", "Where it broke", "Review history", "Browser evidence", "Failure detail"):
+        assert heavy not in body, heavy
+    assert len(doc.inline_shapes) > 0                 # the screenshots are still embedded, just later in the file
+
+
 def test_a_page_document_says_how_much_of_that_page_the_flows_act_on(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     _with_inventories(artifacts)

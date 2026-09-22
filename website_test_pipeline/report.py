@@ -885,8 +885,11 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
     document.add_heading("Website Test Evidence Report — Full Run", 0)
     _metadata(document, run, scope="all URLs")
     document.add_paragraph(
-        "Screenshots are embedded beneath each test. Traces and videos remain "
-        "linked; open this report from beside the artifacts/ folder so those links resolve."
+        "This report leads with what to trust and what to fix: findings, the test summary, coverage. "
+        "Screenshots, full assertion lists and failure traces (including ARIA snapshots) for every test are "
+        "collected in the Appendix at the end instead of repeating through the body, so the summary above "
+        "stays scannable. Traces and videos remain linked from there; open this report from beside the "
+        "artifacts/ folder so those links resolve."
     )
     _findings_section(document, run)
     document.add_page_break()
@@ -897,19 +900,42 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
     link_base = destination.parent
     if run.tested_flows:
         document.add_page_break()
-        _flows_section(document, run.tested_flows, embed=True, link_base=link_base)
+        document.add_heading("User flows", 1)
+        document.add_paragraph(
+            "Each flow is one user journey, tested by a generated spec whose steps and assertions come from a "
+            "real verified browser run. The title is the flow's plain-language description. Full detail for "
+            "each flow (journey, evidence, review history) is in the Appendix.")
+        _flows_table(document, run.tested_flows)
     _untested_flows_section(document, run.untested_flows)
     _coverage_section(document, run.coverage)
-    for report in run.url_reports:
-        document.add_page_break()
-        document.add_heading(report.url, 1)
-        _summary_table(document, [report])
-        if report.warnings:
-            _warnings_section(document, report.warnings)
-        for outcome in report.outcomes:
-            document.add_page_break()
-            _render_outcome(document, outcome, embed=True, link_base=link_base)
+    _appendix_section(document, run, link_base=link_base)
     _save_document(document, destination, run)
+
+
+def _appendix_section(document, run: RunReport, *, link_base: Path | None) -> None:
+    """Full per-test evidence - screenshots, assertion lists, failure detail (ARIA snapshots, tracebacks) -
+    kept out of the body so the findings/summary/coverage sections above stay skimmable. Organised the same
+    way the body refers to it: flows first, then pages, each in its usual order."""
+    if not run.tested_flows and not any(r.outcomes for r in run.url_reports):
+        return
+    document.add_page_break()
+    document.add_heading("Appendix: full evidence", 1)
+    document.add_paragraph(
+        "Screenshots, full assertion lists and failure detail for every test, organised by flow then by page. "
+        "This is the raw evidence behind the Findings and Test summary sections above.")
+    if run.tested_flows:
+        document.add_heading("Flow evidence", 2)
+        for flow in run.tested_flows:
+            document.add_page_break()
+            _render_flow(document, flow, embed=True, link_base=link_base)
+    pages_with_tests = [r for r in run.url_reports if r.outcomes]
+    if pages_with_tests:
+        document.add_heading("Page evidence", 2)
+        for report in pages_with_tests:
+            document.add_page_break()
+            document.add_heading(report.url, 2)
+            for outcome in report.outcomes:
+                _render_outcome(document, outcome, embed=True, link_base=link_base)
 
 
 def name_for(url: str) -> str:
