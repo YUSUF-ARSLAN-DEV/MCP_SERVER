@@ -540,6 +540,17 @@ def _render_assertions(document, outcome: TestOutcome) -> None:
             document.add_paragraph(line, style="List Bullet")
 
 
+def _evidence_caption(stem: str) -> str:
+    """'01-click-flow' -> 'Step 1: click flow'; the runner's '99-outcome' -> 'Final outcome'."""
+    m = re.match(r"^(\d+)[-_ ]+(.*)$", stem)
+    if not m:
+        return stem.replace("-", " ").replace("_", " ")
+    num, label = int(m.group(1)), m.group(2).replace("-", " ").replace("_", " ").strip()
+    if num == 99 and label.lower() in {"outcome", ""}:
+        return "Final outcome"
+    return f"Step {num}: {label}" if label else f"Step {num}"
+
+
 def _render_evidence(document, outcome: TestOutcome, *, embed: bool = True, link_base: Path | None = None) -> None:
     document.add_heading("Browser evidence", 3)
     if not outcome.evidence:
@@ -555,11 +566,11 @@ def _render_evidence(document, outcome: TestOutcome, *, embed: bool = True, link
             except Exception as exc:  # unreadable / truncated screenshot
                 document.add_paragraph(f"(could not embed {path.name}: {exc})")
                 continue
-            caption = document.add_paragraph(path.stem.replace("-", " "))
+            caption = document.add_paragraph(_evidence_caption(path.stem))
             caption.runs[0].italic = True
             caption.runs[0].font.size = Pt(9)
         else:
-            para = document.add_paragraph(f"{path.stem.replace('-', ' ')}  —  ", style="List Bullet")
+            para = document.add_paragraph(f"{_evidence_caption(path.stem)}  —  ", style="List Bullet")
             _add_hyperlink(para, _rel(str(path), link_base), path.name)
 
 

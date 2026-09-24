@@ -155,3 +155,11 @@ def test_a_run_with_nothing_failing_says_so_plainly(tmp_path):
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     assert "No failures to triage this run." in joined
     assert "changed verdict across recent runs" not in joined
+
+
+def test_evidence_caption_reads_like_a_person_wrote_it():
+    from website_test_pipeline.report import _evidence_caption
+    assert _evidence_caption("01-click-flow") == "Step 1: click flow"
+    assert _evidence_caption("02_select_countrylist") == "Step 2: select countrylist"
+    assert _evidence_caption("99-outcome") == "Final outcome"
+    assert _evidence_caption("failure") == "failure"
