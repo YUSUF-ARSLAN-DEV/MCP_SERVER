@@ -235,3 +235,48 @@ def test_the_prompt_names_the_document_part_and_never_shows_more_than_a_chunk():
     assert "REQUIREMENTS (from spec.docx, part 2 of 3)" in text and "excerpt text" in text
     assert "Existing sentence one" in text and "NOT YET COVERED by any tested flow" in text
     assert text.endswith("do not restate the requirements or explain first.")        # the last thing the model reads: JSON only
+
+
+# ------------------------------------------------------------------ .py requirements files
+
+PY_DOC = '''
+NAME = "QA Tester"
+CODE = ""
+REQUIREMENTS = """
+A visitor named {NAME} fills in the form and presses Submit.
+A visitor who enters the code {CODE} is subscribed and sees the confirmation.
+"""
+'''
+
+
+def test_a_py_requirements_file_fills_variables_and_drops_lines_with_an_empty_one(tmp_path):
+    from website_test_pipeline.documents import read_document
+    file = tmp_path / "req.py"
+    file.write_text(PY_DOC, encoding="utf-8")
+    text = read_document(file)
+    assert "A visitor named QA Tester fills in the form and presses Submit." in text
+    assert "confirmation" not in text                       # its {CODE} was empty, so the line is gone
+
+
+def test_a_py_requirements_file_is_read_not_executed(tmp_path):
+    from website_test_pipeline.documents import read_document
+    marker = tmp_path / "ran.txt"
+    file = tmp_path / "req.py"
+    file.write_text(f'open({str(marker)!r}, "w").write("x")\nREQUIREMENTS = "A visitor opens the subscribe page and sees the form."\n',
+                    encoding="utf-8")
+    assert "subscribe page" in read_document(file)
+    assert not marker.exists()
+
+
+def test_a_py_requirements_file_without_a_template_or_with_an_unknown_variable_is_refused(tmp_path):
+    import pytest
+    from website_test_pipeline.documents import DocumentError, read_document
+    (tmp_path / "a.py").write_text("NAME = 'x'\n", encoding="utf-8")
+    with pytest.raises(DocumentError, match="needs a REQUIREMENTS"):
+        read_document(tmp_path / "a.py")
+    (tmp_path / "b.py").write_text('REQUIREMENTS = "A visitor uses {MISSING} to sign in today."\n', encoding="utf-8")
+    with pytest.raises(DocumentError, match="MISSING"):
+        read_document(tmp_path / "b.py")
+    (tmp_path / "c.py").write_text("REQUIREMENTS = (\n", encoding="utf-8")
+    with pytest.raises(DocumentError, match="not valid Python"):
+        read_document(tmp_path / "c.py")

@@ -6,7 +6,8 @@ sentences `intents` writes, which then go through the same expansion, verificati
 that changes what a test may claim.
 
 Code stays in charge of what the model may claim:
-  * the text is extracted by code (txt, md, rst, docx, pdf), never by the model;
+  * the text is extracted by code (txt, md, rst, docx, pdf, or a .py of constants + a REQUIREMENTS template),
+    never by the model;
   * every proposed journey must carry a `quote` copied from the document, and it is accepted only if that
     quote really is in the text (ignoring case, spacing and punctuation) - the model cannot invent a
     requirement and attribute it to the document;
@@ -16,10 +17,12 @@ Code stays in charge of what the model may claim:
     control and option against the DOM, exactly as for any sentence.
 """
 from __future__ import annotations
+import ast
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-SUPPORTED = (".txt", ".md", ".markdown", ".rst", ".docx", ".pdf")
+SUPPORTED = (".txt", ".md", ".markdown", ".rst", ".docx", ".pdf", ".py")
 MAX_BYTES = 8_000_000            # refuse anything bigger: this is prose, not a data dump
 CHUNK_CHARS = 6000               # what the model is shown at a time
 MAX_CHUNKS = 4                   # per document and run; a long document is covered over several runs
@@ -70,6 +73,8 @@ def read_document(path) -> str:
             text = _read_docx(file)
         elif suffix == ".pdf":
             text = _read_pdf(file)
+        elif suffix == ".py":
+            text = _read_py(file)
         else:
             text = file.read_text(encoding="utf-8", errors="replace")
     except DocumentError:
@@ -90,6 +95,38 @@ def _read_docx(file: Path) -> str:
         for row in table.rows:
             parts.append(" | ".join(cell.text.strip() for cell in row.cells))
     return "\n".join(parts)
+
+
+def _read_py(file: Path) -> str:
+    """A requirements file written as Python: plain `NAME = "value"` constants plus a REQUIREMENTS template that
+    refers to them as {NAME}. Read with `ast`, never executed. A template line that mentions a variable left
+    empty is dropped, so an optional requirement disappears until its value is filled in."""
+    try:
+        tree = ast.parse(file.read_text(encoding="utf-8"))
+    except SyntaxError as exc:
+        raise DocumentError(f"{file.name} is not valid Python (line {exc.lineno})") from exc
+    values: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            try:
+                value = ast.literal_eval(node.value)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(value, (str, int, float)):
+                values[node.targets[0].id] = str(value).strip()
+    template = values.pop("REQUIREMENTS", None)
+    if template is None:
+        raise DocumentError(f'{file.name} needs a REQUIREMENTS = """...""" string')
+    lines = []
+    for line in template.split("\n"):
+        names = re.findall(r"\{(\w+)\}", line)
+        unknown = [n for n in names if n not in values]
+        if unknown:
+            raise DocumentError(f"{file.name}: REQUIREMENTS uses {{{unknown[0]}}} but no variable of that name is set")
+        if any(not values[n] for n in names):
+            continue
+        lines.append(re.sub(r"\{(\w+)\}", lambda m: values[m.group(1)], line))
+    return "\n".join(lines)
 
 
 def _read_pdf(file: Path) -> str:
