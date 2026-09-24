@@ -1,0 +1,47 @@
+A good website test report is a structured document that communicates what was tested, what happened, and what the risks are. Here's a breakdown of the standard structure and content:
+1. Executive Summary
+A high-level overview for managers and stakeholders (non-technical readers).
+Test objective — why testing was performed
+Overall status — Pass / Pass with issues / Fail
+Key metrics — number of test cases run, passed, failed
+Release recommendation — Go / No-Go / Conditional Go
+Top risks & blockers
+2. Test Scope
+In scope — what was tested (features, pages, browsers, devices)
+Out of scope — what was intentionally not tested
+Test types performed — functional, usability, performance, security, compatibility, accessibility, responsive design
+3. Test Environment
+URLs (staging, production, etc.)
+Browsers & versions (Chrome, Firefox, Safari, Edge)
+Devices & OS (desktop, mobile, tablets)
+Test data & accounts used
+Tools used (Selenium, Playwright, Lighthouse, etc.)
+4. Test Execution Summary
+The quantitative core of the report:
+Total test cases executed
+Passed / Failed / Blocked / Skipped
+Pass rate (%)
+Defects found vs. fixed vs. open
+Charts or tables showing breakdown
+5. Defect Report (Bugs Found)
+Each defect should include:
+ID & severity (Critical / High / Medium / Low)
+Title and detailed description
+Steps to reproduce
+Expected vs. actual result
+Screenshots / video evidence
+Status (New / Open / Fixed / Retest / Closed)
+Assigned owner
+6. Test Coverage / Requirements Traceability
+Which requirements/user stories were verified
+Coverage gaps (areas not covered by tests)
+7. Test Logs & Evidence
+Screenshots, videos, logs
+Test run artifacts
+8. Risks & Issues
+Unresolved bugs and their business impact
+Areas with insufficient coverage
+Known limitations of the test effort
+9. Conclusions & Recommendations
+Final verdict (is the site ready for release?)
+Recommended actions before release
