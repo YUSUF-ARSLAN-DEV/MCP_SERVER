@@ -100,6 +100,12 @@ Order on every `explore` / `generate` / `auth`, so an unattended run is never in
 4. otherwise the wall is reported "not tested" and the exact `.env` names to fill in are printed.
 Crawl, explore, verify and every generated test start from the saved session (`WTP_STORAGE_STATE` for pytest).
 
+**Exploring what is behind the login.** `crawl` runs the same session -> .env -> popup sequence before it walks the
+site, and the page a successful sign-in ends on (`auth/landing.<account>.txt`) is crawled as a second starting point.
+That page is not linked from the public site, so without this nothing would ever discover the logged-in area
+(before, a `seeds.txt` had to be written by hand). Everything downstream - explore, intents, expand, verify, the
+generated tests - then sees the logged-in pages through the saved session.
+
 **Login check before the browser stages** (`authflow.preflight_session`). `flows run`, `execute` and `report` first
 run the same check on the seed URL, so a session that expired since `explore` is renewed silently from `.env`. If it
 cannot be renewed (details missing or refused, popup skipped) the browser stages are skipped with the reason

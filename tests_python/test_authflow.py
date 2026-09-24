@@ -287,3 +287,24 @@ class _FakePW:
 
     def __exit__(self, *a):
         return False
+
+
+# ------------------------------------------------------------------ the post-login page is remembered for the crawl
+
+def test_the_page_a_sign_in_ends_on_is_remembered_so_the_crawl_can_start_there(browser, tmp_path, monkeypatch):
+    from website_test_pipeline.authflow import landing_urls
+    settings = _settings(tmp_path)
+    assert landing_urls(settings) == []
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "right")
+    assert ensure_session(settings, _Routed(browser), URL, interactive=False).status == "signed-in-env"
+    assert landing_urls(settings) == ["https://fake.test/session"]
+
+
+def test_a_sign_in_that_stays_on_the_login_page_records_no_landing(tmp_path):
+    from website_test_pipeline.authflow import landing_urls, save_landing
+    settings = _settings(tmp_path)
+    save_landing(settings, "https://fake.test/login#top", "https://fake.test/login")
+    save_landing(settings, "", "https://fake.test/login")
+    assert landing_urls(settings) == []
+    assert landing_urls(SimpleNamespace()) == []                             # settings without a workspace

@@ -235,6 +235,7 @@ def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, i
             outcome = perform_auth(page, wall, creds)
             if outcome.ok:
                 save_session(context, settings)
+                save_landing(settings, outcome.url_after, url)
                 _say(log, f"signed in as '{account}' from .env; session saved")
                 return SessionResult("signed-in-env")
             _say(log, f"the details in .env for '{account}' were refused"
@@ -259,6 +260,7 @@ def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, i
             return SessionResult("skipped" if outcome is None else "failed",
                                  "" if outcome is None else f"gave up after {outcome.attempts} attempts")
         save_session(context, settings)
+        save_landing(settings, outcome.url_after, url)
         if answer.remember:
             names = remember_credentials(settings.root / ".env", settings.root, settings.site, wall, answer, account)
             _say(log, "remembered in .env as: " + ", ".join(names))
@@ -368,3 +370,27 @@ def bind_credentials(steps: list[dict], inventories: list[dict], site: str, acco
     if missing:
         return "typing into a login form needs details that are not set in .env: " + ", ".join(dict.fromkeys(missing))
     return ""
+
+
+# ------------------------------------------------------------------ where a sign-in lands (so the crawl can start there)
+
+def landing_path(settings) -> Path:
+    return settings.workspace / "auth" / f"landing.{_account(settings)}.txt"
+
+
+def save_landing(settings, landed_url: str, login_url: str) -> None:
+    """Remember the page a successful sign-in ended on. It is not a link anywhere on the public site, so without this
+    nothing would ever discover the logged-in area."""
+    def key(u: str) -> str:
+        return (u or "").split("#")[0].rstrip("/")
+    if not landed_url or key(landed_url) == key(login_url):
+        return
+    path = landing_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(landed_url + "\n", encoding="utf-8")
+
+
+def landing_urls(settings) -> list[str]:
+    if not hasattr(settings, "workspace") or not landing_path(settings).is_file():
+        return []
+    return [line.strip() for line in landing_path(settings).read_text(encoding="utf-8").splitlines() if line.strip()]

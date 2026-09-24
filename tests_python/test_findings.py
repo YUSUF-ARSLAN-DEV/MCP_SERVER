@@ -133,12 +133,17 @@ def test_an_unrecognised_failure_is_left_unclear_not_guessed():
 # ------------------------------------------------------------------ real data: the two confirmed page-spec defects
 
 def test_the_real_frequency_search_failure_is_correctly_diagnosed_as_a_test_defect():
-    error = ('E   AssertionError: Page URL expected to be \'re.compile(\'country=Afghanistan\')\'\n'
-             'E   Actual value: https://sat-stg.aljazeera.tv/en/frequency-search')
-    spec = (ROOT / "runs" / "sat-stg.aljazeera.tv" / "tests" / "https-sat-stg-aljazeera-tv-en-frequency-search_test.py")
-    if not spec.exists():
-        return                                                            # only runs when the real run data is present
-    why = url_after_non_navigating_step(spec.read_text(encoding="utf-8"))
+    # the shape of the real spec: a country is only SELECTED, yet the URL is expected to change
+    spec = "\n".join([
+        "import re",
+        "from playwright.sync_api import expect",
+        "def test_primary_flow_select_country_navigates_with_country_param(page, evidence_dir):",
+        "    country = page.locator('#countrylist')",
+        "    action_evidence(page, 'select-country', lambda: country.select_option(label='Afghanistan'),",
+        "                    lambda: expect(page).to_have_url(re.compile('country=Afghanistan')), evidence_dir)",
+        "",
+    ])
+    why = url_after_non_navigating_step(spec)
     assert why and "select_option" in why
 
 
