@@ -1,6 +1,7 @@
 # Credential popup - design
 
-Status: step 1 built (login-wall detection); steps 2-7 proposed.
+Status: steps 1-4 built (detect, AUTH_MODE, popup, fill/confirm/save session - try it with
+`python -m website_test_pipeline.cli auth <url>`); steps 5-7 proposed.
 
 ## Problem
 
@@ -70,13 +71,13 @@ Only if that also fails, and the run is interactive, does the popup return; unat
 `explorer._detect_auth` records visible, non-readonly password fields and their sibling fields as
 `PageInventory.auth`; the report lists each wall under "Not tested".
 
-### 2. Decide whether to ask
+### 2. Decide whether to ask  (DONE - `authpopup.should_ask`, `Settings.auth_mode`)
 `AUTH_MODE` (`auto` | `none`). Ask only when the mode is `auto`, the run is interactive (a terminal and a
 display, Tk available), the wall's form is password-based, and there is no working session or account yet. The
 browser can stay headless because the popup mirrors it with screenshots. Otherwise the wall stays in the report
 as "not tested".
 
-### 3. The popup (phase 1)
+### 3. The popup (phase 1)  (DONE - `authpopup.py`; demo: `python -m website_test_pipeline.authpopup`)
 A small local window (start with Tk or pywebview; no server) with:
 - **Mirror:** a screenshot of the agent's current page, refreshed about once a second. No live video.
 - **Form:** one input per detected field, masked for password types.
@@ -84,7 +85,7 @@ A small local window (start with Tk or pywebview; no server) with:
 - **Save choices:** a checkbox "remember these in .env" (default off).
 Time-limited with a visible countdown; on timeout the run continues and the login is marked skipped.
 
-### 4. Fill, confirm, persist
+### 4. Fill, confirm, persist  (DONE - `authflow.py`; up to 3 attempts, the site's own error shown between them)
 Fill with `page.fill`, submit, judge success from observable signals (password field gone, URL changed, error
 region appeared, a logout control appeared). On success write `storage_state`, then make sure it is ignored:
 run `git check-ignore` on the file and, if it is not ignored, append its path to `.gitignore` before writing it.

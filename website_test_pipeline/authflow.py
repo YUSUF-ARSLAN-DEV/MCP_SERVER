@@ -1,0 +1,201 @@
+"""Sign in / sign up on a wall the explorer found, confirm it worked, and keep the session.
+
+Fills the fields the person typed into the popup (authpopup), submits the form, and judges the outcome from what
+the page shows afterwards - the password form gone, a visible error message - never from words like "welcome".
+On success the logged-in session (Playwright storage_state) is saved under runs/<site>/auth/, and the details are
+written to .env only if the person asked for that. Typed values go straight into the page; they are never logged.
+See docs/CREDENTIAL_POPUP_DESIGN.md.
+"""
+from __future__ import annotations
+import os
+import re
+import subprocess
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .authpopup import AuthAnswer, AuthRequest, ask_credentials, field_key, is_interactive, should_ask
+
+MAX_ATTEMPTS = 3
+SETTLE_MS = 1500
+
+# Visible text that is plainly an error. Narrower than the explorer's validation selector on purpose: a bare
+# `.messages` / `.alert` is often a success banner, and mistaking that for a failed login would be worse.
+_AUTH_ERROR_SEL = ('[role="alert"],[aria-invalid="true"],.error,.errors,.invalid-feedback,.field-error,'
+                   '.form-error,.has-error,.alert-danger,[class*="error" i]')
+
+_SUBMIT_JS = """root => {
+    if (root.tagName === 'FORM') { root.requestSubmit ? root.requestSubmit() : root.submit(); return 'form'; }
+    const b = [...root.querySelectorAll('button, input[type=submit], [role=button]')]
+        .find(x => x.getClientRects().length && !x.disabled);
+    if (b) { b.click(); return 'button'; }
+    return null;
+}"""
+
+_STATE_JS = """() => ({
+    password_visible: [...document.querySelectorAll('input[type=password]')]
+        .some(e => e.getClientRects().length && !e.readOnly && !e.disabled),
+})"""
+
+
+@dataclass
+class AuthOutcome:
+    ok: bool
+    signals: dict = field(default_factory=dict)   # what was observed, so a reader can check the verdict
+    error_text: str = ""                          # the site's own error message, if one showed
+    url_after: str = ""
+    attempts: int = 1
+
+
+def _fill(page, group: int, index: int, fld: dict, value: str) -> None:
+    locator = page.locator(f'[data-wtp-auth="{group}-{index}"]')
+    if (fld.get("type") or "").startswith("select"):
+        locator.select_option(label=value)
+    else:
+        locator.fill(value)
+
+
+def perform_auth(page, wall: dict, answer: AuthAnswer, settle_ms: int = SETTLE_MS) -> AuthOutcome:
+    """Fill and submit `wall` (an entry of PageInventory.auth, found on the CURRENT page), then judge the result."""
+    group = wall["group"]
+    url_before = page.url
+    for i, fld in enumerate(wall["fields"]):
+        value = answer.values.get(field_key(i, fld))
+        if value:
+            _fill(page, group, i, fld, value)
+    try:
+        page.locator(f'[data-wtp-auth-root="{group}"]').evaluate(_SUBMIT_JS)
+    except Exception:
+        pass                              # the submit navigated and tore down the page: judge it below
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=8000)
+    except Exception:
+        pass
+    page.wait_for_timeout(settle_ms)
+    state = page.evaluate(_STATE_JS)
+    errors = [t for t in (e.strip() for e in page.locator(_AUTH_ERROR_SEL).all_inner_texts()) if t][:3]
+    signals = {"password_form_gone": not state["password_visible"], "error_shown": bool(errors),
+               "url_changed": page.url != url_before}
+    ok = signals["password_form_gone"] and not signals["error_shown"]
+    return AuthOutcome(ok, signals, errors[0][:200] if errors else "", page.url)
+
+
+# ------------------------------------------------------------------ keeping things out of git
+
+def ensure_ignored(path: Path, repo_root: Path) -> bool:
+    """True if git ignores `path` afterwards. If it did not, append its repo-relative path to .gitignore first."""
+    def ignored() -> bool:
+        return subprocess.run(["git", "check-ignore", "-q", str(path)], cwd=repo_root,
+                              capture_output=True).returncode == 0
+    try:
+        if ignored():
+            return True
+        rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+        with open(repo_root / ".gitignore", "a", encoding="utf-8") as fh:
+            fh.write(f"\n# added by the auth flow: holds a login secret\n{rel}\n")
+        return ignored()
+    except (OSError, ValueError):
+        return False
+
+
+def session_path(settings) -> Path:
+    return settings.workspace / "auth" / "state.json"
+
+
+def has_session(settings) -> bool:
+    return session_path(settings).is_file()
+
+
+def save_session(context, settings) -> Path:
+    path = session_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not ensure_ignored(path, settings.root):
+        raise RuntimeError(f"refusing to write a login session to {path}: git would not ignore it")
+    context.storage_state(path=str(path))
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return path
+
+
+def _env_name(site: str, key: str) -> str:
+    return "AUTH_" + re.sub(r"[^A-Z0-9]+", "_", f"{site}_{key}".upper()).strip("_")
+
+
+def remember_credentials(env_path: Path, repo_root: Path, site: str, wall: dict, answer: AuthAnswer) -> list[str]:
+    """Write the typed values to .env as AUTH_<SITE>_<FIELD>=... (replacing older ones). Returns the variable
+    NAMES written - only names are ever shown or logged."""
+    if not ensure_ignored(env_path, repo_root):
+        raise RuntimeError(f"refusing to write credentials to {env_path}: git would not ignore it")
+    new = {_env_name(site, field_key(i, f)): answer.values.get(field_key(i, f), "")
+           for i, f in enumerate(wall["fields"]) if answer.values.get(field_key(i, f))}
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else []
+    lines = [ln for ln in lines if ln.split("=", 1)[0].strip() not in new]
+    lines += [f"{name}={value}" for name, value in new.items()]
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return sorted(new)
+
+
+# ------------------------------------------------------------------ the whole thing, for `cli auth`
+
+def authenticate_wall(page, wall: dict, url: str, ask=ask_credentials, max_attempts: int = MAX_ATTEMPTS,
+                      log=None) -> tuple[AuthOutcome | None, AuthAnswer | None]:
+    """Ask, fill, confirm - retrying with the site's own error shown - until it works, the person skips, or the
+    attempts run out. (None, None) = the person skipped."""
+    notice = ""
+    for attempt in range(1, max_attempts + 1):
+        answer = ask(AuthRequest(url, wall["kind"], wall["fields"], notice), lambda: page.screenshot())
+        if answer is None:
+            return None, None
+        outcome = perform_auth(page, wall, answer)
+        outcome.attempts = attempt
+        if log:
+            log.info("auth: attempt %d %s signals=%s", attempt, "ok" if outcome.ok else "failed", outcome.signals)
+        if outcome.ok:
+            return outcome, answer
+        notice = ("That did not work" + (f': the site says "{outcome.error_text}"' if outcome.error_text
+                                          else " - the form is still showing") + ". Please check and try again.")
+        if attempt < max_attempts:
+            from .explorer import _detect_auth
+            page.goto(url)
+            walls = _detect_auth(page, url)
+            if not walls:
+                return outcome, None
+            wall = walls[min(wall["group"], len(walls) - 1)]
+    return outcome, None
+
+
+def run_auth(settings, log, url: str) -> int:
+    """`cli auth [url]`: find the login / sign-up form on `url`, ask for the details, sign in, keep the session."""
+    from playwright.sync_api import sync_playwright
+    from .explorer import _detect_auth
+    if not url:
+        log.error("auth needs a URL (or SEED_URL in .env)")
+        return 2
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=settings.headless)
+        try:
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(url, timeout=settings.navigation_timeout_ms)
+            walls = _detect_auth(page, url, log)
+            if not walls:
+                print("No login or sign-up form found on this page - nothing to do.")
+                return 0
+            wall = walls[0]
+            ask, reason = should_ask(settings.auth_mode, wall["kind"], has_session(settings), is_interactive())
+            if not ask:
+                print(f"Not asking for credentials: {reason}.")
+                return 0
+            outcome, answer = authenticate_wall(page, wall, url, log=log)
+            if answer is None:
+                print("Skipped." if outcome is None else f"Gave up after {outcome.attempts} attempts.")
+                return 1
+            saved = save_session(context, settings)
+            print(f"Signed in (attempt {outcome.attempts}). Session saved to {saved} (git-ignored).")
+            if answer.remember:
+                names = remember_credentials(settings.root / ".env", settings.root, settings.site, wall, answer)
+                print("Remembered in .env as: " + ", ".join(names))
+            return 0
+        finally:
+            browser.close()

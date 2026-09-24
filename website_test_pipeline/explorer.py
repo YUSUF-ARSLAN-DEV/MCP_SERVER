@@ -214,14 +214,19 @@ _AUTH_JS = "els => {" + _JS_HELPERS + r"""
         const fields = [...root.querySelectorAll('input, select, textarea')]
             .filter(el => el.getClientRects().length && !el.readOnly && !el.disabled
                           && !['hidden', 'submit', 'button', 'image', 'reset', 'checkbox', 'radio'].includes((el.type || '').toLowerCase()))
-            .map(el => ({
+            .map((el, fi) => {
+              el.setAttribute('data-wtp-auth', out.length + '-' + fi);   // how authflow finds this field again
+              return {
                 type: (el.type || el.tagName.toLowerCase()).toLowerCase(),
                 name: el.getAttribute('name') || null,
                 label: labelOf(el).slice(0, 80),
                 autocomplete: el.getAttribute('autocomplete') || null,
                 required: el.required || el.getAttribute('aria-required') === 'true'
-            }));
+              };
+            });
+        root.setAttribute('data-wtp-auth-root', String(out.length));
         out.push({
+            group: out.length,
             selector: root.id ? '#' + root.id : (root.tagName === 'FORM' && root.getAttribute('name') ? 'form[name="' + root.getAttribute('name') + '"]' : null),
             in_form: root.tagName === 'FORM',
             region: regionOf(root),
@@ -244,6 +249,7 @@ def _shape_auth(raw: list[dict]) -> list[dict]:
         creating = len(passwords) > 1 or any((f.get("autocomplete") or "").lower() == "new-password" for f in passwords)
         walls.append({
             "kind": "signup" if creating else "login",
+            "group": group.get("group"),
             "selector": group.get("selector"),
             "region": group.get("region"),
             "fields": [{k: f.get(k) for k in ("type", "name", "label", "autocomplete", "required")} for f in fields],

@@ -19,6 +19,7 @@ class AuthRequest:
     url: str
     kind: str                                          # "login" | "signup"
     fields: list[dict] = field(default_factory=list)   # PageInventory.auth[i]["fields"]
+    notice: str = ""                                   # shown in red, e.g. the site's error after a failed attempt
 
 
 @dataclass
@@ -97,6 +98,9 @@ class CredentialPopup:
         tk.Label(root, text=f"The agent reached a page where it must {what}.", font=("Segoe UI", 11, "bold"),
                  wraplength=MIRROR_SIZE[0]).pack(padx=12, pady=(12, 2), anchor="w")
         tk.Label(root, text=request.url, fg="#555", wraplength=MIRROR_SIZE[0]).pack(padx=12, anchor="w")
+        if request.notice:
+            tk.Label(root, text=request.notice, fg="#b3261a", wraplength=MIRROR_SIZE[0], justify="left"
+                     ).pack(padx=12, pady=(6, 0), anchor="w")
         self.mirror = tk.Label(root, text="(no preview)", bg="#eee", width=80, height=12)
         self.mirror.pack(padx=12, pady=8)
         form = tk.Frame(root)
