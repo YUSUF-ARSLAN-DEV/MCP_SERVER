@@ -31,6 +31,22 @@ Non-goals (v1): CAPTCHA/2FA solving, storing passwords, live video, headless CI 
 - **Opt-in.** Off unless enabled. Headless/CI runs skip the popup and say so, as `flows run` already does for
   outages.
 
+## When the agent authenticates
+
+Default rule (decided with the team, 2026-09-24): when a page has a **login** form the agent logs in, and when it
+has a **sign-up** form it signs up - unless that was already done (a working saved session, or an account
+already created for this site), in which case it does neither. Two consequences:
+
+- A logged-in user who is redirected away from the login / landing page means that page is not testable while
+  logged in; it is skipped and reported, not treated as a failure.
+- A subscribe / newsletter / contact form has no password. It is a **feature of the site**, not a wall: it is
+  always tested like any other form (fill, submit, assert), never through the popup. Only password-based
+  logins and sign-ups use the popup.
+
+`AUTH_MODE` in `.env`: `auto` (default - the rule above) or `none` (never ask, never log in; walls are only
+reported as not tested). Sign-ups create real accounts, so they use only details the user typed into the popup,
+and a CAPTCHA or email verification step is reported as a limit, not a failure.
+
 ## Two phases
 
 The popup appears in exactly two situations, and credentials stay out of every generated file in both.
@@ -55,8 +71,10 @@ Only if that also fails, and the run is interactive, does the popup return; unat
 `PageInventory.auth`; the report lists each wall under "Not tested".
 
 ### 2. Decide whether to ask
-New setting `INTERACTIVE_AUTH` (default false). Ask only when enabled, a display is available, and the browser is
-headed for that session. Otherwise the wall stays in the report as "not tested".
+`AUTH_MODE` (`auto` | `none`). Ask only when the mode is `auto`, the run is interactive (a terminal and a
+display, Tk available), the wall's form is password-based, and there is no working session or account yet. The
+browser can stay headless because the popup mirrors it with screenshots. Otherwise the wall stays in the report
+as "not tested".
 
 ### 3. The popup (phase 1)
 A small local window (start with Tk or pywebview; no server) with:
