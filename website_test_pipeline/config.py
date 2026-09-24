@@ -15,6 +15,12 @@ def _int(name: str, default: int, minimum: int, maximum: int) -> int:
         raise ValueError(f"{name} must be between {minimum} and {maximum}")
     return value
 
+def _choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
+    value = (os.getenv(name, default) or default).strip().lower()
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of: {', '.join(allowed)}")
+    return value
+
 def _host(url: str) -> str:
     try:
         return (urlsplit(url).netloc or "").lower()
@@ -34,6 +40,9 @@ class Settings:
     # record what each one surfaced (0 disables the interaction probe entirely).
     explore_probe_max: int = field(default_factory=lambda: _int("EXPLORE_PROBE_MAX", 5, 0, 20))
     headless: bool = field(default_factory=lambda: os.getenv("HEADLESS", "true").lower() != "false")
+    # login / sign-up walls: "auto" asks a person for credentials when a password form is found (interactive
+    # runs only); "none" never asks and only reports the wall as not tested.
+    auth_mode: str = field(default_factory=lambda: _choice("AUTH_MODE", "auto", ("auto", "none")))
     model_timeout_ms: int = field(default_factory=lambda: _int("MODEL_TIMEOUT_MS", 300000, 1000, 900000))
     model_retries: int = field(default_factory=lambda: _int("MODEL_RETRIES", 4, 0, 10))
     retry_base_ms: int = field(default_factory=lambda: _int("RETRY_BASE_MS", 3000, 100, 120000))
