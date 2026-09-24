@@ -30,6 +30,13 @@ def stages(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "run_verify", fake("verify"))
     monkeypatch.setattr(pipeline, "run_flowgen", fake("flowgen"))
     monkeypatch.setattr(pipeline, "run_execute", fake("execute"))
+    preflight = {"code": 0, "calls": 0}
+
+    def fake_preflight(settings, log):
+        preflight["calls"] += 1
+        return preflight["code"]
+
+    monkeypatch.setattr(pipeline, "preflight_session", fake_preflight)
     monkeypatch.setattr(pipeline, "model_reachable", lambda url, timeout=3.0: True)
     settings = SimpleNamespace(api_url="https://model.example/v1/chat", artifacts_dir=tmp_path / "a", flows_file=tmp_path / "f.json",
                                root=tmp_path, tests_dir=tmp_path / "t")
@@ -38,7 +45,7 @@ def stages(monkeypatch, tmp_path):
         made["clients"] += 1
         return object()
 
-    return SimpleNamespace(calls=calls, codes=codes, settings=settings, factory=factory, made=made)
+    return SimpleNamespace(calls=calls, codes=codes, settings=settings, factory=factory, made=made, preflight=preflight)
 
 
 def _log_lines(caplog):
@@ -230,3 +237,22 @@ def test_expand_stops_at_the_first_unavailable_model_instead_of_waiting_out_ever
     assert len(calls) == 1                                                            # the second sentence was never tried
     stored = json.loads(settings.intents_file.read_text(encoding="utf-8"))["intents"]
     assert [i["status"] for i in stored] == ["new", "new"]                            # nothing was marked unbuildable
+
+
+# ------------------------------------------------------------------ the login check before the browser stages
+
+def test_an_unrenewable_login_skips_the_browser_stages_but_not_the_rest(stages, caplog):
+    stages.preflight["code"] = 2
+    with caplog.at_level(logging.INFO):
+        code = run_chain(stages.settings, ["u"], LOG, client_factory=stages.factory)
+    assert code == 2
+    assert stages.calls == ["intents", "expand", "flowgen"]                   # verify and execute never ran
+    lines = "\n".join(_log_lines(caplog))
+    assert "verify" in lines and "execute" in lines and "login could not be renewed" in lines
+
+
+def test_the_login_is_checked_once_and_only_when_a_browser_stage_will_run(stages):
+    run_chain(stages.settings, ["u"], LOG, client_factory=stages.factory)
+    assert stages.preflight["calls"] == 1
+    run_chain(stages.settings, ["u"], LOG, only=["flowgen"], client_factory=stages.factory)
+    assert stages.preflight["calls"] == 1                                    # flowgen alone needs no browser

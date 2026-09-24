@@ -246,6 +246,10 @@ def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, i
             wall = walls[0]
 
         go, reason = should_ask(settings.auth_mode, wall["kind"], False, is_interactive() if interactive is None else interactive)
+        if not go and had_session:
+            names = ", ".join(env_names(settings.site, account, wall))
+            return SessionResult("failed", f"the saved session expired and nothing can renew it without a person; "
+                                           f"set in .env: {names}, or run `auth`")
         if not go:
             names = ", ".join(env_names(settings.site, account, wall))
             _say(log, f"login wall on {url} left untested ({reason}). To sign in unattended, set in .env: {names}")
@@ -261,6 +265,31 @@ def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, i
         return SessionResult("signed-in-popup", f"attempt {outcome.attempts}")
     finally:
         context.close()
+
+
+def preflight_session(settings, log) -> int:
+    """Before the browser stages of a run: check the saved login still works and renew it from .env if not, so an
+    expired session cannot turn every test into a failure at the login page. 0 = go ahead; 2 = it could not be
+    renewed. Never blocks a site with no login wall, and never stops a run just because the check itself broke."""
+    url = getattr(settings, "seed_url", "")
+    if getattr(settings, "auth_mode", "none") == "none" or not url:
+        return 0
+    from playwright.sync_api import sync_playwright
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=settings.headless)
+            try:
+                result = ensure_session(settings, browser, url, log)
+            finally:
+                browser.close()
+    except Exception as exc:
+        log.warning("auth: could not check the login session (%s); carrying on", str(exc).splitlines()[0][:150] if str(exc) else exc.__class__.__name__)
+        return 0
+    if result.status in {"failed", "skipped"}:
+        log.error("auth: the login could not be renewed%s - the browser stages were not run. Fix the details in .env "
+                  "or run `auth`", f" ({result.detail})" if result.detail else "")
+        return 2
+    return 0
 
 
 def run_auth(settings, log, url: str) -> int:

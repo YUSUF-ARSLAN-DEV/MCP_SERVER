@@ -100,6 +100,11 @@ Order on every `explore` / `generate` / `auth`, so an unattended run is never in
 4. otherwise the wall is reported "not tested" and the exact `.env` names to fill in are printed.
 Crawl, explore, verify and every generated test start from the saved session (`WTP_STORAGE_STATE` for pytest).
 
+**Login check before the browser stages** (`authflow.preflight_session`). `flows run`, `execute` and `report` first
+run the same check on the seed URL, so a session that expired since `explore` is renewed silently from `.env`. If it
+cannot be renewed (details missing or refused, popup skipped) the browser stages are skipped with the reason
+instead of producing tests that all fail at the login page. A site with no wall costs one extra page load.
+
 **Accounts.** A site with several logins (admin / customer, different passwords) uses `--account NAME` or
 `AUTH_ACCOUNT` (default `default`). Each account has its own session (`auth/state.<account>.json`) and `.env` keys
 `AUTH_<SITE>_<ACCOUNT>_<FIELD>`. Nobody has to know the field names in advance: the tool prints them for the

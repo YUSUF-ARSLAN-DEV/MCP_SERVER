@@ -53,7 +53,7 @@ def main() -> int:
     for note in heuristics.configure(settings.heuristics_file):
         log.warning('heuristics: %s', note)
     pytest_env = {**os.environ, 'WTP_ARTIFACTS': str(settings.artifacts_dir)}
-    from .authflow import context_kwargs, ensure_session, has_session, session_path
+    from .authflow import context_kwargs, ensure_session, has_session, preflight_session, session_path
     if has_session(settings):
         pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
     if args.command == 'crawl':
@@ -107,9 +107,15 @@ def main() -> int:
         return run_propose(settings, urls, ModelClient(settings, log), log)
     if args.command == 'execute':
         from .pipeline import run_execute
+        if preflight_session(settings, log) == 2:
+            return 2
         return run_execute(settings, log)
     if args.command == 'report':
         from . import report as report_mod
+        if preflight_session(settings, log) == 2:
+            return 2
+        if has_session(settings):
+            pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
         pw_out = settings.artifacts_dir/'pw'
         pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}']
         result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)

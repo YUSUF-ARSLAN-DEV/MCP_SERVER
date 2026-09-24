@@ -254,3 +254,36 @@ def test_refused_env_details_fall_back_to_the_popup_and_can_be_remembered(browse
     result = ensure_session(settings, _Routed(browser), URL, ask=popup, interactive=True)
     assert result.status == "signed-in-popup" and has_session(settings)
     assert "AUTH_FAKE_TEST_DEFAULT_PW=right" in (settings.root / ".env").read_text(encoding="utf-8")
+
+
+def test_an_expired_session_with_nothing_to_renew_it_is_a_clear_failure(browser, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "right")
+    assert ensure_session(settings, _Routed(browser), URL, interactive=False).status == "signed-in-env"
+    monkeypatch.delenv("AUTH_FAKE_TEST_DEFAULT_EMAIL")
+    monkeypatch.delenv("AUTH_FAKE_TEST_DEFAULT_PW")
+    result = ensure_session(settings, _Routed(browser, sign_in_ok=False), URL, interactive=False)
+    assert result.status == "failed" and "AUTH_FAKE_TEST_DEFAULT_EMAIL" in result.detail
+
+
+def test_preflight_lets_a_run_continue_unless_the_login_truly_cannot_be_renewed(tmp_path, monkeypatch):
+    from website_test_pipeline import authflow
+    log = SimpleNamespace(info=lambda *a: None, warning=lambda *a: None, error=lambda *a: None)
+    off = SimpleNamespace(auth_mode="none", seed_url="https://x.test")
+    assert authflow.preflight_session(off, log) == 0                         # AUTH_MODE=none: never checks
+    assert authflow.preflight_session(SimpleNamespace(auth_mode="auto", seed_url=""), log) == 0
+    on = SimpleNamespace(auth_mode="auto", seed_url="https://x.test", headless=True)
+    for status, expected in (("no-wall", 0), ("session-ok", 0), ("signed-in-env", 0), ("not-tested", 0),
+                             ("failed", 2), ("skipped", 2)):
+        monkeypatch.setattr(authflow, "ensure_session", lambda *a, _s=status, **k: authflow.SessionResult(_s))
+        monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: _FakePW())
+        assert authflow.preflight_session(on, log) == expected, status
+
+
+class _FakePW:
+    def __enter__(self):
+        return SimpleNamespace(chromium=SimpleNamespace(launch=lambda **k: SimpleNamespace(close=lambda: None)))
+
+    def __exit__(self, *a):
+        return False

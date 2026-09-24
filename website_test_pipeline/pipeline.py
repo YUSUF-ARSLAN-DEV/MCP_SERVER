@@ -21,7 +21,7 @@ import subprocess
 import sys
 from urllib.parse import urlsplit
 
-from .authflow import has_session, session_path
+from .authflow import has_session, preflight_session, session_path
 from .coverage import compute_coverage, render_coverage
 from .expand import run_expand
 from .flowgen import run_flowgen
@@ -90,6 +90,9 @@ def run_chain(settings, urls: list[str], log, skip=(), only=(), client_factory=N
     reachable = None
     site_down = False
     model_down = False
+    login_down = False
+    if any(s in stages for s in ("verify", "execute")):
+        login_down = preflight_session(settings, log) == 2
     for stage in STAGES:
         if stage in skip or (only and stage not in only):
             results.append((stage, "skipped (as asked)"))
@@ -119,7 +122,10 @@ def run_chain(settings, urls: list[str], log, skip=(), only=(), client_factory=N
                     continue
                 results.append((stage, "ok" if code == 0 else "did not complete (see the log above); it can be run again"))
                 continue
-            if stage == "verify":
+            if stage in ("verify", "execute") and login_down:
+                results.append((stage, "skipped: the login could not be renewed - run `auth` or fix the details in .env"))
+                exit_code = max(exit_code, 2)
+            elif stage == "verify":
                 code = run_verify(settings, log)
                 if code == 3:
                     site_down = True
