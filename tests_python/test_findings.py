@@ -327,3 +327,25 @@ def test_collect_findings_covers_page_and_flow_failures_and_skips_passes():
     findings = collect_findings(run, Path("/nope"), [], {}, {})
     assert [f.test for f in findings] == ["flow one", "t_bad"]              # P1 (flow) sorts before P2 (page)
     assert findings[0].severity == "P1" and findings[1].severity == "P2"
+
+
+# ------------------------------------------------------------------ login walls (auth)
+
+def test_shape_auth_tells_a_login_from_a_signup_and_ignores_groups_without_a_password():
+    from website_test_pipeline.explorer import _shape_auth
+    login = {"selector": "#in", "region": "content", "fields": [
+        {"type": "email", "name": "e", "label": "Email", "required": True},
+        {"type": "password", "name": "p", "label": "Password", "autocomplete": "current-password", "required": True}]}
+    two_boxes = {"fields": [{"type": "password", "name": "a"}, {"type": "password", "name": "b"}]}
+    new_pw = {"fields": [{"type": "password", "autocomplete": "new-password"}]}
+    no_pw = {"fields": [{"type": "text", "name": "q"}]}
+    kinds = [w["kind"] for w in _shape_auth([login, two_boxes, new_pw, no_pw])]
+    assert kinds == ["login", "signup", "signup"]
+    assert _shape_auth(None) == []
+
+
+def test_untested_auth_lists_each_wall_with_the_labels_a_person_would_fill():
+    from website_test_pipeline.findings import untested_auth
+    inv = [{"url": "https://x.test/b", "auth": [{"kind": "login", "fields": [{"label": "Email"}, {"name": "pw"}]}]},
+           {"url": "https://x.test/a"}]
+    assert untested_auth(inv) == [{"url": "https://x.test/b", "kind": "login", "fields": ["Email", "pw"]}]

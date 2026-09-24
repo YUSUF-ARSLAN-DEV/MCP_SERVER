@@ -163,3 +163,20 @@ def test_evidence_caption_reads_like_a_person_wrote_it():
     assert _evidence_caption("02_select_countrylist") == "Step 2: select countrylist"
     assert _evidence_caption("99-outcome") == "Final outcome"
     assert _evidence_caption("failure") == "failure"
+
+
+def test_a_login_wall_is_reported_as_not_tested(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    (artifacts / "login.inventory.json").write_text(json.dumps(
+        {"url": "https://x.test/en/account", "auth": [{"kind": "login", "fields": [
+            {"type": "email", "label": "Email"}, {"type": "password", "label": "Password"}]}]}), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Not tested - 1 login or sign-up form(s) found" in joined
+    assert "https://x.test/en/account" in joined and "Email, Password" in joined
+
+
+def test_no_login_wall_means_no_not_tested_block(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    assert "Not tested -" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))

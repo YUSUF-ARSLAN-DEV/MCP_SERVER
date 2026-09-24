@@ -23,7 +23,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from .coverage import Coverage, compute_coverage
-from .findings import Finding, FlapRecord, collect_findings, detect_flapping, environment_block
+from .findings import Finding, FlapRecord, collect_findings, detect_flapping, environment_block, untested_auth
 from .flowgen import file_name as flow_spec_name
 from .flowreport import FlowReport, build_flow_report
 from .flows import FlowsFileError, load_flows
@@ -111,6 +111,7 @@ class RunReport:
     notes: list[str] = field(default_factory=list)                 # things that happened while writing the documents
     coverage: Coverage | None = None                               # what the tested flows touch; None when there are no flows
     findings: list[Finding] = field(default_factory=list)          # triaged failures: severity, kind, one-line reason
+    untested_auth: list[dict] = field(default_factory=list)        # login / sign-up walls the run could not pass
     flapping: list[FlapRecord] = field(default_factory=list)       # flows/tests whose recent runs mix pass and fail
 
     @property
@@ -325,6 +326,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
     run.findings = collect_findings(run, tests_dir, inventories, flows_by_id, ratings)
     names = {f["id"]: (f.get("goal") or f["id"]) for f in flows_list}
     run.flapping = detect_flapping(ratings, names)
+    run.untested_auth = untested_auth(inventories)
     return run
 
 
@@ -672,6 +674,18 @@ def _findings_section(document, run: RunReport) -> None:
             cells[0].text = flap.test
             cells[1].text = flap.sequence
             cells[2].text = flap.note
+        document.add_paragraph()
+
+    if run.untested_auth:
+        para = document.add_paragraph()
+        para.add_run(f"Not tested - {len(run.untested_auth)} login or sign-up form(s) found. "
+                     "Anything behind them was not exercised:").bold = True
+        table = _grid(document, ("Page", "Form", "Fields it asks for"))
+        for wall in run.untested_auth:
+            cells = table.add_row().cells
+            cells[0].text = wall["url"]
+            cells[1].text = "sign-up" if wall["kind"] == "signup" else "login"
+            cells[2].text = ", ".join(wall["fields"])
         document.add_paragraph()
 
     if not run.findings:

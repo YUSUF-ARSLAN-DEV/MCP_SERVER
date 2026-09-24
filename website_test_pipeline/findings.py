@@ -332,6 +332,20 @@ def detect_flapping(ratings: dict[str, list[dict]], names: dict[str, str] | None
     return sorted(out, key=lambda f: f.test)
 
 
+# ------------------------------------------------------------------ areas behind a login
+
+def untested_auth(inventories: list[dict]) -> list[dict]:
+    """Pages where the explorer found a login / sign-up form. The pipeline cannot pass it, so whatever is
+    behind it was never tested - said out loud rather than left as silence in the coverage numbers."""
+    out = []
+    for inv in inventories:
+        for wall in inv.get("auth") or []:
+            out.append({"url": inv.get("url", ""), "kind": wall.get("kind", "login"),
+                        "fields": [f.get("label") or f.get("name") or f.get("type") or "?"
+                                   for f in wall.get("fields") or []]})
+    return sorted(out, key=lambda w: w["url"])
+
+
 # ------------------------------------------------------------------ environment
 
 def environment_block(run, settings=None) -> dict[str, str]:

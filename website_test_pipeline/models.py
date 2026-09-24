@@ -27,6 +27,10 @@ class PageInventory:
     # "effect": "results"|"navigates"|"no-visible-result", "results_selector"/"results_role"/
     # "row_count"/"results_text" or "to"}
     primary_flow: dict[str, Any] | None = None
+    # login / sign-up walls: a visible password field plus the fields beside it, so a later step can ask a
+    # person for them: [{"kind": "login"|"signup", "selector": str|None, "region": str,
+    # "fields": [{"type", "name", "label", "autocomplete", "required"}]}]
+    auth: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

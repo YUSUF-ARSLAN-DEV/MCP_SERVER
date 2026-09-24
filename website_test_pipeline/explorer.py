@@ -185,6 +185,84 @@ _FORMS_JS = r"""els => els.map(f => ({
     fields: [...f.elements].map(el => el.getAttribute('name')).filter(Boolean)
 }))"""
 
+# Login / sign-up walls: a VISIBLE password field, and the sibling fields a person would have to fill in
+# next to it. Language-neutral - it keys on input type/autocomplete, never on words like "log in".
+# readonly password boxes (a wizard's display-only default password) are not a wall.
+_AUTH_JS = "els => {" + _JS_HELPERS + r"""
+    const seen = new Set(), out = [];
+    const labelOf = el => {
+        const aria = el.getAttribute('aria-label');
+        if (aria) return aria.trim();
+        if (el.id) {
+            const l = document.querySelector('label[for="' + el.id.replace(/"/g, '\\"') + '"]');
+            if (l && l.textContent.trim()) return l.textContent.trim();
+        }
+        const wrap = el.closest('label');
+        if (wrap && wrap.textContent.trim()) return wrap.textContent.trim();
+        return (el.getAttribute('placeholder') || '').trim();
+    };
+    for (const pw of els) {
+        if (!pw.getClientRects().length || pw.readOnly || pw.disabled) continue;
+        let root = pw.closest('form');
+        if (!root) {
+            root = pw.parentElement;
+            for (let i = 0; i < 4 && root && root.querySelectorAll('input').length < 2; i++) root = root.parentElement;
+        }
+        root = root || pw.parentElement;
+        if (seen.has(root)) continue;
+        seen.add(root);
+        const fields = [...root.querySelectorAll('input, select, textarea')]
+            .filter(el => el.getClientRects().length && !el.readOnly && !el.disabled
+                          && !['hidden', 'submit', 'button', 'image', 'reset', 'checkbox', 'radio'].includes((el.type || '').toLowerCase()))
+            .map(el => ({
+                type: (el.type || el.tagName.toLowerCase()).toLowerCase(),
+                name: el.getAttribute('name') || null,
+                label: labelOf(el).slice(0, 80),
+                autocomplete: el.getAttribute('autocomplete') || null,
+                required: el.required || el.getAttribute('aria-required') === 'true'
+            }));
+        out.push({
+            selector: root.id ? '#' + root.id : (root.tagName === 'FORM' && root.getAttribute('name') ? 'form[name="' + root.getAttribute('name') + '"]' : null),
+            in_form: root.tagName === 'FORM',
+            region: regionOf(root),
+            fields: fields
+        });
+    }
+    return out;
+}"""
+
+
+def _shape_auth(raw: list[dict]) -> list[dict]:
+    """Classify each password-bearing group: 'signup' when the person must invent a password (more than one
+    password box, or autocomplete=new-password), otherwise 'login'. Drops groups with no password field."""
+    walls = []
+    for group in raw or []:
+        fields = group.get("fields") or []
+        passwords = [f for f in fields if f.get("type") == "password"]
+        if not passwords:
+            continue
+        creating = len(passwords) > 1 or any((f.get("autocomplete") or "").lower() == "new-password" for f in passwords)
+        walls.append({
+            "kind": "signup" if creating else "login",
+            "selector": group.get("selector"),
+            "region": group.get("region"),
+            "fields": [{k: f.get(k) for k in ("type", "name", "label", "autocomplete", "required")} for f in fields],
+        })
+    return walls
+
+
+def _detect_auth(page, url: str, log=None) -> list[dict]:
+    try:
+        walls = _shape_auth(page.locator('input[type="password"]').evaluate_all(_AUTH_JS))
+    except Exception as exc:
+        if log:
+            log.info("auth: detection errored on %s (%s)", url, str(exc).splitlines()[0][:150])
+        return []
+    if walls and log:
+        log.info("explore: login wall on %s (%s)", url, ", ".join(w["kind"] for w in walls))
+    return walls
+
+
 # Third-party map embeds (Google Maps JS canvas, Leaflet, a maps <iframe>). These
 # pages have no driveable DOM - the only honest assertion is "the map container
 # rendered". Given a broad candidate set, keep only the ones that really are a map.
@@ -851,6 +929,7 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
     if embeds and log:
         log.info("explore: %d map/media embed(s) on %s (%s)", len(embeds), url,
                  ", ".join(sorted({e.get("provider") or "?" for e in embeds})))
+    auth = _detect_auth(page, url, log)
     try:
         accessibility = page.locator('body').aria_snapshot()
     except Exception:
@@ -871,4 +950,4 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
             if log:
                 log.info("primary-flow: probe errored (%s)", str(exc).splitlines()[0][:150])
     return PageInventory(url=url, title=title, dir=direction, lang=lang, headings=headings, controls=controls,
-                         accessibility=signals, forms=forms, revealed=revealed, embeds=embeds, primary_flow=primary_flow)
+                         accessibility=signals, forms=forms, revealed=revealed, embeds=embeds, primary_flow=primary_flow, auth=auth)
