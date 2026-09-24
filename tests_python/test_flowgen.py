@@ -50,7 +50,7 @@ def test_navigating_flow_becomes_a_valid_strict_spec():
     ast.parse(source)
     assert "page.locator('#countrylist').first" in source
     assert "select_option(label='Afghanistan')" in source
-    assert "page.get_by_role('button', name='Search', exact=True).first" in source
+    assert "page.get_by_role('button', name=re.compile(" in source and "Search" in source   # tolerant of icon-font glyphs
     assert "/en/results" in source and "to_have_url" in source
     assert "get_by_role('heading', name='Results for your country', exact=True)" in source
     assert source.count("action_evidence(") == 2  # one per step
@@ -163,7 +163,7 @@ def test_reveals_needs_a_heading_or_a_known_control_to_assert():
     checkbox = {"tag": "input", "type": "checkbox", "name": "Al Jazeera 2", "hidden": False}
     inv = _inventory(controls=[SELECT, SEARCH], revealed=[{"trigger": "Search", "controls": [checkbox]}])
     source, reason = emit_flow_spec(flow, [inv])
-    assert reason == "" and "get_by_role('checkbox', name='Al Jazeera 2', exact=True)" in source
+    assert reason == "" and "get_by_role('checkbox', name=re.compile(" in source and "Jazeera" in source
 
 
 def test_headings_with_numbers_or_cut_off_text_are_not_asserted():

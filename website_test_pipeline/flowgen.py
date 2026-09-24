@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qsl, urlsplit
 
+from .autorepair import _repair_icon_glyph_names
 from .explorer import _plausible_value
 from .heuristics import is_volatile_param
 from .flows import FlowsFileError, _slug, is_blocked, load_flows
@@ -320,8 +321,10 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
           if fresh else (f"def {spec_test_name(flow)}(page: Page, evidence_dir: Path) -> None:",)),
         "    _open(page)", *body, "",
     ])
+    inventory = _validation_inventory(flow, touched, extra)
+    source, _ = _repair_icon_glyph_names(source, inventory)      # "Login" may really be "<icon glyph> Login"
     try:
-        validate_python_spec(source, flow["start_url"], _validation_inventory(flow, touched, extra))
+        validate_python_spec(source, flow["start_url"], inventory)
     except SpecError as exc:
         return None, f"rejected by the spec validator: {exc}"
     return source, ""

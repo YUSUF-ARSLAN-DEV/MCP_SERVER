@@ -193,7 +193,7 @@ def test_a_step_with_a_role_is_found_by_that_role_first():
 
     class _Page:
         def __init__(self): self.roles = []
-        def get_by_role(self, role, name, exact):
+        def get_by_role(self, role, name, exact=None):
             self.roles.append(role)
             return _Loc(role == "tab")
 
@@ -235,6 +235,7 @@ def test_names_are_matched_exactly_or_by_prefix_when_cut_like_the_generated_spec
 
     class _Loc:
         first = None
+        def count(self): return 1
 
     class _Page:
         def get_by_role(self, role, name, exact=None):

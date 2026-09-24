@@ -19,6 +19,7 @@ from .explorer import (
 from . import heuristics
 from .validator import _ARIA_ROLES
 from .authflow import context_kwargs
+from .autorepair import _ICON_GLYPHS as ICON_GLYPHS
 from .secretrefs import is_ref, needs_fresh_session, resolve
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
 from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
@@ -329,9 +330,17 @@ def _by_role(page, role: str, name: str):
     """Find by role and accessible name exactly as the generated spec does: the whole name, or - for a name stored
     cut at 40 characters - its start. (Substring matching here would let a renamed control pass verify while the
     spec, which matches exactly, fails.)"""
+    # An icon font's glyph (Font Awesome ...) is part of the accessible name, so "Login" is really "<glyph> Login":
+    # the whole name is still required, with any glyphs / spaces around it allowed (same rule as the spec).
     if len(name) >= 40:
-        return page.get_by_role(role, name=re.compile(re.escape(name))).first
-    return page.get_by_role(role, name=name, exact=True).first
+        strict = page.get_by_role(role, name=re.compile(re.escape(name))).first
+        tolerant = re.compile("^" + ICON_GLYPHS + re.escape(name))
+    else:
+        strict = page.get_by_role(role, name=name, exact=True).first
+        tolerant = re.compile("^" + ICON_GLYPHS + re.escape(name) + ICON_GLYPHS + "$")
+    if strict.count():
+        return strict
+    return page.get_by_role(role, name=tolerant).first
 
 
 def _locate(page, step: dict):
