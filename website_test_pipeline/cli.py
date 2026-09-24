@@ -41,8 +41,11 @@ def main() -> int:
     parser.add_argument('--failed-only', action='store_true', help='verify: only flows that are candidate or stale (re-check after a site change)')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
+    parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
     parser.add_argument('--commit', action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
     args = parser.parse_args()
+    if args.account:
+        os.environ['AUTH_ACCOUNT'] = args.account
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
     log.info('WORKSPACE site=%s dir=%s', settings.site, settings.workspace)
     os.environ['WTP_HEURISTICS'] = str(settings.heuristics_file)   # generated specs read the same lists (see heuristics.py)
@@ -50,13 +53,16 @@ def main() -> int:
     for note in heuristics.configure(settings.heuristics_file):
         log.warning('heuristics: %s', note)
     pytest_env = {**os.environ, 'WTP_ARTIFACTS': str(settings.artifacts_dir)}
+    from .authflow import context_kwargs, ensure_session, has_session, session_path
+    if has_session(settings):
+        pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
     if args.command == 'crawl':
         if not settings.seed_url:
             log.error('crawl requires SEED_URL in .env'); return 2
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=settings.headless)
             try:
-                page = browser.new_context().new_page()
+                page = browser.new_context(**context_kwargs(settings)).new_page()
                 discovered = crawl(page, settings.seed_url, settings.crawl_max_depth, settings.crawl_max_pages, log, settings.navigation_timeout_ms)
             finally:
                 browser.close()
@@ -131,10 +137,16 @@ def main() -> int:
     client = ModelClient(settings, log)
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=settings.headless)
+        try:
+            session = ensure_session(settings, browser, settings.seed_url or urls[0], log)
+            if session.status in {'signed-in-env', 'signed-in-popup'}:
+                pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
+        except Exception as exc:
+            log.warning('auth: could not check for a login wall (%s)', str(exc).splitlines()[0][:150])
         for url in urls:
             log.info('Processing %s', url)
             try:
-                context = browser.new_context(); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max, log)
+                context = browser.new_context(**context_kwargs(settings)); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max, log)
                 (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
                 try:
                     record_flow(settings.flows_file, url, inventory.primary_flow, log)

@@ -1,7 +1,7 @@
 # Credential popup - design
 
-Status: steps 1-4 built (detect, AUTH_MODE, popup, fill/confirm/save session - try it with
-`python -m website_test_pipeline.cli auth <url>`); steps 5-7 proposed.
+Status: steps 1-5 built (detect, AUTH_MODE, popup, fill/confirm/save session, session -> .env -> popup order with
+accounts - try it with `python -m website_test_pipeline.cli auth <url> [--account NAME]`); steps 6-7 proposed.
 
 ## Problem
 
@@ -55,9 +55,10 @@ The popup appears in exactly two situations, and credentials stay out of every g
 **Phase 1 - exploration.** The explorer cannot see anything behind a login wall, so this is where the popup is
 needed. It mirrors the agent's view, guides the user through each field, logs in, and then persists two things
 (both git-ignored, both outside the report and the model prompt):
-- the logged-in session: Playwright `storage_state` at `runs/<site>/auth/state.json`;
-- optionally (user opts in, off by default): the credentials as `.env` variables (`SITE_USER`, `SITE_PASSWORD`
-  style names, one pair per site), so the session can be renewed without asking again.
+- the logged-in session: Playwright `storage_state` at `runs/<site>/auth/state.<account>.json`;
+- optionally (user opts in, off by default): the credentials as `.env` variables
+  (`AUTH_<SITE>_<ACCOUNT>_<FIELD>`), so the session can be renewed without asking again. `.env` details, when
+  present, are used BEFORE the popup (step 5), so unattended runs are never interrupted.
 The explorer then continues past the wall using that session.
 
 **Phase 2 - test time.** Generated specs load the saved session and never contain a credential. If the session
@@ -91,9 +92,19 @@ region appeared, a logout control appeared). On success write `storage_state`, t
 run `git check-ignore` on the file and, if it is not ignored, append its path to `.gitignore` before writing it.
 If the user opted in, write the `.env` variables (same check for `.env`).
 
-### 5. Reuse the session (phase 2)
-Runner and generated specs start from `storage_state`. A cheap probe on start (is the login form still shown?)
-decides whether the session is alive; if not, re-login from env names, then fall back to the popup if interactive.
+### 5. Reuse the session, .env first, accounts  (DONE - `authflow.ensure_session`)
+Order on every `explore` / `generate` / `auth`, so an unattended run is never interrupted:
+1. a saved session that still gets past the wall (`ensure_session` loads it and re-checks the page);
+2. otherwise the details in `.env` for this site + account, signed in silently;
+3. otherwise, only in an interactive run, the popup (which can offer to remember the details in `.env`);
+4. otherwise the wall is reported "not tested" and the exact `.env` names to fill in are printed.
+Crawl, explore, verify and every generated test start from the saved session (`WTP_STORAGE_STATE` for pytest).
+
+**Accounts.** A site with several logins (admin / customer, different passwords) uses `--account NAME` or
+`AUTH_ACCOUNT` (default `default`). Each account has its own session (`auth/state.<account>.json`) and `.env` keys
+`AUTH_<SITE>_<ACCOUNT>_<FIELD>`. Nobody has to know the field names in advance: the tool prints them for the
+form it found. Not yet done: a flow declaring which account it needs, and a wall found on a page deeper than the
+seed URL (it is still reported as not tested).
 
 ### 6. Let flows use it
 Relax the "no credentials" guard in `intents.py` / `documents.py` only when a working session exists, so journeys

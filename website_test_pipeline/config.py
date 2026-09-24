@@ -43,6 +43,8 @@ class Settings:
     # login / sign-up walls: "auto" asks a person for credentials when a password form is found (interactive
     # runs only); "none" never asks and only reports the wall as not tested.
     auth_mode: str = field(default_factory=lambda: _choice("AUTH_MODE", "auto", ("auto", "none")))
+    # which login to use when a site has more than one (admin / customer ...); names the saved session and .env keys
+    auth_account: str = field(default_factory=lambda: (os.getenv("AUTH_ACCOUNT", "default").strip() or "default").lower())
     model_timeout_ms: int = field(default_factory=lambda: _int("MODEL_TIMEOUT_MS", 300000, 1000, 900000))
     model_retries: int = field(default_factory=lambda: _int("MODEL_RETRIES", 4, 0, 10))
     retry_base_ms: int = field(default_factory=lambda: _int("RETRY_BASE_MS", 3000, 100, 120000))

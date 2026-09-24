@@ -4,7 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 from website_test_pipeline.authflow import (
-    authenticate_wall, ensure_ignored, has_session, perform_auth, remember_credentials, save_session, session_path,
+    authenticate_wall, context_kwargs, credentials_from_env, ensure_ignored, ensure_session, env_names, has_session,
+    perform_auth, remember_credentials, save_session, session_path,
 )
 from website_test_pipeline.authpopup import AuthAnswer
 from website_test_pipeline.explorer import _detect_auth
@@ -131,10 +132,125 @@ def test_save_session_refuses_when_git_cannot_ignore_it(tmp_path, page):
 def test_remember_credentials_writes_named_variables_and_replaces_older_ones(tmp_path):
     repo = _repo(tmp_path, ".env\n")
     env = repo / ".env"
-    env.write_text("SEED_URL=https://x.test\nAUTH_SAT_STG_ALJAZEERA_TV_PW=old\n", encoding="utf-8")
+    env.write_text("SEED_URL=https://x.test\nAUTH_SAT_STG_ALJAZEERA_TV_ADMIN_PW=old\n", encoding="utf-8")
     wall = {"fields": [{"name": "email", "type": "email"}, {"name": "pw", "type": "password"}]}
-    names = remember_credentials(env, repo, "sat-stg.aljazeera.tv", wall, AuthAnswer({"email": "a@b.c", "pw": "new"}, True))
-    assert names == ["AUTH_SAT_STG_ALJAZEERA_TV_EMAIL", "AUTH_SAT_STG_ALJAZEERA_TV_PW"]
+    names = remember_credentials(env, repo, "sat-stg.aljazeera.tv", wall, AuthAnswer({"email": "a@b.c", "pw": "new"}, True), "admin")
+    assert names == ["AUTH_SAT_STG_ALJAZEERA_TV_ADMIN_EMAIL", "AUTH_SAT_STG_ALJAZEERA_TV_ADMIN_PW"]
     text = env.read_text(encoding="utf-8")
     assert "SEED_URL=https://x.test" in text and "PW=old" not in text
-    assert "AUTH_SAT_STG_ALJAZEERA_TV_PW=new" in text and "AUTH_SAT_STG_ALJAZEERA_TV_EMAIL=a@b.c" in text
+    assert "AUTH_SAT_STG_ALJAZEERA_TV_ADMIN_PW=new" in text and "AUTH_SAT_STG_ALJAZEERA_TV_ADMIN_EMAIL=a@b.c" in text
+
+
+# ------------------------------------------------------------------ accounts and .env
+
+WALL = {"fields": [{"name": "email", "type": "email", "required": True}, {"name": "pw", "type": "password", "required": True}]}
+
+
+def test_two_accounts_of_one_site_get_their_own_variable_names():
+    admin = env_names("x.test", "admin", WALL)
+    customer = env_names("x.test", "customer", WALL)
+    assert list(admin) == ["AUTH_X_TEST_ADMIN_EMAIL", "AUTH_X_TEST_ADMIN_PW"]
+    assert not set(admin) & set(customer)
+
+
+def test_credentials_from_env_needs_every_required_field_and_password():
+    env = {"AUTH_X_TEST_ADMIN_EMAIL": "a@b.c", "AUTH_X_TEST_ADMIN_PW": "pw1", "AUTH_X_TEST_CUSTOMER_EMAIL": "c@b.c"}
+    assert credentials_from_env("x.test", "admin", WALL, env).values == {"email": "a@b.c", "pw": "pw1"}
+    assert credentials_from_env("x.test", "customer", WALL, env) is None          # password missing
+    assert credentials_from_env("x.test", "nobody", WALL, env) is None
+
+
+def test_the_session_file_and_context_arguments_are_per_account(tmp_path):
+    a = SimpleNamespace(root=tmp_path, workspace=tmp_path / "w", auth_account="admin")
+    c = SimpleNamespace(root=tmp_path, workspace=tmp_path / "w", auth_account="customer")
+    assert session_path(a).name == "state.admin.json" and session_path(c).name == "state.customer.json"
+    assert context_kwargs(a) == {}
+    session_path(a).parent.mkdir(parents=True)
+    session_path(a).write_text("{}", encoding="utf-8")
+    assert context_kwargs(a) == {"storage_state": str(session_path(a))} and context_kwargs(c) == {}
+
+
+# ------------------------------------------------------------------ ensure_session: session, then .env, then the popup
+
+class _Routed:
+    """A browser whose every new context serves the fake site, which remembers a signed-in visitor by cookie."""
+    def __init__(self, browser, sign_in_ok=True):
+        self.browser, self.sign_in_ok = browser, sign_in_ok
+
+    def new_context(self, **kwargs):
+        context = self.browser.new_context(**kwargs)
+        context.route("https://fake.test/**", self._serve)
+        return context
+
+    def _serve(self, route):
+        request = route.request
+        signed_in = "sid=1" in (request.headers.get("cookie") or "")
+        if request.method == "POST" and "pw=right" in (request.post_data or ""):
+            route.fulfill(status=200, content_type="text/html", body=DASHBOARD, headers={"set-cookie": "sid=1; Path=/"})
+        elif request.method == "POST":
+            route.fulfill(status=200, content_type="text/html", body=LOGIN.format(error='<p class="error">Wrong password</p>'))
+        elif signed_in and self.sign_in_ok:
+            route.fulfill(status=200, content_type="text/html", body=DASHBOARD)
+        else:
+            route.fulfill(status=200, content_type="text/html", body=LOGIN.format(error=""))
+
+
+def _settings(tmp_path, **over):
+    repo = _repo(tmp_path, "runs/\n.env\n")
+    base = dict(auth_mode="auto", auth_account="default", site="fake.test", root=repo, workspace=repo / "runs" / "fake.test",
+                navigation_timeout_ms=15000)
+    base.update(over)
+    return SimpleNamespace(**base)
+
+
+URL = "https://fake.test/login"
+
+
+def test_a_page_without_a_wall_needs_nothing(browser, tmp_path):
+    class Plain(_Routed):
+        def _serve(self, route):
+            route.fulfill(status=200, content_type="text/html", body="<main><h1>Public</h1></main>")
+    assert ensure_session(_settings(tmp_path), Plain(browser), URL, interactive=False).status == "no-wall"
+
+
+def test_auth_mode_none_never_touches_the_site(browser, tmp_path):
+    assert ensure_session(_settings(tmp_path, auth_mode="none"), None, URL).status == "off"
+
+
+def test_details_in_env_sign_in_silently_and_the_session_is_then_reused(browser, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "right")
+    boom = lambda *a, **k: pytest.fail("the popup must not open when .env has the details")
+    first = ensure_session(settings, _Routed(browser), URL, ask=boom, interactive=False)
+    assert first.status == "signed-in-env" and has_session(settings)
+    assert ensure_session(settings, _Routed(browser), URL, ask=boom, interactive=False).status == "session-ok"
+
+
+def test_a_stale_session_is_replaced_from_env(browser, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "right")
+    assert ensure_session(settings, _Routed(browser), URL, interactive=False).status == "signed-in-env"
+    expired = _Routed(browser, sign_in_ok=False)              # the site stops honouring the cookie
+    assert ensure_session(settings, expired, URL, interactive=False).status == "signed-in-env"
+
+
+def test_no_details_and_no_display_leaves_the_wall_untested_and_names_the_variables(browser, tmp_path, monkeypatch):
+    for name in ("AUTH_FAKE_TEST_DEFAULT_EMAIL", "AUTH_FAKE_TEST_DEFAULT_PW"):
+        monkeypatch.delenv(name, raising=False)
+    lines = []
+    log = SimpleNamespace(info=lambda fmt, *a: lines.append(fmt % a))
+    result = ensure_session(_settings(tmp_path), _Routed(browser), URL, log=log, interactive=False)
+    assert result.status == "not-tested"
+    assert any("AUTH_FAKE_TEST_DEFAULT_EMAIL" in l and "AUTH_FAKE_TEST_DEFAULT_PW" in l for l in lines)
+
+
+def test_refused_env_details_fall_back_to_the_popup_and_can_be_remembered(browser, tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "stale-password")
+    popup = lambda request, screenshot: AuthAnswer({"email": "a@b.c", "pw": "right"}, remember=True)
+    result = ensure_session(settings, _Routed(browser), URL, ask=popup, interactive=True)
+    assert result.status == "signed-in-popup" and has_session(settings)
+    assert "AUTH_FAKE_TEST_DEFAULT_PW=right" in (settings.root / ".env").read_text(encoding="utf-8")

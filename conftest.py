@@ -27,6 +27,15 @@ def _slug(nodeid: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"
 
 
+@pytest.fixture(scope="session")
+def browser_context_args(browser_context_args):
+    """Start every test signed in when the pipeline has a saved session for the site (see authflow.py)."""
+    state = os.environ.get("WTP_STORAGE_STATE")
+    if state and Path(state).is_file():
+        return {**browser_context_args, "storage_state": state}
+    return browser_context_args
+
+
 @pytest.fixture
 def evidence_dir(request) -> Path:
     directory = EVIDENCE_ROOT / _slug(request.node.nodeid)

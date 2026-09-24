@@ -97,12 +97,21 @@ def ensure_ignored(path: Path, repo_root: Path) -> bool:
         return False
 
 
+def _account(settings) -> str:
+    return getattr(settings, "auth_account", "default") or "default"
+
+
 def session_path(settings) -> Path:
-    return settings.workspace / "auth" / "state.json"
+    return settings.workspace / "auth" / f"state.{_account(settings)}.json"
 
 
 def has_session(settings) -> bool:
-    return session_path(settings).is_file()
+    return hasattr(settings, "workspace") and session_path(settings).is_file()
+
+
+def context_kwargs(settings) -> dict:
+    """Arguments for browser.new_context(): start already signed in when a saved session exists."""
+    return {"storage_state": str(session_path(settings))} if has_session(settings) else {}
 
 
 def save_session(context, settings) -> Path:
@@ -118,17 +127,38 @@ def save_session(context, settings) -> Path:
     return path
 
 
-def _env_name(site: str, key: str) -> str:
-    return "AUTH_" + re.sub(r"[^A-Z0-9]+", "_", f"{site}_{key}".upper()).strip("_")
+def _env_name(site: str, account: str, key: str) -> str:
+    return "AUTH_" + re.sub(r"[^A-Z0-9]+", "_", f"{site}_{account}_{key}".upper()).strip("_")
 
 
-def remember_credentials(env_path: Path, repo_root: Path, site: str, wall: dict, answer: AuthAnswer) -> list[str]:
-    """Write the typed values to .env as AUTH_<SITE>_<FIELD>=... (replacing older ones). Returns the variable
-    NAMES written - only names are ever shown or logged."""
+def env_names(site: str, account: str, wall: dict) -> dict[str, dict]:
+    """{variable name: the field it fills} for every field of `wall` - what a person must put in .env so this
+    login can run without anyone typing."""
+    return {_env_name(site, account, field_key(i, f)): f for i, f in enumerate(wall["fields"])}
+
+
+def credentials_from_env(site: str, account: str, wall: dict, environ=None) -> AuthAnswer | None:
+    """The details for `wall` from .env, or None unless every required field (and every password) has a value."""
+    environ = os.environ if environ is None else environ
+    values = {}
+    for i, f in enumerate(wall["fields"]):
+        key = field_key(i, f)
+        value = environ.get(_env_name(site, account, key), "")
+        if value:
+            values[key] = value
+        elif f.get("required") or f.get("type") == "password":
+            return None
+    return AuthAnswer(values) if values else None
+
+
+def remember_credentials(env_path: Path, repo_root: Path, site: str, wall: dict, answer: AuthAnswer,
+                         account: str = "default") -> list[str]:
+    """Write the typed values to .env as AUTH_<SITE>_<ACCOUNT>_<FIELD>=... (replacing older ones). Returns the
+    variable NAMES written - only names are ever shown or logged."""
     if not ensure_ignored(env_path, repo_root):
         raise RuntimeError(f"refusing to write credentials to {env_path}: git would not ignore it")
-    new = {_env_name(site, field_key(i, f)): answer.values.get(field_key(i, f), "")
-           for i, f in enumerate(wall["fields"]) if answer.values.get(field_key(i, f))}
+    new = {name: answer.values[field_key(i, f)] for i, (name, f) in enumerate(env_names(site, account, wall).items())
+           if answer.values.get(field_key(i, f))}
     lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else []
     lines = [ln for ln in lines if ln.split("=", 1)[0].strip() not in new]
     lines += [f"{name}={value}" for name, value in new.items()]
@@ -136,7 +166,7 @@ def remember_credentials(env_path: Path, repo_root: Path, site: str, wall: dict,
     return sorted(new)
 
 
-# ------------------------------------------------------------------ the whole thing, for `cli auth`
+# ------------------------------------------------------------------ the whole thing
 
 def authenticate_wall(page, wall: dict, url: str, ask=ask_credentials, max_attempts: int = MAX_ATTEMPTS,
                       log=None) -> tuple[AuthOutcome | None, AuthAnswer | None]:
@@ -165,37 +195,95 @@ def authenticate_wall(page, wall: dict, url: str, ask=ask_credentials, max_attem
     return outcome, None
 
 
-def run_auth(settings, log, url: str) -> int:
-    """`cli auth [url]`: find the login / sign-up form on `url`, ask for the details, sign in, keep the session."""
-    from playwright.sync_api import sync_playwright
+@dataclass
+class SessionResult:
+    status: str       # no-wall | off | session-ok | signed-in-env | signed-in-popup | not-tested | skipped | failed
+    detail: str = ""
+
+
+def _say(log, message: str) -> None:
+    if log:
+        log.info("auth: %s", message)
+    else:
+        print(message)
+
+
+def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, interactive: bool | None = None) -> SessionResult:
+    """Make sure the browser can see past a login wall on `url`, asking as little as possible:
+       1. a saved session that still works  ->  nothing to do;
+       2. details in .env for this site + account  ->  sign in silently (an unattended run is never interrupted);
+       3. an interactive run  ->  the popup;
+       4. otherwise the wall is left untested and the .env names to fill in are printed."""
     from .explorer import _detect_auth
+    if settings.auth_mode == "none":
+        return SessionResult("off")
+    account = _account(settings)
+    had_session = has_session(settings)
+    context = browser.new_context(**context_kwargs(settings))
+    try:
+        page = context.new_page()
+        page.goto(url, timeout=settings.navigation_timeout_ms)
+        walls = _detect_auth(page, url, log)
+        if not walls:
+            return SessionResult("session-ok" if had_session else "no-wall")
+        wall = walls[0]
+        if had_session:
+            _say(log, "the saved session no longer gets past the login wall - signing in again")
+
+        creds = credentials_from_env(settings.site, account, wall)
+        if creds:
+            outcome = perform_auth(page, wall, creds)
+            if outcome.ok:
+                save_session(context, settings)
+                _say(log, f"signed in as '{account}' from .env; session saved")
+                return SessionResult("signed-in-env")
+            _say(log, f"the details in .env for '{account}' were refused"
+                      + (f' (the site says "{outcome.error_text}")' if outcome.error_text else ""))
+            page.goto(url, timeout=settings.navigation_timeout_ms)
+            walls = _detect_auth(page, url, log)
+            if not walls:
+                return SessionResult("failed", "the login form disappeared after a refused attempt")
+            wall = walls[0]
+
+        go, reason = should_ask(settings.auth_mode, wall["kind"], False, is_interactive() if interactive is None else interactive)
+        if not go:
+            names = ", ".join(env_names(settings.site, account, wall))
+            _say(log, f"login wall on {url} left untested ({reason}). To sign in unattended, set in .env: {names}")
+            return SessionResult("not-tested", reason)
+        outcome, answer = authenticate_wall(page, wall, url, ask=ask, log=log)
+        if answer is None:
+            return SessionResult("skipped" if outcome is None else "failed",
+                                 "" if outcome is None else f"gave up after {outcome.attempts} attempts")
+        save_session(context, settings)
+        if answer.remember:
+            names = remember_credentials(settings.root / ".env", settings.root, settings.site, wall, answer, account)
+            _say(log, "remembered in .env as: " + ", ".join(names))
+        return SessionResult("signed-in-popup", f"attempt {outcome.attempts}")
+    finally:
+        context.close()
+
+
+def run_auth(settings, log, url: str) -> int:
+    """`cli auth [url]`: find the login / sign-up form on `url` and sign in - saved session, then .env, then the popup."""
+    from playwright.sync_api import sync_playwright
     if not url:
         log.error("auth needs a URL (or SEED_URL in .env)")
         return 2
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=settings.headless)
         try:
-            context = browser.new_context()
-            page = context.new_page()
-            page.goto(url, timeout=settings.navigation_timeout_ms)
-            walls = _detect_auth(page, url, log)
-            if not walls:
-                print("No login or sign-up form found on this page - nothing to do.")
-                return 0
-            wall = walls[0]
-            ask, reason = should_ask(settings.auth_mode, wall["kind"], has_session(settings), is_interactive())
-            if not ask:
-                print(f"Not asking for credentials: {reason}.")
-                return 0
-            outcome, answer = authenticate_wall(page, wall, url, log=log)
-            if answer is None:
-                print("Skipped." if outcome is None else f"Gave up after {outcome.attempts} attempts.")
-                return 1
-            saved = save_session(context, settings)
-            print(f"Signed in (attempt {outcome.attempts}). Session saved to {saved} (git-ignored).")
-            if answer.remember:
-                names = remember_credentials(settings.root / ".env", settings.root, settings.site, wall, answer)
-                print("Remembered in .env as: " + ", ".join(names))
-            return 0
+            result = ensure_session(settings, browser, url, log)
         finally:
             browser.close()
+    messages = {
+        "no-wall": "No login or sign-up form found on this page - nothing to do.",
+        "off": "AUTH_MODE=none: not signing in.",
+        "session-ok": f"The saved session for '{settings.auth_account}' still works.",
+        "signed-in-env": f"Signed in from .env. Session saved to {session_path(settings)} (git-ignored).",
+        "signed-in-popup": f"Signed in ({result.detail}). Session saved to {session_path(settings)} (git-ignored).",
+        "not-tested": f"Left untested: {result.detail}.",
+        "skipped": "Skipped.",
+        "failed": f"Could not sign in: {result.detail}.",
+    }
+    print(messages[result.status])
+    return 0 if result.status in {"no-wall", "off", "session-ok", "signed-in-env", "signed-in-popup", "not-tested"} else 1

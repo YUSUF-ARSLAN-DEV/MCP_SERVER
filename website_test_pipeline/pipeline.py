@@ -21,6 +21,7 @@ import subprocess
 import sys
 from urllib.parse import urlsplit
 
+from .authflow import has_session, session_path
 from .coverage import compute_coverage, render_coverage
 from .expand import run_expand
 from .flowgen import run_flowgen
@@ -50,6 +51,8 @@ def model_reachable(url: str, timeout: float = 3.0) -> bool:
 def run_execute(settings, log) -> int:
     """Run every generated spec under pytest and feed the flow results back into flow_ratings.json."""
     env = {**os.environ, "WTP_ARTIFACTS": str(settings.artifacts_dir)}
+    if has_session(settings):
+        env["WTP_STORAGE_STATE"] = str(session_path(settings))
     result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q"], cwd=settings.root, env=env)
     feed_results(settings, log)
     return result.returncode
