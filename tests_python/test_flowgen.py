@@ -282,3 +282,15 @@ def test_a_reveals_flow_does_not_get_query_assertions():
                             step_effects=["no-visible-change", "reveals"])
     source, _ = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
     assert "[?&]" not in source
+
+
+def test_a_control_that_only_appears_after_the_action_can_be_asserted_when_the_run_saw_it_as_a_button():
+    flow = _flow(steps=[{"kind": "click", "selector": None, "name": "Search"}],
+                 outcome={"effect": "reveals"},
+                 observed={"effect": "reveals", "url": START, "new_headings": [], "new_controls": ["button:Remove"],
+                           "results": [], "step_effects": ["reveals"], "step_urls": [START]})
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SEARCH])])      # 'Remove' is not in the explored page
+    assert reason == "" and "name=re.compile(" in source and "Remove" in source and "to_be_visible()" in source
+    flow["observed"]["new_controls"] = ["a:Cart, 1 item"]                         # a link's role is not certain from its tag
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SEARCH])])
+    assert source is None and "nothing stable to assert" in reason

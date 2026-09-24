@@ -157,6 +157,9 @@ def _outcome_expects(flow: dict, pool: list[dict]) -> tuple[list[str], list[dict
         for entry in observed.get("new_controls") or []:
             tag, _, name = entry.partition(":")
             role = _resolve_role(name, pool) if name and len(name) < _NAME_CUT else None
+            if role is None and tag == "button" and name and len(name) < _NAME_CUT:
+                role = "button"      # it appeared only AFTER an action (Remove after Add to cart), so the explorer never saw it;
+                                       # the run did, and a <button> element is a button - nothing is guessed
             if role:
                 exprs.append(f"expect(page.get_by_role({_lit(role)}, name={_lit(name)}, exact=True).first).to_be_visible()")
                 extra.append({"control": name, "role": role})
