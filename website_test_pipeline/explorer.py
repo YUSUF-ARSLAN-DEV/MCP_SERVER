@@ -182,6 +182,7 @@ _FORMS_JS = r"""els => els.map(f => ({
     selector: f.id ? `#${f.id}` : (f.getAttribute('name') ? `form[name="${f.getAttribute('name')}"]` : null),
     action: f.getAttribute('action'),
     method: (f.getAttribute('method') || 'get').toLowerCase(),
+    has_password: !!f.querySelector('input[type="password"]'),
     fields: [...f.elements].map(el => el.getAttribute('name')).filter(Boolean)
 }))"""
 
@@ -719,8 +720,8 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
     real term, submit, and record the results page. The commonest 'primary flow'."""
     for form in forms or []:
         fields = [f for f in (form.get("fields") or []) if f]
-        if not fields:
-            continue
+        if not fields or form.get("has_password"):
+            continue                       # a login / sign-up form is not a search box: never type junk into it
         try:
             page.goto(url, wait_until="domcontentloaded")
             settle_page(page)

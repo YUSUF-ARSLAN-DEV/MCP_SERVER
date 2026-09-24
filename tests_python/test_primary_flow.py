@@ -246,3 +246,8 @@ def test_close_menus_keeps_going_when_the_trigger_click_itself_fails():
     page = _MenuPage("corner")
     _close_menus(page, _CoveredTrigger(page))
     assert page.actions == ["escape", "trigger", "corner"]      # used to stop after the failed trigger click
+
+
+def test_a_form_with_a_password_field_is_never_probed_as_a_search():
+    login = {"selector": "#login", "fields": ["username", "password"], "has_password": True}
+    assert _probe_search_form(_NoBrowser(), "https://x.test/login", [login], [], None) is None   # _NoBrowser fails on any navigation
