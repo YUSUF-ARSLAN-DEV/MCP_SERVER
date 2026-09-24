@@ -110,7 +110,7 @@ def _shared_nav(inventories: list[dict]) -> list[dict]:
     return [{"name": n, "to": t} for (n, t), count in sorted(seen.items()) if count >= need]
 
 
-def build_site_map(inventories: list[dict]) -> dict:
+def build_site_map(inventories: list[dict], extra_edges: list[dict] | None = None) -> dict:
     pages = [_page_summary(inv) for inv in inventories]
     known = {p["path"] for p in pages}
     edges, seen = [], set()
@@ -125,6 +125,11 @@ def build_site_map(inventories: list[dict]) -> dict:
                 continue
             seen.add(key)
             edges.append({"from": p["path"], "to": to, "via": via, "explored": to.split("?")[0] in {k.split("?")[0] for k in known}})
+    for edge in extra_edges or []:                     # links that are not <a> tags, e.g. a sign-in form submit
+        key = (edge["from"], edge["to"])
+        if key not in seen:
+            seen.add(key)
+            edges.append(edge)
     return {"pages": pages, "nav": _shared_nav(inventories), "edges": edges}
 
 

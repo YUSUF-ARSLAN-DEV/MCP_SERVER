@@ -421,3 +421,19 @@ def landing_urls(settings) -> list[str]:
     if not hasattr(settings, "workspace") or not landing_path(settings).is_file():
         return []
     return [line.strip() for line in landing_path(settings).read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def login_edges(settings, inventories: list[dict]) -> list[dict]:
+    """Site-map edges for signing in: from each page that showed a login form to the page a sign-in lands on. A form
+    submit is not an <a> link, so without this the map says the logged-in pages are unreachable and every journey that
+    signs in and then does something (add to cart, open an order ...) is rejected as unbuildable."""
+    from urllib.parse import urlsplit
+    landings = [urlsplit(u).path or "/" for u in landing_urls(settings)]
+    known = {urlsplit(inv.get("url", "")).path or "/" for inv in inventories}
+    edges = []
+    for inv in inventories:
+        if not inv.get("auth"):
+            continue
+        origin = urlsplit(inv.get("url", "")).path or "/"
+        edges += [{"from": origin, "to": to, "via": "sign in", "explored": to in known} for to in landings if to != origin]
+    return edges

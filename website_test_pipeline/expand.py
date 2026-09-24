@@ -310,7 +310,8 @@ def run_expand(settings, urls: list[str], client, log, only: list[str] | None = 
     if not todo:
         log.info("expand: nothing to expand (every sentence already has an answer; edit one or pass its id to redo it)")
         return 0
-    site_map = build_site_map(inventories)
+    from .authflow import login_edges
+    site_map = build_site_map(inventories, login_edges(settings, inventories))
     site_map_text = render_site_map(site_map)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     from .authflow import bind_credentials

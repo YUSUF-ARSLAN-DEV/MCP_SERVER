@@ -105,6 +105,9 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             selector: selector,
             testid: testid,
             id: idOk ? rawId : null,
+            // the same id on more than one element (a real site defect): #id then matches several nodes and a bare
+            // locator('#id') breaks Playwright's strict mode
+            dup_id: idOk && [...document.querySelectorAll('[id]')].filter(x => x.id === rawId).length > 1,
             field_name: nameOk ? rawName : null,
             volatile_id: !testid && ((!!rawId && !idOk) || (!!rawName && !nameOk)),
             hidden: hidden,
@@ -925,9 +928,9 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
         key = (control.get("name") or "").strip().lower()
         # ambiguous if the visible snapshot saw the name twice OR the full DOM
         # (hidden elements included) has more than one - catches wizard steps.
-        control["ambiguous"] = bool(key) and (
+        control["ambiguous"] = bool(control.get("dup_id")) or (bool(key) and (
             name_counts.get(key, 0) > 1 or dom_name_freq.get(key[:80], 0) > 1
-        )
+        ))
     forms = page.locator('form').evaluate_all(_FORMS_JS)
     try:
         embeds = page.locator(_EMBED_SEL).evaluate_all(_EMBEDS_JS)

@@ -218,7 +218,8 @@ def run_documents(settings, urls: list[str], client, log, paths: list[str]) -> i
         return 1
     from .authflow import account_available
     allow_account = account_available(settings, inventories)
-    site_map = build_site_map(inventories)
+    from .authflow import login_edges
+    site_map = build_site_map(inventories, login_edges(settings, inventories))
     site_map_text = render_site_map(site_map)
     pages = {p["path"] for p in site_map["pages"]}
     uncovered = render_uncovered(compute_coverage(inventories, flows))

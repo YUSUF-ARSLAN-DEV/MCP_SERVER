@@ -627,6 +627,57 @@ def _repair_icon_glyph_names(source: str, inventory) -> tuple[str, int]:
     return updated, len(edits)
 
 
+def _recorded_roles(inventory) -> dict[str, set[str]]:
+    """{control name -> ARIA roles the explorer recorded for it}. Non-ARIA 'roles' (an <input type>, 'select-one')
+    are left out: they are not something get_by_role() understands."""
+    from .validator import _ARIA_ROLES
+    roles: dict[str, set[str]] = {}
+    groups = [getattr(inventory, "controls", None) or []]
+    for entry in getattr(inventory, "revealed", None) or []:
+        groups.append(entry.get("controls") or [])
+    for group in groups:
+        for control in group:
+            name, role = control.get("name"), control.get("role")
+            if name and role in _ARIA_ROLES:
+                roles.setdefault(str(name), set()).add(role)
+    return roles
+
+
+def _repair_role_from_inventory(source: str, inventory) -> tuple[str, int]:
+    """The model guesses a role from the tag (<a> -> 'link'), but the page said otherwise: `<a role="button"
+    aria-label="Cart, empty">` is a button, and get_by_role('link', name='Cart, empty') finds nothing. When a control
+    the explorer saw has exactly one recorded ARIA role and the spec asks for a different one, use the recorded one."""
+    recorded = _recorded_roles(inventory)
+    if not recorded:
+        return source, 0
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source, 0
+    edits = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get_by_role"
+                and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+            continue
+        name = next((k.value for k in node.keywords if k.arg == "name"), None)
+        if not (isinstance(name, ast.Constant) and isinstance(name.value, str)):
+            continue
+        roles = recorded.get(name.value)
+        asked = node.args[0]
+        if roles and len(roles) == 1 and asked.value not in roles:
+            edits.append((asked.lineno, asked.col_offset, asked.end_lineno, asked.end_col_offset, next(iter(roles))))
+    if not edits:
+        return source, 0
+    offsets = [0]
+    for line in source.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line.encode("utf-8")))
+    raw = source.encode("utf-8")
+    for l1, c1, l2, c2, role in sorted(edits, reverse=True):
+        start, end = offsets[l1 - 1] + c1, offsets[l2 - 1] + c2
+        raw = raw[:start] + repr(role).encode("utf-8") + raw[end:]
+    return raw.decode("utf-8"), len(edits)
+
+
 def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
     """Return (possibly rewritten source, list of human-readable repairs applied).
     On any parse failure of the rewritten source, return the original untouched."""
@@ -648,6 +699,9 @@ def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
         source, n = _repair_fragile_heading(source)
         if n:
             applied.append(f"rewrote {n} fragile exact-heading name(s) to re.compile()")
+        source, n = _repair_role_from_inventory(source, inventory)
+        if n:
+            applied.append(f"corrected {n} guessed role(s) to the role the page really has")
         source, n = _repair_missing_first(source, inventory)
         if n:
             applied.append(f"added .first to {n} strict-mode locator(s)")

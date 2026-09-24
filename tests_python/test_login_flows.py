@@ -139,3 +139,21 @@ def test_account_available_needs_a_session_or_env_details_and_respects_auth_mode
     (tmp_path / "w" / "auth").mkdir(parents=True)
     (tmp_path / "w" / "auth" / "state.default.json").write_text("{}", encoding="utf-8")
     assert account_available(settings, [])                                  # a saved session is enough
+
+
+# ------------------------------------------------------------------ the sign-in edge in the site map
+
+def test_the_site_map_links_the_login_page_to_the_page_a_sign_in_lands_on(tmp_path):
+    from types import SimpleNamespace
+    from website_test_pipeline.authflow import login_edges, save_landing
+    from website_test_pipeline.sitemap import build_site_map
+    settings = SimpleNamespace(workspace=tmp_path / "w", auth_account="default")
+    inventories = [{**INVENTORY, "url": "https://x.test/"}, {"url": "https://x.test/inventory.html", "controls": [], "headings": [],
+                                                              "forms": [], "revealed": [], "embeds": [], "accessibility": ""}]
+    assert login_edges(settings, inventories) == []                             # nothing recorded yet
+    save_landing(settings, "https://x.test/inventory.html", "https://x.test/")
+    edges = login_edges(settings, inventories)
+    assert edges == [{"from": "/", "to": "/inventory.html", "via": "sign in", "explored": True}]
+    site_map = build_site_map(inventories, edges)
+    assert {"from": "/", "to": "/inventory.html", "via": "sign in", "explored": True} in site_map["edges"]
+    assert build_site_map(inventories)["edges"] == []                           # without it the pages look unconnected

@@ -492,3 +492,24 @@ def test_the_icon_glyph_repair_adds_the_re_import_when_the_spec_lacks_it():
     inv = SimpleNamespace(controls=[{"name": "Search", "tag": "button"}], revealed=[])
     fixed, _ = repair_spec('def test_x(page):\n    page.get_by_role("button", name="Search", exact=True).click()\n', inv)
     assert fixed.startswith("import re\n")
+
+
+# ------------------------------------------------------------------ a guessed role corrected to the page's real one
+
+def test_a_guessed_link_role_is_corrected_to_the_button_the_page_really_has():
+    from types import SimpleNamespace
+    inv = SimpleNamespace(controls=[{"name": "Cart, empty", "tag": "a", "role": "button"},
+                                    {"name": "Sort products", "tag": "select", "role": "select-one"},
+                                    {"name": "Menu", "tag": "a", "role": "button"}, {"name": "Menu", "tag": "a", "role": "link"}],
+                          revealed=[])
+    src = ('import re\n'
+           'def test_x(page):\n'
+           '    page.get_by_role("link", name="Cart, empty").click()\n'
+           '    page.get_by_role("combobox", name="Sort products").click()\n'
+           '    page.get_by_role("link", name="Menu").click()\n'
+           '    page.get_by_role("button", name="Cart, empty").click()\n')
+    fixed, applied = repair_spec(src, inv)
+    assert "get_by_role('button', name=\"Cart, empty\")" in fixed and any("role" in a for a in applied)
+    assert 'get_by_role("combobox", name="Sort products")' in fixed          # 'select-one' is not an ARIA role: untouched
+    assert 'get_by_role("link", name="Menu")' in fixed                        # two recorded roles: ambiguous, untouched
+    compile(fixed, "<spec>", "exec")

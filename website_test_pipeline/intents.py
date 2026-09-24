@@ -369,7 +369,8 @@ def run_intents(settings, urls: list[str], client, log) -> int:
         return 1
     from .authflow import account_available
     allow_account = account_available(settings, inventories)
-    site_map = build_site_map(inventories)
+    from .authflow import login_edges
+    site_map = build_site_map(inventories, login_edges(settings, inventories))
     existing = [i["sentence"] for i in doc["intents"] if i.get("status") != "dropped"] + [f.get("goal", "") for f in flows]
     try:
         uncovered = render_uncovered(compute_coverage(inventories, flows))
