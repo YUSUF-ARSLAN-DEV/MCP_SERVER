@@ -1,7 +1,7 @@
 # Credential popup - design
 
-Status: steps 1-5 built (detect, AUTH_MODE, popup, fill/confirm/save session, session -> .env -> popup order with
-accounts - try it with `python -m website_test_pipeline.cli auth <url> [--account NAME]`); steps 6-7 proposed.
+Status: steps 1-6 built (detect, AUTH_MODE, popup, fill/confirm/save session, session -> .env -> popup order with
+accounts - try it with `python -m website_test_pipeline.cli auth <url> [--account NAME]`); step 7 proposed.
 
 ## Problem
 
@@ -111,7 +111,18 @@ instead of producing tests that all fail at the login page. A site with no wall 
 form it found. Not yet done: a flow declaring which account it needs, and a wall found on a page deeper than the
 seed URL (it is still reported as not tested).
 
-### 6. Let flows use it
+### 6. Let flows use it  (DONE - `secretrefs.py`, `authflow.bind_credentials`, `intents.unsuitable_reason(allow_account=)`)
+- **The guard.** When the pipeline holds a login (a saved session, or `.env` details for a wall it found) the AI may
+  write journeys that sign in; payment and personal data stay banned. The prompt tells it to write "signs in with
+  the saved account", never a username or password. With no login the old guard applies unchanged.
+- **References, never values.** Expansion (code, not the model) points every fill step aimed at a login field at
+  `{env:AUTH_<SITE>_<ACCOUNT>_<FIELD>}`. A flow whose login details are not in `.env` is not built and the reason
+  names the variables to set. `flows.json`, the plain-language journey, the report and the generated test hold only
+  those names.
+- **Generated tests.** They call `secret('NAME')` (reads the variable at run time), assert `not_to_have_value("")`
+  instead of comparing against a secret, and use the `logged_out_page` fixture, because a sign-in flow must start
+  signed OUT (a saved session would already be past the login, and most sites redirect a signed-in visitor away
+  from `/login`). `verify` does the same. A password box is never filled with a guessed value.
 Relax the "no credentials" guard in `intents.py` / `documents.py` only when a working session exists, so journeys
 past the login are proposed, verified and turned into tests like any other flow. Generated specs reference env
 var names only.

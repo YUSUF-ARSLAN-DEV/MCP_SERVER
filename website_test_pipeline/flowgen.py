@@ -21,6 +21,7 @@ from .explorer import _plausible_value
 from .heuristics import is_volatile_param
 from .flows import FlowsFileError, _slug, is_blocked, load_flows
 from .runner import _path, _role_for
+from .secretrefs import is_ref, needs_fresh_session, ref_name
 from .sitemap import load_inventories
 from .validator import SpecError, validate_python_spec, _norm
 
@@ -171,6 +172,8 @@ def _step_verify(step: dict, effect: str | None, path_after: str | None, var: st
         return f"expect(page).to_have_url(re.compile({_re_lit(_url_regex(path_after))}))"
     if effect != "navigates" and step.get("kind") == "select":
         return f'expect({var}).not_to_have_value("")'
+    if effect != "navigates" and step.get("kind") == "fill" and is_ref(step.get("value")):
+        return f'expect({var}).not_to_have_value("")'          # never compare against (or print) a secret
     if effect != "navigates" and step.get("kind") == "fill":
         return f"expect({var}).to_have_value({_lit(str(step.get('value') or _plausible_value({})))})"
     # A multiselect pick's real proof of behaviour - that the option actually ended up checked, not just that
@@ -189,6 +192,8 @@ def _step_action(step: dict, var: str) -> tuple[str | None, str]:
     if kind == "select":
         value = step.get("value")
         return (f"{var}.select_option(label={_lit(str(value))})" if value else f"{var}.select_option(index=1)"), ""
+    if kind == "fill" and is_ref(step.get("value")):
+        return f"{var}.fill(secret({_lit(ref_name(step['value']))}))", ""
     if kind == "fill":
         return f"{var}.fill({_lit(str(step.get('value') or _plausible_value({})))})", ""
     if kind == "multiselect":
@@ -300,14 +305,20 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
         body += [f"    {e}" for e in exprs[1:]]
 
     goal = re.sub(r"\s+", " ", flow.get("goal") or flow["id"]).replace("=", ":")[:200]
+    fresh = needs_fresh_session(flow)
+    uses_env = any(is_ref(s.get("value")) for s in steps)
     source = "\n".join([
         MARKER, f"# Flow {flow['id']}: {goal}", "import re", "from pathlib import Path", "",
         "from playwright.sync_api import Page, expect",
         "from website_test_pipeline.evidence import action_evidence, observation_evidence",
-        "from website_test_pipeline.pageutils import open_page, pick_option", "",
+        "from website_test_pipeline.pageutils import open_page, pick_option",
+        *(["from website_test_pipeline.secretrefs import secret"] if uses_env else []), "",
         f"URL = {_lit(flow['start_url'])}", "", "",
         "def _open(page: Page) -> None:", "    open_page(page, URL)", "", "",
-        f"def {spec_test_name(flow)}(page: Page, evidence_dir: Path) -> None:", "    _open(page)", *body, "",
+        *((f"def {spec_test_name(flow)}(logged_out_page: Page, evidence_dir: Path) -> None:",
+           "    page = logged_out_page          # a sign-in flow starts signed OUT, whatever session is saved")
+          if fresh else (f"def {spec_test_name(flow)}(page: Page, evidence_dir: Path) -> None:",)),
+        "    _open(page)", *body, "",
     ])
     try:
         validate_python_spec(source, flow["start_url"], _validation_inventory(flow, touched, extra))

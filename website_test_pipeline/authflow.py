@@ -316,3 +316,55 @@ def run_auth(settings, log, url: str) -> int:
     }
     print(messages[result.status])
     return 0 if result.status in {"no-wall", "off", "session-ok", "signed-in-env", "signed-in-popup", "not-tested"} else 1
+
+
+# ------------------------------------------------------------------ flows that use the login (step 6)
+
+def account_available(settings, inventories: list[dict]) -> bool:
+    """True when the pipeline can act as a signed-in visitor: a saved session, or .env details for a login wall it
+    found. This is what lets the AI write journeys that sign in or that sit behind the login."""
+    if getattr(settings, "auth_mode", "auto") == "none" or not hasattr(settings, "site"):
+        return False
+    if has_session(settings):
+        return True
+    account = _account(settings)
+    return any(credentials_from_env(settings.site, account, wall)
+               for inv in inventories for wall in inv.get("auth") or [])
+
+
+def _fold(text: str) -> str:
+    return "".join(ch for ch in (text or "").casefold() if ch.isalnum())
+
+
+def bind_credentials(steps: list[dict], inventories: list[dict], site: str, account: str, environ=None) -> str:
+    """Point every fill step that targets a login / sign-up field at the .env variable holding its value
+    ({env:NAME} - a reference, never the secret; the model never sees a value). '' when fine, else why the flow
+    cannot be built: typing into a login form needs details that are not set in .env."""
+    from .secretrefs import make_ref
+    environ = os.environ if environ is None else environ
+    walls: dict[str, list[dict]] = {}
+    for inv in inventories:
+        path = re.sub(r"^https?://[^/]+", "", inv.get("url", "")).split("?")[0].split("#")[0] or "/"
+        walls.setdefault(path, []).extend(inv.get("auth") or [])
+    missing: list[str] = []
+    for step in steps:
+        if step.get("kind") != "fill":
+            continue
+        page = (step.get("page") or "").split("?")[0].split("#")[0] or "/"
+        selector, name = step.get("selector") or "", _fold(step.get("name") or "")
+        for wall in walls.get(page, []):
+            for index, fld in enumerate(wall["fields"]):
+                attr = fld.get("name") or ""
+                same = ((attr and (f'name="{attr}"' in selector or f"name='{attr}'" in selector or selector == f"#{attr}"))
+                        or (name and name in {_fold(fld.get("label")), _fold(attr)}))
+                if not same:
+                    continue
+                variable = _env_name(site, account, field_key(index, fld))
+                if not environ.get(variable):
+                    missing.append(variable)
+                else:
+                    step["value"] = make_ref(variable)
+                break
+    if missing:
+        return "typing into a login form needs details that are not set in .env: " + ", ".join(dict.fromkeys(missing))
+    return ""

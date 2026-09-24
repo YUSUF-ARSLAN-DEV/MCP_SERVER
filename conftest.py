@@ -37,6 +37,15 @@ def browser_context_args(browser_context_args):
 
 
 @pytest.fixture
+def logged_out_page(browser, browser_context_args):
+    """A page with NO saved session, for flows that sign in (a signed-in visitor is redirected away from /login)."""
+    args = {k: v for k, v in browser_context_args.items() if k != "storage_state"}
+    context = browser.new_context(**args)
+    yield context.new_page()
+    context.close()
+
+
+@pytest.fixture
 def evidence_dir(request) -> Path:
     directory = EVIDENCE_ROOT / _slug(request.node.nodeid)
     directory.mkdir(parents=True, exist_ok=True)

@@ -19,6 +19,7 @@ from .explorer import (
 from . import heuristics
 from .validator import _ARIA_ROLES
 from .authflow import context_kwargs
+from .secretrefs import is_ref, needs_fresh_session, resolve
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
 from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
@@ -379,7 +380,12 @@ def _do_step(page, step: dict, seen: dict | None = None) -> None:
         if seen is not None:
             seen.update(options=options, chosen=chosen)      # so a default that shows nothing can be swapped for another
     elif kind == "fill":
-        loc.fill(str(step.get("value") or _plausible_value({})), timeout=2000)
+        if is_ref(step.get("value")):
+            loc.fill(resolve(step["value"]), timeout=2000)
+        else:
+            if not step.get("value") and (loc.get_attribute("type") or "").lower() == "password":
+                raise RuntimeError("a password field needs the login details, and none are bound to this step")
+            loc.fill(str(step.get("value") or _plausible_value({})), timeout=2000)
     elif kind == "multiselect" and step.get("value"):
         pick_option(page, loc, str(step["value"]))   # open the widget and pick the NAMED option
     elif kind == "multiselect":
@@ -536,7 +542,7 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
         browser = pw.chromium.launch(headless=settings.headless)
         try:
             for flow in todo:
-                context = browser.new_context(**context_kwargs(settings))
+                context = browser.new_context(**({} if needs_fresh_session(flow) else context_kwargs(settings)))
                 page = context.new_page()
                 page.set_default_navigation_timeout(settings.navigation_timeout_ms)
                 try:
@@ -556,7 +562,7 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                     verdict = judge(flow, result)
                     if verdict["promised"] and verdict["changed"]:  # not "and matched": see apply_result's comment
                         def run_once(overrides, flow=flow):
-                            ctx = browser.new_context(**context_kwargs(settings))
+                            ctx = browser.new_context(**({} if needs_fresh_session(flow) else context_kwargs(settings)))
                             try:
                                 trial_page = ctx.new_page()
                                 trial_page.set_default_navigation_timeout(settings.navigation_timeout_ms)

@@ -216,7 +216,7 @@ class ModelDown(Exception):
 
 
 def expand_intent(intent: dict, client, inventories: list[dict], site_map: dict, site_map_text: str,
-                  flows: list[dict], model: str, now: str, log=None) -> tuple[dict | None, dict | None, str]:
+                  flows: list[dict], model: str, now: str, log=None, bind=None) -> tuple[dict | None, dict | None, str]:
     """Try to build one flow. Returns (flow, rating entry, '') on success, (None, None, reason) when the sentence
     cannot be built, or (None, None, '') when the model call itself failed (retry later)."""
     try:
@@ -253,6 +253,10 @@ def expand_intent(intent: dict, client, inventories: list[dict], site_map: dict,
     reason = ground_options(steps, inventories)
     if reason:
         return None, None, reason
+    if bind is not None:                       # login details: a reference to the .env variable, never the value
+        reason = bind(steps, inventories)
+        if reason:
+            return None, None, reason
     twin = _flow_signatures(flows, intent.get("flow_id")).get(_signature(steps))
     url_of = {_page_key(re.sub(r"^https?://[^/]+", "", i.get("url", ""))): i.get("url", "") for i in inventories}
     start = url_of[_page_key(str(raw.get("start_path")))]
@@ -309,12 +313,15 @@ def run_expand(settings, urls: list[str], client, log, only: list[str] | None = 
     site_map = build_site_map(inventories)
     site_map_text = render_site_map(site_map)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    from .authflow import bind_credentials
+    account = getattr(settings, "auth_account", "default")
+    bind = lambda steps, inv: bind_credentials(steps, inv, getattr(settings, "site", ""), account)
     built = failed = retry = 0
     model_down = False
     for intent in todo:
         try:
             flow, rating, reason = expand_intent(intent, client, inventories, site_map, site_map_text,
-                                                 flows["flows"], settings.model, now, log)
+                                                 flows["flows"], settings.model, now, log, bind=bind)
         except ModelDown as exc:
             log.error("expand: the model is unavailable (%s) - stopping; the remaining sentences stay as they were", exc)
             model_down = True

@@ -108,16 +108,25 @@ def looks_technical(sentence: str) -> bool:
     return bool(_TECHNICAL.search(sentence))
 
 
-def unsuitable_reason(sentence: str) -> str:
+_PAYMENT = re.compile(r"\b(credit card|payment|checkout)\b", re.I)
+
+
+def unsuitable_reason(sentence: str, allow_account: bool = False) -> str:
     """Why the AI may not write this sentence as a journey ('' if fine). The rules live in heuristics.py
-    (credentials/payment, 'widgets appear', language switches) and can be extended per site."""
+    (credentials/payment, 'widgets appear', language switches) and can be extended per site. With `allow_account`
+    (the pipeline holds a login for this site) a journey may sign in - the credentials rule is swapped for a
+    payment-only one; the secret itself never appears in a sentence (it is bound to a step later)."""
     for pattern, reason in heuristics.unsuitable_rules():
+        if allow_account and "credentials" in reason:
+            if _PAYMENT.search(sentence):
+                return "needs payment details"
+            continue
         if pattern.search(sentence):
             return reason
     return ""
 
 
-def check_sentence(sentence: str, *, technical_ok: bool) -> str:
+def check_sentence(sentence: str, *, technical_ok: bool, allow_account: bool = False) -> str:
     """'' when acceptable, else why not. A person may write anything reasonable; the AI may not sound like a machine."""
     text = " ".join((sentence or "").split())
     if len(text) < MIN_LEN:
@@ -126,7 +135,7 @@ def check_sentence(sentence: str, *, technical_ok: bool) -> str:
         return f"too long for one sentence (max {MAX_LEN} characters)"
     if not technical_ok and looks_technical(text):
         return "reads like code (selectors/URLs); write what a visitor sees and does"
-    if not technical_ok and (why := unsuitable_reason(text)):     # the AI is held to these; a person may override
+    if not technical_ok and (why := unsuitable_reason(text, allow_account)):     # the AI is held to these; a person may override
         return why
     return ""
 
@@ -146,10 +155,10 @@ def _next_id(doc: dict) -> str:
 
 
 def add_intent(doc: dict, sentence: str, source: str, now: str, start_path: str | None = None,
-               evidence: str = "", proposed_by: dict | None = None) -> dict:
+               evidence: str = "", proposed_by: dict | None = None, allow_account: bool = False) -> dict:
     """Append a new intent, or raise IntentError with the reason (bad wording, duplicate)."""
     text = " ".join((sentence or "").split())
-    reason = check_sentence(text, technical_ok=source == "human")
+    reason = check_sentence(text, technical_ok=source == "human", allow_account=allow_account)
     if reason:
         raise IntentError(reason)
     twin = find_duplicate(doc, text)
@@ -277,11 +286,21 @@ def render_intents(doc: dict) -> str:
 
 # ------------------------------------------------------------------ AI writes the sentences
 
-def prompt_for(site_map_text: str, existing: list[str], uncovered: str = "") -> str:
+_NO_ACCOUNT = "- Never a journey that needs an account, password, payment or a real person's data, "
+_WITH_ACCOUNT = ("- A journey may sign in: the pipeline holds a login for this site. Write it as \"signs in with the saved "
+                 "account\" - never a username, email, password or any other secret in the sentence. Otherwise never a "
+                 "journey that needs payment or a real person's data, ")
+
+
+def rules_for(rules: str, allow_account: bool) -> str:
+    return rules.replace(_NO_ACCOUNT, _WITH_ACCOUNT) if allow_account else rules
+
+
+def prompt_for(site_map_text: str, existing: list[str], uncovered: str = "", allow_account: bool = False) -> str:
     """`uncovered` (coverage.render_uncovered) lists what no tested flow touches yet, so new sentences aim there."""
     shown = "\n".join(f"- {s}" for s in existing[:40]) or "(none yet)"
     extra = f"\n\n{uncovered}" if uncovered else ""
-    return f"{RULES}\n\nEXISTING\n{shown}\n\n{site_map_text}{extra}"
+    return f"{rules_for(RULES, allow_account)}\n\nEXISTING\n{shown}\n\n{site_map_text}{extra}"
 
 
 def first_json_object(raw: str):
@@ -307,7 +326,7 @@ def parse_response(raw: str) -> list[dict]:
 
 
 def accept_intents(raw_rows: list[dict], doc: dict, pages: set[str], now: str, model: str = "",
-                   document: tuple[str, str] | None = None) -> tuple[list[dict], list[tuple[str, str]]]:
+                   document: tuple[str, str] | None = None, allow_account: bool = False) -> tuple[list[dict], list[tuple[str, str]]]:
     """Add the model's sentences that pass the checks. Returns (added intents, [(sentence, reason)] rejected).
     With `document` = (file name, the text the model was shown) every sentence must also carry a quote that really is
     in that text (documents.quote_in_text); it is then stored as a `doc` intent with `from_doc` and `quote`."""
@@ -325,7 +344,7 @@ def accept_intents(raw_rows: list[dict], doc: dict, pages: set[str], now: str, m
         try:
             source, version = ("doc", DOC_PROMPT_VERSION) if document is not None else ("ai", PROMPT_VERSION)
             intent = add_intent(doc, sentence, source, now, start, str(row.get("evidence") or ""),
-                                {"model": model, "prompt_version": version})
+                                {"model": model, "prompt_version": version}, allow_account)
             if document is not None:
                 intent["from_doc"], intent["quote"] = document[0], quote[:300]
             added.append(intent)
@@ -348,11 +367,13 @@ def run_intents(settings, urls: list[str], client, log) -> int:
     except (IntentsFileError, FlowsFileError) as exc:
         log.error("intents: %s", exc)
         return 1
+    from .authflow import account_available
+    allow_account = account_available(settings, inventories)
     site_map = build_site_map(inventories)
     existing = [i["sentence"] for i in doc["intents"] if i.get("status") != "dropped"] + [f.get("goal", "") for f in flows]
     try:
         uncovered = render_uncovered(compute_coverage(inventories, flows))
-        rows = parse_response(client.generate(prompt_for(render_site_map(site_map), existing, uncovered), SYSTEM))
+        rows = parse_response(client.generate(prompt_for(render_site_map(site_map), existing, uncovered, allow_account), SYSTEM))
     except Exception as exc:
         from .llm import is_unavailable
         if is_unavailable(exc):
@@ -361,7 +382,8 @@ def run_intents(settings, urls: list[str], client, log) -> int:
         log.error("intents: model response unusable (%s)", exc)
         return 1
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    added, rejected = accept_intents(rows, doc, {p["path"] for p in site_map["pages"]}, now, settings.model)
+    added, rejected = accept_intents(rows, doc, {p["path"] for p in site_map["pages"]}, now, settings.model,
+                                     allow_account=allow_account)
     for i in added:
         log.info("intents: added %s :: %s", i["id"], i["sentence"])
     for sentence, reason in rejected:

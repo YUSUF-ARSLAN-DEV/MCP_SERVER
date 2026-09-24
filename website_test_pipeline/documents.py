@@ -189,10 +189,11 @@ def quote_in_text(quote: str, text: str) -> bool:
 # ------------------------------------------------------------------ asking the model
 
 def prompt_for(site_map_text: str, existing: list[str], name: str, part: int, parts: int, excerpt: str,
-               uncovered: str = "") -> str:
+               uncovered: str = "", allow_account: bool = False) -> str:
+    from .intents import rules_for
     shown = "\n".join(f"- {s}" for s in existing[:40]) or "(none yet)"
     extra = f"\n\n{uncovered}" if uncovered else ""
-    return (f"{RULES}\n\nREQUIREMENTS (from {name}, part {part} of {parts})\n{excerpt}\n\n"
+    return (f"{rules_for(RULES, allow_account)}\n\nREQUIREMENTS (from {name}, part {part} of {parts})\n{excerpt}\n\n"
             f"EXISTING\n{shown}\n\n{site_map_text}{extra}\n\n"
             "Answer now with the JSON object only, starting with { - do not restate the requirements or explain first.")
 
@@ -215,6 +216,8 @@ def run_documents(settings, urls: list[str], client, log, paths: list[str]) -> i
     except (IntentsFileError, FlowsFileError) as exc:
         log.error("intents: %s", exc)
         return 1
+    from .authflow import account_available
+    allow_account = account_available(settings, inventories)
     site_map = build_site_map(inventories)
     site_map_text = render_site_map(site_map)
     pages = {p["path"] for p in site_map["pages"]}
@@ -235,7 +238,7 @@ def run_documents(settings, urls: list[str], client, log, paths: list[str]) -> i
             existing = [i["sentence"] for i in doc["intents"] if i.get("status") != "dropped"] + [f.get("goal", "") for f in flows]
             try:
                 rows = first_json_object(client.generate(prompt_for(site_map_text, existing, name, number, min(len(parts), MAX_CHUNKS),
-                                                                   excerpt, uncovered), SYSTEM))
+                                                                   excerpt, uncovered, allow_account), SYSTEM))
                 rows = [r for r in (rows.get("intents") if isinstance(rows, dict) else None) or [] if isinstance(r, dict)]
             except Exception as exc:
                 if is_unavailable(exc):
@@ -246,7 +249,8 @@ def run_documents(settings, urls: list[str], client, log, paths: list[str]) -> i
                 continue
             asked += 1
             now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            added, rejected = accept_intents(rows, doc, pages, now, settings.model, document=(name, excerpt))
+            added, rejected = accept_intents(rows, doc, pages, now, settings.model, document=(name, excerpt),
+                                             allow_account=allow_account)
             added_total += len(added)
             rejected_total += len(rejected)
             for intent in added:
