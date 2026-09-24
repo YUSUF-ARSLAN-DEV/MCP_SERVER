@@ -208,6 +208,50 @@ def _say(log, message: str) -> None:
         print(message)
 
 
+def sign_in_on_page(settings, context, page, walls: list[dict], url: str, had_session: bool, log=None,
+                    ask=ask_credentials, interactive: bool | None = None) -> SessionResult:
+    """The sign-in sequence on a page that is ALREADY showing a login wall: .env details, then (interactive runs only)
+    the popup, else leave it untested and say which .env names to fill in. On success the context is signed in."""
+    from .explorer import _detect_auth
+    account = _account(settings)
+    wall = walls[0]
+    creds = credentials_from_env(settings.site, account, wall)
+    if creds:
+        outcome = perform_auth(page, wall, creds)
+        if outcome.ok:
+            save_session(context, settings)
+            save_landing(settings, outcome.url_after, url)
+            _say(log, f"signed in as '{account}' from .env; session saved")
+            return SessionResult("signed-in-env")
+        _say(log, f"the details in .env for '{account}' were refused"
+                  + (f' (the site says "{outcome.error_text}")' if outcome.error_text else ""))
+        page.goto(url, timeout=settings.navigation_timeout_ms)
+        walls = _detect_auth(page, url, log)
+        if not walls:
+            return SessionResult("failed", "the login form disappeared after a refused attempt")
+        wall = walls[0]
+
+    go, reason = should_ask(settings.auth_mode, wall["kind"], False, is_interactive() if interactive is None else interactive)
+    if not go and had_session:
+        names = ", ".join(env_names(settings.site, account, wall))
+        return SessionResult("failed", f"the saved session expired and nothing can renew it without a person; "
+                                       f"set in .env: {names}, or run `auth`")
+    if not go:
+        names = ", ".join(env_names(settings.site, account, wall))
+        _say(log, f"login wall on {url} left untested ({reason}). To sign in unattended, set in .env: {names}")
+        return SessionResult("not-tested", reason)
+    outcome, answer = authenticate_wall(page, wall, url, ask=ask, log=log)
+    if answer is None:
+        return SessionResult("skipped" if outcome is None else "failed",
+                             "" if outcome is None else f"gave up after {outcome.attempts} attempts")
+    save_session(context, settings)
+    save_landing(settings, outcome.url_after, url)
+    if answer.remember:
+        names = remember_credentials(settings.root / ".env", settings.root, settings.site, wall, answer, account)
+        _say(log, "remembered in .env as: " + ", ".join(names))
+    return SessionResult("signed-in-popup", f"attempt {outcome.attempts}")
+
+
 def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, interactive: bool | None = None) -> SessionResult:
     """Make sure the browser can see past a login wall on `url`, asking as little as possible:
        1. a saved session that still works  ->  nothing to do;
@@ -217,7 +261,6 @@ def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, i
     from .explorer import _detect_auth
     if settings.auth_mode == "none":
         return SessionResult("off")
-    account = _account(settings)
     had_session = has_session(settings)
     context = browser.new_context(**context_kwargs(settings))
     try:
@@ -226,47 +269,31 @@ def ensure_session(settings, browser, url: str, log=None, ask=ask_credentials, i
         walls = _detect_auth(page, url, log)
         if not walls:
             return SessionResult("session-ok" if had_session else "no-wall")
-        wall = walls[0]
         if had_session:
             _say(log, "the saved session no longer gets past the login wall - signing in again")
-
-        creds = credentials_from_env(settings.site, account, wall)
-        if creds:
-            outcome = perform_auth(page, wall, creds)
-            if outcome.ok:
-                save_session(context, settings)
-                save_landing(settings, outcome.url_after, url)
-                _say(log, f"signed in as '{account}' from .env; session saved")
-                return SessionResult("signed-in-env")
-            _say(log, f"the details in .env for '{account}' were refused"
-                      + (f' (the site says "{outcome.error_text}")' if outcome.error_text else ""))
-            page.goto(url, timeout=settings.navigation_timeout_ms)
-            walls = _detect_auth(page, url, log)
-            if not walls:
-                return SessionResult("failed", "the login form disappeared after a refused attempt")
-            wall = walls[0]
-
-        go, reason = should_ask(settings.auth_mode, wall["kind"], False, is_interactive() if interactive is None else interactive)
-        if not go and had_session:
-            names = ", ".join(env_names(settings.site, account, wall))
-            return SessionResult("failed", f"the saved session expired and nothing can renew it without a person; "
-                                           f"set in .env: {names}, or run `auth`")
-        if not go:
-            names = ", ".join(env_names(settings.site, account, wall))
-            _say(log, f"login wall on {url} left untested ({reason}). To sign in unattended, set in .env: {names}")
-            return SessionResult("not-tested", reason)
-        outcome, answer = authenticate_wall(page, wall, url, ask=ask, log=log)
-        if answer is None:
-            return SessionResult("skipped" if outcome is None else "failed",
-                                 "" if outcome is None else f"gave up after {outcome.attempts} attempts")
-        save_session(context, settings)
-        save_landing(settings, outcome.url_after, url)
-        if answer.remember:
-            names = remember_credentials(settings.root / ".env", settings.root, settings.site, wall, answer, account)
-            _say(log, "remembered in .env as: " + ", ".join(names))
-        return SessionResult("signed-in-popup", f"attempt {outcome.attempts}")
+        return sign_in_on_page(settings, context, page, walls, url, had_session, log, ask, interactive)
     finally:
         context.close()
+
+
+def wall_handler(settings, log=None, already_signed_in: bool = False, ask=ask_credentials, interactive: bool | None = None):
+    """A callback for the crawler, called on every page it loads: when a login wall shows up (say /account redirecting
+    to a login form), sign in on the spot so the rest of the crawl sees the logged-in area. Returns True when it just
+    signed in, so the crawler reloads the page. Acts once: a wall met after that is a public login page. With
+    `already_signed_in` (the seed check already handled a login) it does nothing."""
+    from .explorer import _detect_auth
+    state = {"done": already_signed_in or getattr(settings, "auth_mode", "auto") == "none"}
+
+    def handle(page, url: str) -> bool:
+        if state["done"]:
+            return False
+        walls = _detect_auth(page, url, log)
+        if not walls:
+            return False
+        state["done"] = True
+        result = sign_in_on_page(settings, page.context, page, walls, url, False, log, ask, interactive)
+        return result.status in {"signed-in-env", "signed-in-popup"}
+    return handle
 
 
 def preflight_session(settings, log) -> int:

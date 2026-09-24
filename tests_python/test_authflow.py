@@ -308,3 +308,95 @@ def test_a_sign_in_that_stays_on_the_login_page_records_no_landing(tmp_path):
     save_landing(settings, "", "https://fake.test/login")
     assert landing_urls(settings) == []
     assert landing_urls(SimpleNamespace()) == []                             # settings without a workspace
+
+
+# ------------------------------------------------------------------ a wall deeper in the site, met while crawling
+
+class _GatedSite:
+    """/ is public; /account shows a login form until the visitor is signed in, then links to /orders."""
+    def __init__(self, browser):
+        self.browser = browser
+
+    def page(self):
+        context = self.browser.new_context()
+        context.route("https://fake.test/**", self._serve)
+        return context.new_page()
+
+    def _serve(self, route):
+        request, path = route.request, route.request.url.replace("https://fake.test", "").split("?")[0]
+        signed_in = "sid=1" in (request.headers.get("cookie") or "")
+        html = lambda body, headers=None: route.fulfill(status=200, content_type="text/html", body=body, headers=headers or {})
+        if request.method == "POST":
+            if "pw=right" in (request.post_data or ""):
+                html("<main><h1>Account</h1><a href='/orders'>Orders</a></main>", {"set-cookie": "sid=1; Path=/"})
+            else:
+                html(LOGIN.format(error='<p class="error">Wrong password</p>'))
+        elif path == "/":
+            html("<main><h1>Home</h1><a href='/account'>My account</a></main>")
+        elif path == "/account":
+            html("<main><h1>Account</h1><a href='/orders'>Orders</a></main>" if signed_in else LOGIN.format(error=""))
+        else:
+            html("<main><h1>Orders</h1></main>")
+
+
+def _crawl(site, on_page=None):
+    from website_test_pipeline.crawler import crawl
+    return crawl(site.page(), "https://fake.test/", 3, 20, on_page=on_page)
+
+
+def _creds(monkeypatch):
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "right")
+
+
+def test_without_the_hook_a_crawl_never_sees_the_area_behind_the_login(browser):
+    urls = _crawl(_GatedSite(browser))
+    assert "https://fake.test/account" in urls and "https://fake.test/orders" not in urls
+
+
+def test_the_crawl_signs_in_when_it_meets_a_wall_and_then_finds_what_is_behind_it(browser, tmp_path, monkeypatch):
+    from website_test_pipeline.authflow import wall_handler
+    _creds(monkeypatch)
+    settings = _settings(tmp_path)
+    urls = _crawl(_GatedSite(browser), wall_handler(settings, interactive=False))
+    assert "https://fake.test/orders" in urls
+    assert has_session(settings)                                             # kept for explore / verify / the tests
+
+
+def test_the_crawl_acts_once_and_never_when_a_login_was_already_handled_or_auth_is_off(browser, tmp_path, monkeypatch):
+    from website_test_pipeline.authflow import wall_handler
+    _creds(monkeypatch)
+    for kwargs, settings_over in (({"already_signed_in": True}, {}), ({}, {"auth_mode": "none"})):
+        folder = tmp_path / str(len(kwargs))
+        folder.mkdir()
+        settings = _settings(folder, **settings_over)
+        urls = _crawl(_GatedSite(browser), wall_handler(settings, interactive=False, **kwargs))
+        assert "https://fake.test/orders" not in urls and not has_session(settings)
+
+
+def test_a_wall_with_no_details_and_no_display_is_left_alone_and_the_crawl_carries_on(browser, tmp_path, monkeypatch):
+    from website_test_pipeline.authflow import wall_handler
+    for name in ("AUTH_FAKE_TEST_DEFAULT_EMAIL", "AUTH_FAKE_TEST_DEFAULT_PW"):
+        monkeypatch.delenv(name, raising=False)
+    settings = _settings(tmp_path)
+    urls = _crawl(_GatedSite(browser), wall_handler(settings, interactive=False))
+    assert "https://fake.test/account" in urls and "https://fake.test/orders" not in urls
+
+
+def test_a_failing_page_hook_never_stops_the_crawl():
+    from website_test_pipeline.crawler import crawl
+
+    class _Loc:
+        def evaluate_all(self, js): return []
+
+    class _P:
+        def __init__(self): self.gotos = []
+        def set_default_navigation_timeout(self, ms): pass
+        def goto(self, url, **kw): self.gotos.append(url)
+        def locator(self, sel): return _Loc()
+
+    page = _P()
+    assert crawl(page, "https://x.test/", 1, 5, on_page=lambda p, u: 1 / 0) == ["https://x.test/"]
+    page = _P()
+    crawl(page, "https://x.test/", 1, 5, on_page=lambda p, u: True)
+    assert page.gotos == ["https://x.test/", "https://x.test/"]              # True means: load it again, signed in

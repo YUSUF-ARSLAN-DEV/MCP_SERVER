@@ -9,12 +9,15 @@ def _same_origin(a: str, b: str) -> bool:
     return (pa.scheme.lower(), pa.netloc.lower()) == (pb.scheme.lower(), pb.netloc.lower())
 
 
-def crawl(page, seed: str, max_depth: int, max_pages: int, log=None, nav_timeout_ms: int | None = None) -> list[str]:
+def crawl(page, seed: str, max_depth: int, max_pages: int, log=None, nav_timeout_ms: int | None = None,
+          on_page=None) -> list[str]:
     """Breadth-first walk from ``seed``, following only same-origin links.
 
     Returns the discovered URLs in visit order (seed first), canonicalized and
     deduplicated, capped at ``max_pages``. Nodes are expanded while their depth is
     below ``max_depth``; a page that fails to load is skipped, not fatal.
+    ``on_page(page, url)`` is called after each page loads; when it returns True (it signed in) the page is loaded
+    again to see its logged-in links.
     """
     start = canonicalize(seed)
     if nav_timeout_ms:
@@ -30,6 +33,13 @@ def crawl(page, seed: str, max_depth: int, max_pages: int, log=None, nav_timeout
             if log:
                 log.warning("crawl: skipped %s (%s)", url, exc)
             continue
+        if on_page is not None:
+            try:
+                if on_page(page, url):
+                    page.goto(url, wait_until="domcontentloaded")
+            except Exception as exc:
+                if log:
+                    log.warning("crawl: page hook failed on %s (%s)", url, str(exc).splitlines()[0][:120])
         if depth >= max_depth:
             continue
         try:

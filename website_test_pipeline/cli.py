@@ -53,7 +53,7 @@ def main() -> int:
     for note in heuristics.configure(settings.heuristics_file):
         log.warning('heuristics: %s', note)
     pytest_env = {**os.environ, 'WTP_ARTIFACTS': str(settings.artifacts_dir)}
-    from .authflow import context_kwargs, ensure_session, has_session, landing_urls, preflight_session, session_path
+    from .authflow import context_kwargs, ensure_session, has_session, landing_urls, preflight_session, session_path, wall_handler
     if has_session(settings):
         pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
     if args.command == 'crawl':
@@ -62,12 +62,15 @@ def main() -> int:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=settings.headless)
             try:
+                signed_in = False
                 try:
-                    ensure_session(settings, browser, settings.seed_url, log)      # sign in first, so the crawl sees the logged-in area
+                    first = ensure_session(settings, browser, settings.seed_url, log)      # sign in first, so the crawl sees the logged-in area
+                    signed_in = first.status in {'signed-in-env', 'signed-in-popup', 'session-ok'}
                 except Exception as exc:
                     log.warning('auth: could not check for a login wall (%s)', str(exc).splitlines()[0][:150])
                 page = browser.new_context(**context_kwargs(settings)).new_page()
-                discovered = crawl(page, settings.seed_url, settings.crawl_max_depth, settings.crawl_max_pages, log, settings.navigation_timeout_ms)
+                discovered = crawl(page, settings.seed_url, settings.crawl_max_depth, settings.crawl_max_pages, log, settings.navigation_timeout_ms,
+                                   on_page=wall_handler(settings, log, already_signed_in=signed_in))   # a wall deeper in the site is signed in to as it is met
                 for landing in landing_urls(settings):                            # where a sign-in ends up is not linked from the public site
                     if landing not in discovered:
                         more = crawl(page, landing, settings.crawl_max_depth, settings.crawl_max_pages, log, settings.navigation_timeout_ms)
