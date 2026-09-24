@@ -289,3 +289,75 @@ def test_verify_exit_codes_for_empty_and_unmatched_selections(tmp_path):
     assert run_verify(settings, log, only=["zzz"]) == 2                # a reference that matches nothing is an error
     flows.write_text(json.dumps({"version": 1, "flows": []}), encoding="utf-8")
     assert run_verify(settings, log) == 2                              # no flows at all
+
+
+# ------------------------------------------------------------------ a journey that starts by signing in is judged on what came after
+
+def _signin_then_act_result(tail_effect="reveals", tail_controls=("button:Remove",)):
+    whole = {"effect": "navigates", "url": "https://x.test/inventory.html", "new_headings": [],       # the page title is not a heading
+             "new_controls": ["button:Add to cart"], "results": []}
+    tail = {"effect": tail_effect, "url": "https://x.test/inventory.html", "new_headings": [],
+            "new_controls": list(tail_controls), "results": []}
+    return {"ok": True, "steps_done": 4, "steps_total": 4, "error": None,
+            "step_effects": ["no-visible-change", "no-visible-change", "navigates", tail_effect],
+            "observed": whole, "tail": tail}
+
+
+def _act_flow(effect="results", goal="A visitor signs in, adds the backpack to the cart, and sees the cart updated."):
+    flow = _intent_flow(goal)
+    flow["outcome"] = {"effect": effect}
+    return flow
+
+
+def test_a_journey_that_signs_in_then_acts_is_judged_on_what_the_action_did():
+    flow = _act_flow("results")                       # predicted "results"; the whole journey only "navigated"
+    evaluation = apply_result(flow, _signin_then_act_result(), "now")
+    assert evaluation["passed"] is True and flow["status"] == "verified"
+    assert flow["observed"]["effect"] == "reveals" and flow["observed"]["new_controls"] == ["button:Remove"]
+    assert flow["observed"]["step_effects"][2] == "navigates"          # the sign-in navigation is still recorded per step
+    assert evaluation["checks"]["observed_effect"] == "reveals"
+
+
+def test_the_tail_never_rescues_a_journey_whose_action_changed_nothing():
+    flow = _act_flow("results")
+    result = _signin_then_act_result("no-visible-change", ())
+    evaluation = apply_result(flow, result, "now")
+    assert evaluation["passed"] is False and flow["status"] == "candidate" and "observed" not in flow
+
+
+def test_a_journey_that_already_matches_as_a_whole_is_judged_exactly_as_before():
+    flow = _act_flow("navigates", goal="A visitor signs in.")
+    flow["outcome"] = {"effect": "navigates", "to": "/inventory.html"}
+    evaluation = apply_result(flow, _signin_then_act_result(), "now")
+    assert evaluation["passed"] is True and flow["observed"]["effect"] == "navigates"      # the whole, not the tail
+
+
+def test_a_failed_run_is_never_rescued_by_its_tail():
+    result = _signin_then_act_result()
+    result.update(ok=False, error="step 4 failed")
+    assert apply_result(_act_flow("results"), result, "now")["passed"] is False
+
+
+def test_run_flow_records_the_part_after_the_last_navigation(monkeypatch):
+    from website_test_pipeline import runner
+
+    def snap(url, headings=(), controls=()):
+        return {"url": url, "headings": list(headings), "controls": list(controls), "results": []}
+
+    after = iter([snap("https://x.test/"),                                                # step 1: fill - nothing changes
+                  snap("https://x.test/inventory.html", ["Products"], ["button:Add"]),   # step 2: click Login - navigates
+                  snap("https://x.test/inventory.html", ["Products"], ["button:Add", "button:Remove"])])   # step 3: add
+    monkeypatch.setattr(runner, "settle_page", lambda p: None)
+    monkeypatch.setattr(runner, "dismiss_overlays", lambda p: None)
+    monkeypatch.setattr(runner, "take_snapshot", lambda p: snap("https://x.test/"))
+    monkeypatch.setattr(runner, "settled_snapshot", lambda p: next(after))
+    monkeypatch.setattr(runner, "_do_step", lambda page, step, seen=None: None)
+    page = type("P", (), {"goto": lambda self, *a, **k: None, "url": "https://x.test/inventory.html"})()
+    flow = {"id": "f", "start_url": "https://x.test/", "steps": [{"kind": "fill", "name": "a"}, {"kind": "click", "name": "Login"},
+                                                                 {"kind": "click", "name": "Add"}]}
+    result = runner.run_flow(page, flow)
+    assert result["observed"]["effect"] == "navigates"
+    assert result["tail"]["effect"] == "reveals" and result["tail"]["new_controls"] == ["button:Remove"]
+    only_one_navigation_at_the_end = {**flow, "steps": flow["steps"][:2]}
+    after = iter([snap("https://x.test/"), snap("https://x.test/inventory.html", ["Products"])])
+    assert "tail" not in runner.run_flow(page, only_one_navigation_at_the_end)    # the final step IS the navigation

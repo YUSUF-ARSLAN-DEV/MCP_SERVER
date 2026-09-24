@@ -150,14 +150,29 @@ def _apply_heals(flow: dict, heals: list[dict], now: str) -> None:
             flow.setdefault("heal_history", []).append({"at": now, **heal})
 
 
+def _tail_matches(predicted: dict, tail: dict) -> bool:
+    """The outcome after the journey's last navigation. Something appearing (a reveal) also satisfies a predicted
+    'results': a sentence like "adds it to the cart and sees the cart updated" is an in-page change, not a table."""
+    return outcome_matches(predicted, tail) or (predicted.get("effect") == "results" and tail.get("effect") == "reveals")
+
+
 def judge(flow: dict, result: dict) -> dict:
     """The verdict on one run, without recording anything: did every step run, did the outcome match the
-    prediction, did anything change, and - for a flow built from a sentence that promises content - was there any."""
+    prediction, did anything change, and - for a flow built from a sentence that promises content - was there any.
+
+    A journey that begins by navigating (signing in) is first judged as a whole, exactly as before. Only when the
+    whole does not match is the part AFTER its last navigation tried (result["tail"]), and if that is what matches,
+    it becomes the observation the flow is judged and recorded on - so "sign in, then add to cart" is judged on the
+    cart changing, not on the sign-in having navigated."""
     observed = result["observed"]
-    matched = bool(result["ok"] and outcome_matches(flow.get("outcome") or {}, observed))
+    predicted = flow.get("outcome") or {}
+    matched = bool(result["ok"] and outcome_matches(predicted, observed))
+    tail = result.get("tail")
+    if not matched and result["ok"] and tail and _tail_matches(predicted, tail):
+        matched, observed = True, tail
     changed = observed["effect"] != "no-visible-change"
     promised = sentence_expects_content(flow) and not content_shown(observed, flow)
-    return {"matched": matched, "changed": changed, "promised": promised,
+    return {"matched": matched, "changed": changed, "promised": promised, "observed_used": observed,
             "passed": bool(result["ok"] and matched and changed and not promised)}
 
 
@@ -170,8 +185,8 @@ def apply_result(flow: dict, result: dict, now: str) -> dict:
     with no real evidence behind it. Freezing "observed" at the last passing run means a tolerated
     failure changes nothing about what the generated test proves; only an actual pass updates the
     evidence, and a flow that has never passed still has none (flowgen already refuses to emit for it)."""
-    observed = result["observed"]
     verdict = judge(flow, result)
+    observed = verdict["observed_used"]
     matched, changed, promised, passed = verdict["matched"], verdict["changed"], verdict["promised"], verdict["passed"]
     heals = result.get("heals") or []
     if passed:
@@ -432,6 +447,7 @@ def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | N
         result["observed"] = classify(diff_snapshots(_empty(flow), _empty(flow)))
         return result
     first = previous = take_snapshot(page)
+    nav_anchor = None      # the page after the last navigating step that was not the final one (e.g. a sign-in)
     result["landed_url"] = first["url"]  # where the start URL really ended up (it may redirect)
     for index, step in enumerate(steps):
         seen: dict = {}
@@ -466,12 +482,17 @@ def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | N
                                    f'{hop_hint(step, index, page.url)}')
                 break
         current = settled_snapshot(page)
-        result["step_effects"].append(classify(diff_snapshots(previous, current))["effect"])
+        effect = classify(diff_snapshots(previous, current))["effect"]
+        result["step_effects"].append(effect)
+        if effect == "navigates" and index < len(steps) - 1:
+            nav_anchor = current
         result["step_urls"].append(current["url"])
         result["steps_done"] += 1
         previous = current
     result["ok"] = result["steps_done"] == len(steps) and not result["error"]
     result["observed"] = classify(diff_snapshots(first, previous))
+    if result["ok"] and nav_anchor is not None:
+        result["tail"] = classify(diff_snapshots(nav_anchor, previous))      # what the journey did AFTER it got there
     return result
 
 
