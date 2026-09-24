@@ -1,6 +1,6 @@
 # Credential popup - design
 
-Status: proposal (approved in principle, nothing built yet).
+Status: step 1 built (login-wall detection); steps 2-7 proposed.
 
 ## Problem
 
@@ -31,39 +31,57 @@ Non-goals (v1): CAPTCHA/2FA solving, storing passwords, live video, headless CI 
 - **Opt-in.** Off unless enabled. Headless/CI runs skip the popup and say so, as `flows run` already does for
   outages.
 
+## Two phases
+
+The popup appears in exactly two situations, and credentials stay out of every generated file in both.
+
+**Phase 1 - exploration.** The explorer cannot see anything behind a login wall, so this is where the popup is
+needed. It mirrors the agent's view, guides the user through each field, logs in, and then persists two things
+(both git-ignored, both outside the report and the model prompt):
+- the logged-in session: Playwright `storage_state` at `runs/<site>/auth/state.json`;
+- optionally (user opts in, off by default): the credentials as `.env` variables (`SITE_USER`, `SITE_PASSWORD`
+  style names, one pair per site), so the session can be renewed without asking again.
+The explorer then continues past the wall using that session.
+
+**Phase 2 - test time.** Generated specs load the saved session and never contain a credential. If the session
+has expired, the spec/runner re-logs in from the environment variable NAMES (`os.environ[...]`), never the values.
+Only if that also fails, and the run is interactive, does the popup return; unattended runs mark the login
+"needs attention" and continue.
+
 ## Steps
 
-### 1. Detect a login wall
-In `explorer.py`, while recording a page, flag a `login` region when the page has a visible
-`input[type=password]` (or `autocomplete=current-password`) inside a form. Record the fields (label, type,
-required) on `PageInventory` as `auth`. Also flag when a navigation lands on a page that redirects to such a form.
+### 1. Detect a login wall  (DONE, commit 86c696d)
+`explorer._detect_auth` records visible, non-readonly password fields and their sibling fields as
+`PageInventory.auth`; the report lists each wall under "Not tested".
 
 ### 2. Decide whether to ask
-New setting `INTERACTIVE_AUTH` (default false). Ask only when: enabled, a display is available, and
-`headless` is off for that session. Otherwise record "login wall not tested" as an untested area in the report.
+New setting `INTERACTIVE_AUTH` (default false). Ask only when enabled, a display is available, and the browser is
+headed for that session. Otherwise the wall stays in the report as "not tested".
 
-### 3. The popup
-A small local window (start with a Tk or pywebview window; no server needed) with three parts:
-- **Mirror:** a screenshot of the agent's current page, refreshed every ~1s (`page.screenshot`). Live video is
-  out of scope.
+### 3. The popup (phase 1)
+A small local window (start with Tk or pywebview; no server) with:
+- **Mirror:** a screenshot of the agent's current page, refreshed about once a second. No live video.
 - **Form:** one input per detected field, masked for password types.
-- **Guidance:** a plain-language line per field from its own label, e.g. "Email you use to sign in", plus a note
-  on what the agent will do next ("I will submit this form and check that you are signed in").
-Time-limited: a visible countdown; on timeout the run continues and marks the login as skipped.
+- **Guidance:** a plain-language line per field from the page's own label, plus what the agent will do next.
+- **Save choices:** a checkbox "remember these in .env" (default off).
+Time-limited with a visible countdown; on timeout the run continues and the login is marked skipped.
 
-### 4. Fill and confirm
-Fill each field with `page.fill`, submit, then judge the outcome from observable signals (password field gone,
-URL changed, error region appeared, a logout control appeared) - not by guessing.
+### 4. Fill, confirm, persist
+Fill with `page.fill`, submit, judge success from observable signals (password field gone, URL changed, error
+region appeared, a logout control appeared). On success write `storage_state`, then make sure it is ignored:
+run `git check-ignore` on the file and, if it is not ignored, append its path to `.gitignore` before writing it.
+If the user opted in, write the `.env` variables (same check for `.env`).
 
-### 5. Reuse the session
-On success, save Playwright `storage_state` to `runs/<site>/auth/state.json` (git-ignored) so later runs start
-logged in and never open the popup. On the next run, if that state no longer works, ask again.
+### 5. Reuse the session (phase 2)
+Runner and generated specs start from `storage_state`. A cheap probe on start (is the login form still shown?)
+decides whether the session is alive; if not, re-login from env names, then fall back to the popup if interactive.
 
 ### 6. Let flows use it
-Relax the "no credentials" guard in `intents.py`/`documents.py` only when a saved session exists, so journeys
-past the login can be proposed, expanded, verified and turned into tests like any other flow.
+Relax the "no credentials" guard in `intents.py` / `documents.py` only when a working session exists, so journeys
+past the login are proposed, verified and turned into tests like any other flow. Generated specs reference env
+var names only.
 
-### 7. Retries (phase 2)
+### 7. Retries (phase 2 of the roadmap)
 Record per attempt: `first_try_ok`, `attempts`, `failure_signal`. The popup shows the site's own error text and
 lets the user retry. The report gets an "Authentication" line ("signed in on first attempt" / "needed 2
 attempts") and a finding when a login never succeeds.
@@ -72,14 +90,16 @@ attempts") and a finding when a login never succeeds.
 
 - **Secrets leaking into artifacts.** Screenshots of a filled form can contain typed text: mask password fields
   in the mirror and never screenshot after values are typed.
-- **Saved session is a credential.** Keep it out of git and out of the Word report; document how to delete it.
+- **The session file and `.env` are secrets on disk.** `.gitignore` covers `auth/`, `*.storage_state.json` and
+  `.env`; code re-checks before writing; neither goes in the Word report or the model prompt; document how to
+  delete them.
 - **Sites that block automation** (bot detection, CAPTCHA). Detect and report as "could not test", never fail
   the run.
 - **Unattended runs.** Must never hang waiting for input: the timeout and headless skip are mandatory.
 
 ## Suggested commit order
 
-1. Detect + record `auth` in the inventory, and show "login wall found, not tested" in the report (no popup yet).
+1. DONE - detect + record `auth`, show "not tested" in the report.
 2. `INTERACTIVE_AUTH` setting + popup with mirror and guided form.
 3. Fill, confirm, and saved session state.
 4. Unblock flow generation behind a saved session.
