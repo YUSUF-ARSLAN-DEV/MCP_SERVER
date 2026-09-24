@@ -45,6 +45,10 @@ class Settings:
     auth_mode: str = field(default_factory=lambda: _choice("AUTH_MODE", "auto", ("auto", "none")))
     # which login to use when a site has more than one (admin / customer ...); names the saved session and .env keys
     auth_account: str = field(default_factory=lambda: (os.getenv("AUTH_ACCOUNT", "default").strip() or "default").lower())
+    # "off" sends enable_thinking=false (right for non-reasoning models like qwen3-coder); "default" sends nothing,
+    # which is what a reasoning model such as GLM needs to keep its reasoning out of the reply text
+    model_thinking: str = field(default_factory=lambda: _choice("MODEL_THINKING", "off", ("off", "default")))
+    model_max_tokens: int = field(default_factory=lambda: _int("MODEL_MAX_TOKENS", 3072, 256, 65536))
     model_timeout_ms: int = field(default_factory=lambda: _int("MODEL_TIMEOUT_MS", 300000, 1000, 900000))
     model_retries: int = field(default_factory=lambda: _int("MODEL_RETRIES", 4, 0, 10))
     retry_base_ms: int = field(default_factory=lambda: _int("RETRY_BASE_MS", 3000, 100, 120000))

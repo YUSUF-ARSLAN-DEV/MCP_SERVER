@@ -45,7 +45,7 @@ class ModelClient:
         model; a server that does not accept images answers 400/415/422, which callers treat as "no vision"."""
         if not self.s.api_key and self.s.api_url.startswith("https://llm-1.d4done.com"):
             raise ModelError("API_KEY is required for the configured model endpoint")
-        payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt if not images else [{"type":"text","text":prompt}, *({"type":"image_url","image_url":{"url":u}} for u in images)]}], "temperature": 0.1, "max_tokens": 3072, "stream": False, "chat_template_kwargs": {"enable_thinking": False}}).encode()
+        payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt if not images else [{"type":"text","text":prompt}, *({"type":"image_url","image_url":{"url":u}} for u in images)]}], "temperature": 0.1, "max_tokens": getattr(self.s, "model_max_tokens", 3072), "stream": False, **({"chat_template_kwargs": {"enable_thinking": False}} if getattr(self.s, "model_thinking", "off") == "off" else {})}).encode()
         for attempt in range(1, self.s.model_retries + 2):
             request_id = uuid.uuid4().hex[:10]; started = time.monotonic()
             req = urllib.request.Request(self.s.api_url, data=payload, headers={"Content-Type":"application/json", "User-Agent":"website-test-pipeline/0.1", **({"Authorization": f"Bearer {self.s.api_key}"} if self.s.api_key else {})})
@@ -65,6 +65,9 @@ class ModelClient:
                     raise ModelError("Model returned reasoning without final content", body=raw[:1000])
                 if isinstance(content, list): content = "".join(x if isinstance(x, str) else x.get("text", "") for x in content)
                 if not isinstance(content, str) or not content.strip(): raise ModelError(f"Model response had no usable content; keys={','.join(data.keys())}", body=raw[:1000])
+                if "</think>" in content:
+                    content = content.split("</think>", 1)[1]          # reasoning that leaked into the reply
+                if not content.strip(): raise ModelError("Model reply held only reasoning", body=raw[:1000])
                 return content
             except urllib.error.HTTPError as exc:
                 body = exc.read().decode("utf-8", "replace")[:1000]
