@@ -572,6 +572,61 @@ def _repair_map_settle(source: str, inventory) -> tuple[str, int]:
     return source, count
 
 
+_ICON_GLYPHS = r"[\ue000-\uf8ff\s]*"      # private-use codepoints: icon fonts (Font Awesome, ...) and whitespace
+
+
+def _known_control_names(inventory) -> set[str]:
+    names: set[str] = set()
+    groups = [getattr(inventory, "controls", None) or []]
+    for entry in getattr(inventory, "revealed", None) or []:
+        groups.append(entry.get("controls") or [])
+    for group in groups:
+        for control in group:
+            if control.get("name"):
+                names.add(str(control["name"]))
+    return names
+
+
+def _repair_icon_glyph_names(source: str, inventory) -> tuple[str, int]:
+    """A button drawn as `<i class="fa fa-sign-in"> Login</i>` has the accessible name "<icon glyph> Login", so
+    get_by_role('button', name='Login', exact=True) matches nothing. Rewrite the name of an exact match on a control
+    the explorer really saw into a regex that also allows the icon glyph and spaces around it. Only names present in
+    the inventory are touched, so a hallucinated name is still caught by the validator."""
+    known = _known_control_names(inventory)
+    if not known:
+        return source, 0
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source, 0
+    edits = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get_by_role"):
+            continue
+        keywords = {k.arg: k.value for k in node.keywords}
+        exact, name = keywords.get("exact"), keywords.get("name")
+        if not (isinstance(exact, ast.Constant) and exact.value is True
+                and isinstance(name, ast.Constant) and isinstance(name.value, str) and name.value in known
+                and '"' not in name.value and "\n" not in name.value):
+            continue
+        edits.append((name.lineno, name.col_offset, name.end_lineno, name.end_col_offset, name.value))
+    if not edits:
+        return source, 0
+    lines = source.splitlines(keepends=True)
+    offsets = [0]
+    for line in lines:
+        offsets.append(offsets[-1] + len(line.encode("utf-8")))
+    raw = source.encode("utf-8")
+    for l1, c1, l2, c2, value in sorted(edits, reverse=True):
+        start, end = offsets[l1 - 1] + c1, offsets[l2 - 1] + c2
+        pattern = "^" + _ICON_GLYPHS + re.escape(value) + _ICON_GLYPHS + "$"
+        raw = raw[:start] + f're.compile(r"{pattern}")'.encode("utf-8") + raw[end:]
+    updated = raw.decode("utf-8")
+    if not re.search(r"^\s*import re\b|^\s*from re import", updated, re.M):
+        updated = "import re\n" + updated
+    return updated, len(edits)
+
+
 def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
     """Return (possibly rewritten source, list of human-readable repairs applied).
     On any parse failure of the rewritten source, return the original untouched."""
@@ -596,6 +651,9 @@ def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
         source, n = _repair_missing_first(source, inventory)
         if n:
             applied.append(f"added .first to {n} strict-mode locator(s)")
+        source, n = _repair_icon_glyph_names(source, inventory)
+        if n:
+            applied.append(f"made {n} exact role name(s) tolerant of icon-font glyphs")
         source, n = _repair_multiselect_option_click(source)
         if n:
             applied.append(f"retargeted {n} multiselect-option click(s) to the visible <label>")

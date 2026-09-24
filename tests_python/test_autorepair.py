@@ -92,8 +92,8 @@ def test_adds_first_to_ambiguous_role_name_assignment():
            '    nxt = page.get_by_role("button", name="Next", exact=True)\n'
            '    observation_evidence(page, "n", lambda: expect(nxt).to_be_visible(), evidence_dir)\n')
     out, applied = repair_spec(src, _amb_inv())
-    assert 'name="Next", exact=True).first' in out
-    assert applied and ".first" in applied[-1]
+    assert 'exact=True).first' in out
+    assert any(".first" in a for a in applied)
     validate_python_spec(out, 'https://example.test', _amb_inv())
 
 def test_adds_first_to_name_attr_locator():
@@ -110,7 +110,8 @@ def test_does_not_double_up_first():
            '    nxt = page.get_by_role("button", name="Next", exact=True).first\n'
            '    observation_evidence(page, "n", lambda: expect(nxt).to_be_visible(), evidence_dir)\n')
     out, applied = repair_spec(src, _amb_inv())
-    assert out == src and applied == []
+    assert out.count(".first") == src.count(".first") and ".first.first" not in out
+    assert not any(".first" in a for a in applied)
 
 def test_does_not_double_up_first_with_non_ascii_name():
     # ast col_offsets are utf-8 byte offsets; the "already has .first?" check must
@@ -123,7 +124,7 @@ def test_does_not_double_up_first_with_non_ascii_name():
            '    nxt = page.get_by_role("button", name="التالي", exact=True).first\n'
            '    observation_evidence(page, "n", lambda: expect(nxt).to_be_visible(), evidence_dir)\n')
     out, applied = repair_spec(src, inv)
-    assert out == src and applied == []
+    assert out.count(".first") == src.count(".first") and not any(".first" in a for a in applied)
     assert ".first.first" not in out
 
 def test_adds_first_before_click_chain():
@@ -133,7 +134,7 @@ def test_adds_first_before_click_chain():
            '        page.get_by_role("button", name="Next", exact=True).click()\n'
            '    action_evidence(page, "n", act, lambda: expect(page).to_have_url(re.compile(r"/x")), evidence_dir)\n')
     out, _ = repair_spec(src, _amb_inv())
-    assert 'name="Next", exact=True).first.click()' in out
+    assert 'exact=True).first.click()' in out
 
 
 # ----------------------------------------------- opaque <select> value assertions
@@ -466,3 +467,28 @@ def test_output_always_parses():
     out, applied = repair_spec(src)
     assert applied
     assert _parses(out)
+
+
+# ------------------------------------------------------------------ icon-font glyphs in accessible names
+
+def test_an_exact_button_name_tolerates_an_icon_font_glyph_and_really_matches_it():
+    import re as _re
+    from types import SimpleNamespace
+    inv = SimpleNamespace(controls=[{"name": "Login", "tag": "button"}], revealed=[])
+    source = ('import re\n'
+              'def test_x(page):\n'
+              '    page.get_by_role("button", name="Login", exact=True).click()\n'
+              '    page.get_by_role("button", name="Made Up", exact=True).click()\n')
+    fixed, applied = repair_spec(source, inv)
+    assert any("icon-font" in a for a in applied)
+    assert 'name="Made Up", exact=True' in fixed                    # not in the inventory: left for the validator
+    pattern = _re.search(r'name=re\.compile\(r"([^"]+)"\)', fixed).group(1)
+    assert _re.search(pattern, "\uf090 Login") and _re.search(pattern, "Login") and not _re.search(pattern, "Login now")
+    compile(fixed, "<spec>", "exec")
+
+
+def test_the_icon_glyph_repair_adds_the_re_import_when_the_spec_lacks_it():
+    from types import SimpleNamespace
+    inv = SimpleNamespace(controls=[{"name": "Search", "tag": "button"}], revealed=[])
+    fixed, _ = repair_spec('def test_x(page):\n    page.get_by_role("button", name="Search", exact=True).click()\n', inv)
+    assert fixed.startswith("import re\n")
