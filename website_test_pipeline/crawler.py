@@ -43,6 +43,13 @@ def crawl(page, seed: str, max_depth: int, max_pages: int, log=None, nav_timeout
         if depth >= max_depth:
             continue
         try:
+            # a client-rendered page (Vue/React/Angular) has no links in the DOM right after domcontentloaded -
+            # give its own network activity a bounded chance to settle before reading links, so a hydrated
+            # sidebar/nav is not missed. A no-op on a plain server-rendered page (already idle).
+            page.wait_for_load_state("networkidle", timeout=2500)
+        except Exception:
+            pass
+        try:
             hrefs = page.locator("a[href]").evaluate_all("els => els.map(e => e.href)")
         except Exception:
             hrefs = []
