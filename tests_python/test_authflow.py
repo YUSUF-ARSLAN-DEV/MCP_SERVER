@@ -454,3 +454,27 @@ def test_skipping_the_popup_outright_records_nothing(browser, tmp_path, monkeypa
     settings = _settings(tmp_path)
     ensure_session(settings, _Routed(browser), URL, ask=lambda r, s: None, interactive=True)
     assert auth_history(settings) == []
+
+
+def test_detect_auth_waits_for_a_login_form_that_renders_after_navigation(browser):
+    from website_test_pipeline.explorer import _detect_auth
+    page = browser.new_page()
+    page.set_content("<main><h1>Loading...</h1></main>")
+    page.evaluate("""() => {
+        setTimeout(() => {
+            document.querySelector('main').innerHTML =
+                '<form><input name="email" type="text"><input name="pw" type="password"></form>';
+        }, 800);
+    }""")
+    walls = _detect_auth(page, "https://x.test/")
+    assert len(walls) == 1 and walls[0]["kind"] == "login"
+
+
+def test_detect_auth_does_not_hang_forever_on_a_page_with_no_login(browser):
+    import time
+    from website_test_pipeline.explorer import _detect_auth
+    page = browser.new_page()
+    page.set_content("<main><h1>Public page</h1></main>")
+    start = time.monotonic()
+    assert _detect_auth(page, "https://x.test/") == []
+    assert time.monotonic() - start < 5

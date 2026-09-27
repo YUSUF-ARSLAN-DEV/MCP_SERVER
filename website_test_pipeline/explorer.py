@@ -263,6 +263,13 @@ def _shape_auth(raw: list[dict]) -> list[dict]:
 
 def _detect_auth(page, url: str, log=None) -> list[dict]:
     try:
+        # a client-rendered login form (Vue/React/Angular) is not in the DOM right after navigation - give it a
+        # bounded chance to appear before concluding there is no wall. A no-op when a password field is already
+        # there (the common case) or never appears (a public page, no wait wasted beyond the timeout).
+        try:
+            page.wait_for_selector('input[type="password"]', timeout=3000, state="attached")
+        except Exception:
+            pass
         walls = _shape_auth(page.locator('input[type="password"]').evaluate_all(_AUTH_JS))
     except Exception as exc:
         if log:
