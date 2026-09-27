@@ -28,6 +28,7 @@ pages the run already captured, regardless of pass/fail:
 """
 from __future__ import annotations
 import ast
+import json
 import platform
 import re
 import sys
@@ -35,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 SEVERITIES = ("P1", "P2")          # P1: a user journey (flow) is broken or unproven; P2: a page-level check
-KINDS = ("test_defect", "flaky_data", "unclear", "capture_corruption", "localization_mismatch")
+KINDS = ("test_defect", "flaky_data", "unclear", "capture_corruption", "localization_mismatch", "auth_failure")
 FLAP_WINDOW = 6                     # how many recent real executions are looked at per test/flow
 
 
@@ -345,6 +346,64 @@ def untested_auth(inventories: list[dict]) -> list[dict]:
                                    for f in wall.get("fields") or []]})
     return sorted(out, key=lambda w: w["url"])
 
+
+# ------------------------------------------------------------------ login history (step 7)
+
+def load_auth_history(artifacts_dir: Path) -> list[dict]:
+    path = artifacts_dir / "auth_history.json"
+    if not path.is_file():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def auth_summary_lines(history: list[dict]) -> list[str]:
+    """One line per account that attempted a login this run, in the order first seen: whether it signed in, and on
+    which attempt - the report's honest answer to "did the login work first time?"."""
+    order: list[str] = []
+    last_ok: dict[str, dict] = {}
+    ever_ok: set[str] = set()
+    for row in history:
+        account = row.get("account", "default")
+        if account not in order:
+            order.append(account)
+        if str(row.get("status", "")).startswith("signed-in"):
+            ever_ok.add(account)
+            last_ok[account] = row
+    lines = []
+    for account in order:
+        label = f"'{account}'" if account != "default" or len(order) > 1 else "the site"
+        if account in ever_ok:
+            attempts = last_ok[account].get("attempts", 1)
+            when = "on the first attempt" if attempts == 1 else f"after {attempts} attempts"
+            lines.append(f"Signed in to {label} {when} ({last_ok[account].get('method', '?')}).")
+        else:
+            lines.append(f"Could not sign in to {label} - see the finding below.")
+    return lines
+
+
+def auth_failure_findings(history: list[dict]) -> list[Finding]:
+    """A P1 finding for each account that never once signed in this run - not a single failed attempt (that is
+    retried automatically), but every recorded attempt for the account failed or was skipped."""
+    by_account: dict[str, list[dict]] = {}
+    for row in history:
+        by_account.setdefault(row.get("account", "default"), []).append(row)
+    findings = []
+    for account, rows in by_account.items():
+        if any(str(r.get("status", "")).startswith("signed-in") for r in rows):
+            continue
+        last = rows[-1]
+        url = last.get("url") or ""
+        attempts = sum(r.get("attempts", 1) for r in rows)
+        error = last.get("error") or "no further detail recorded"
+        findings.append(Finding(
+            test=f"login: {account}", scope="page", url=url, severity="P1", kind="auth_failure",
+            summary=f"the login for account '{account}' never succeeded this run ({last.get('status')}: {error})",
+            repro=f"open {url or 'the login page'} and try the account '{account}' by hand ({attempts} attempt(s) recorded)",
+            next_action="check the .env details for this account are current, or run `auth` to sign in by hand"))
+    return findings
 
 # ------------------------------------------------------------------ environment
 

@@ -7,10 +7,12 @@ written to .env only if the person asked for that. Typed values go straight into
 See docs/CREDENTIAL_POPUP_DESIGN.md.
 """
 from __future__ import annotations
+import json
 import os
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .authpopup import AuthAnswer, AuthRequest, ask_credentials, field_key, is_interactive, should_ask
@@ -44,6 +46,42 @@ class AuthOutcome:
     error_text: str = ""                          # the site's own error message, if one showed
     url_after: str = ""
     attempts: int = 1
+
+
+# ------------------------------------------------------------------ login history (step 7)
+
+MAX_HISTORY = 50
+
+
+def auth_history_path(settings) -> Path:
+    return settings.workspace / "artifacts" / "auth_history.json"
+
+
+def auth_history(settings) -> list[dict]:
+    path = auth_history_path(settings)
+    if not path.is_file():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def record_auth_attempt(settings, account: str, method: str, status: str, attempts: int, url: str = "", error: str = "") -> None:
+    """One row per sign-in attempt (env or popup), for the report's Authentication line and finding. Never a
+    credential - only the outcome and, for a failure, the site's own error text (already public on the login page)."""
+    if not hasattr(settings, "workspace"):
+        return
+    path = auth_history_path(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = auth_history(settings)
+    rows.append({
+        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "account": account, "method": method, "status": status, "attempts": attempts, "url": url,
+        "first_try_ok": status.startswith("signed-in") and attempts == 1,
+        "error": error[:300],
+    })
+    path.write_text(json.dumps(rows[-MAX_HISTORY:], indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _fill(page, group: int, index: int, fld: dict, value: str) -> None:
@@ -211,7 +249,8 @@ def _say(log, message: str) -> None:
 def sign_in_on_page(settings, context, page, walls: list[dict], url: str, had_session: bool, log=None,
                     ask=ask_credentials, interactive: bool | None = None) -> SessionResult:
     """The sign-in sequence on a page that is ALREADY showing a login wall: .env details, then (interactive runs only)
-    the popup, else leave it untested and say which .env names to fill in. On success the context is signed in."""
+    the popup, else leave it untested and say which .env names to fill in. On success the context is signed in.
+    Every attempt (env or popup, success or failure) is appended to the login history (step 7)."""
     from .explorer import _detect_auth
     account = _account(settings)
     wall = walls[0]
@@ -222,9 +261,11 @@ def sign_in_on_page(settings, context, page, walls: list[dict], url: str, had_se
             save_session(context, settings)
             save_landing(settings, outcome.url_after, url)
             _say(log, f"signed in as '{account}' from .env; session saved")
+            record_auth_attempt(settings, account, "env", "signed-in-env", 1, url)
             return SessionResult("signed-in-env")
         _say(log, f"the details in .env for '{account}' were refused"
                   + (f' (the site says "{outcome.error_text}")' if outcome.error_text else ""))
+        record_auth_attempt(settings, account, "env", "failed", 1, url, outcome.error_text or "refused")
         page.goto(url, timeout=settings.navigation_timeout_ms)
         walls = _detect_auth(page, url, log)
         if not walls:
@@ -242,13 +283,16 @@ def sign_in_on_page(settings, context, page, walls: list[dict], url: str, had_se
         return SessionResult("not-tested", reason)
     outcome, answer = authenticate_wall(page, wall, url, ask=ask, log=log)
     if answer is None:
-        return SessionResult("skipped" if outcome is None else "failed",
-                             "" if outcome is None else f"gave up after {outcome.attempts} attempts")
+        status = "skipped" if outcome is None else "failed"
+        if outcome is not None:
+            record_auth_attempt(settings, account, "popup", status, outcome.attempts, url, outcome.error_text or "gave up")
+        return SessionResult(status, "" if outcome is None else f"gave up after {outcome.attempts} attempts")
     save_session(context, settings)
     save_landing(settings, outcome.url_after, url)
     if answer.remember:
         names = remember_credentials(settings.root / ".env", settings.root, settings.site, wall, answer, account)
         _say(log, "remembered in .env as: " + ", ".join(names))
+    record_auth_attempt(settings, account, "popup", "signed-in-popup", outcome.attempts, url)
     return SessionResult("signed-in-popup", f"attempt {outcome.attempts}")
 
 

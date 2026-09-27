@@ -180,3 +180,32 @@ def test_no_login_wall_means_no_not_tested_block(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     assert "Not tested -" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+def test_the_report_shows_the_authentication_line_and_a_finding_when_login_never_worked(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    (artifacts / "auth_history.json").write_text(json.dumps([
+        {"account": "default", "method": "popup", "status": "failed", "attempts": 3, "url": "https://x.test/login",
+         "error": "Wrong password"},
+    ]), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Authentication:" in joined and "Could not sign in to the site" in joined
+    assert "auth_failure" in joined and "login: default" in joined
+
+
+def test_the_report_shows_a_first_attempt_line_when_the_login_worked(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    (artifacts / "auth_history.json").write_text(json.dumps([
+        {"account": "default", "method": "env", "status": "signed-in-env", "attempts": 1, "url": "https://x.test/login"},
+    ]), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Signed in to the site on the first attempt (env)." in joined
+    assert "login: default" not in joined                    # no auth_failure finding when it worked
+
+
+def test_no_auth_history_means_no_authentication_line(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    assert "Authentication:" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))

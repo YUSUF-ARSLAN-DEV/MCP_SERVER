@@ -23,7 +23,10 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from .coverage import Coverage, compute_coverage
-from .findings import Finding, FlapRecord, collect_findings, detect_flapping, environment_block, untested_auth
+from .findings import (
+    Finding, FlapRecord, auth_failure_findings, auth_summary_lines, collect_findings, detect_flapping,
+    environment_block, load_auth_history, untested_auth,
+)
 from .flowgen import file_name as flow_spec_name
 from .flowreport import FlowReport, build_flow_report
 from .flows import FlowsFileError, load_flows
@@ -112,6 +115,7 @@ class RunReport:
     coverage: Coverage | None = None                               # what the tested flows touch; None when there are no flows
     findings: list[Finding] = field(default_factory=list)          # triaged failures: severity, kind, one-line reason
     untested_auth: list[dict] = field(default_factory=list)        # login / sign-up walls the run could not pass
+    auth_lines: list[str] = field(default_factory=list)            # one line per account: signed in, and on which attempt
     flapping: list[FlapRecord] = field(default_factory=list)       # flows/tests whose recent runs mix pass and fail
 
     @property
@@ -327,6 +331,9 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
     names = {f["id"]: (f.get("goal") or f["id"]) for f in flows_list}
     run.flapping = detect_flapping(ratings, names)
     run.untested_auth = untested_auth(inventories)
+    auth_history = load_auth_history(artifacts_dir)
+    run.auth_lines = auth_summary_lines(auth_history)
+    run.findings = auth_failure_findings(auth_history) + run.findings
     return run
 
 
@@ -655,6 +662,10 @@ def _findings_section(document, run: RunReport) -> None:
     document.add_heading("Findings", 1)
     env = environment_block(run)
     document.add_paragraph(" | ".join(f"{k}: {v}" for k, v in env.items()))
+    if run.auth_lines:
+        para = document.add_paragraph()
+        para.add_run("Authentication: ").bold = True
+        para.add_run(" ".join(run.auth_lines))
     if run.coverage and run.coverage.pages:
         cov = run.coverage
         para = document.add_paragraph()
@@ -700,7 +711,8 @@ def _findings_section(document, run: RunReport) -> None:
                            "(a real data-integrity bug, in the pipeline or the source page - not a guess); "
                            "localization_mismatch means a page's declared writing direction does not match "
                            "what its own captured text actually is, or a flow silently changed script "
-                           "partway through; unclear means it could not be classified automatically - read "
+                           "partway through; auth_failure means the login never succeeded this run - the details "
+                           "in .env may be stale; unclear means it could not be classified automatically - read "
                            "the trace.")
     table = _grid(document, ("Sev", "Kind", "Test", "Summary", "Next action"))
     for finding in run.findings:

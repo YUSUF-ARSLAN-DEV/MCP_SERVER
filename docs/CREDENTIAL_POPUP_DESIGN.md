@@ -1,7 +1,8 @@
 # Credential popup - design
 
-Status: steps 1-6 built (detect, AUTH_MODE, popup, fill/confirm/save session, session -> .env -> popup order with
-accounts - try it with `python -m website_test_pipeline.cli auth <url> [--account NAME]`); step 7 proposed.
+Status: all 7 steps built (detect, AUTH_MODE, popup, fill/confirm/save session, session -> .env -> popup order with
+accounts, sign-in journeys, retry history in the report - try it with
+`python -m website_test_pipeline.cli auth <url> [--account NAME]`).
 
 ## Problem
 
@@ -136,10 +137,14 @@ Relax the "no credentials" guard in `intents.py` / `documents.py` only when a wo
 past the login are proposed, verified and turned into tests like any other flow. Generated specs reference env
 var names only.
 
-### 7. Retries (phase 2 of the roadmap)
-Record per attempt: `first_try_ok`, `attempts`, `failure_signal`. The popup shows the site's own error text and
-lets the user retry. The report gets an "Authentication" line ("signed in on first attempt" / "needed 2
-attempts") and a finding when a login never succeeds.
+### 7. Retries and the report  (DONE - `authflow.record_auth_attempt`, `findings.auth_summary_lines` /
+`auth_failure_findings`)
+Every sign-in attempt this run (`.env` or popup, success or failure) is appended to
+`runs/<site>/artifacts/auth_history.json` (git-ignored with the rest of `runs/`; never a credential - account,
+method, status, attempts, url, and the site's own error text). The popup already shows that error text and lets
+the person retry (step 4). The report's Findings section gets one "Authentication:" line per account ("signed in
+on the first attempt (env)" / "needed 3 attempts (popup)"), and a P1 `auth_failure` finding when an account never
+once signed in this run, distinct from a single tolerated failure.
 
 ## Risks
 

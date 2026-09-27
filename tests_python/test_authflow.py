@@ -400,3 +400,57 @@ def test_a_failing_page_hook_never_stops_the_crawl():
     page = _P()
     crawl(page, "https://x.test/", 1, 5, on_page=lambda p, u: True)
     assert page.gotos == ["https://x.test/", "https://x.test/"]              # True means: load it again, signed in
+
+
+# ------------------------------------------------------------------ login history (step 7)
+
+def test_record_auth_attempt_writes_a_row_with_no_credential_in_it(tmp_path):
+    from website_test_pipeline.authflow import auth_history, record_auth_attempt
+    settings = SimpleNamespace(workspace=tmp_path / "w")
+    record_auth_attempt(settings, "default", "env", "signed-in-env", 1, "https://x.test/login")
+    record_auth_attempt(settings, "default", "popup", "failed", 3, "https://x.test/login", "Wrong password")
+    rows = auth_history(settings)
+    assert len(rows) == 2
+    assert rows[0]["first_try_ok"] is True and rows[1]["first_try_ok"] is False
+    assert rows[1]["attempts"] == 3 and rows[1]["error"] == "Wrong password"
+    assert "pw" not in str(rows) and "secret" not in str(rows).lower()
+
+
+def test_record_auth_attempt_caps_history_and_does_nothing_without_a_workspace(tmp_path):
+    from website_test_pipeline.authflow import MAX_HISTORY, auth_history, record_auth_attempt
+    settings = SimpleNamespace(workspace=tmp_path / "w")
+    for i in range(MAX_HISTORY + 5):
+        record_auth_attempt(settings, "default", "env", "signed-in-env", 1)
+    assert len(auth_history(settings)) == MAX_HISTORY
+    record_auth_attempt(SimpleNamespace(), "default", "env", "signed-in-env", 1)      # no crash, nothing written
+
+
+def test_a_successful_sign_in_from_env_is_recorded(browser, tmp_path, monkeypatch):
+    from website_test_pipeline.authflow import auth_history
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "right")
+    ensure_session(settings, _Routed(browser), URL, interactive=False)
+    rows = auth_history(settings)
+    assert len(rows) == 1 and rows[0]["status"] == "signed-in-env" and rows[0]["method"] == "env" and rows[0]["url"] == URL
+
+
+def test_a_refused_env_attempt_that_then_succeeds_by_popup_records_both(browser, tmp_path, monkeypatch):
+    from website_test_pipeline.authflow import auth_history
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_EMAIL", "a@b.c")
+    monkeypatch.setenv("AUTH_FAKE_TEST_DEFAULT_PW", "stale")
+    popup = lambda request, screenshot: AuthAnswer({"email": "a@b.c", "pw": "right"})
+    ensure_session(settings, _Routed(browser), URL, ask=popup, interactive=True)
+    rows = auth_history(settings)
+    assert [r["status"] for r in rows] == ["failed", "signed-in-popup"]
+    assert rows[0]["method"] == "env" and rows[1]["method"] == "popup" and rows[1]["attempts"] == 1
+
+
+def test_skipping_the_popup_outright_records_nothing(browser, tmp_path, monkeypatch):
+    from website_test_pipeline.authflow import auth_history
+    for name in ("AUTH_FAKE_TEST_DEFAULT_EMAIL", "AUTH_FAKE_TEST_DEFAULT_PW"):
+        monkeypatch.delenv(name, raising=False)
+    settings = _settings(tmp_path)
+    ensure_session(settings, _Routed(browser), URL, ask=lambda r, s: None, interactive=True)
+    assert auth_history(settings) == []

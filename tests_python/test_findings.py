@@ -354,3 +354,51 @@ def test_untested_auth_lists_each_wall_with_the_labels_a_person_would_fill():
     inv = [{"url": "https://x.test/b", "auth": [{"kind": "login", "fields": [{"label": "Email"}, {"name": "pw"}]}]},
            {"url": "https://x.test/a"}]
     assert untested_auth(inv) == [{"url": "https://x.test/b", "kind": "login", "fields": ["Email", "pw"]}]
+
+
+# ------------------------------------------------------------------ login history / step 7
+
+def test_auth_summary_lines_says_first_try_or_how_many_and_the_method():
+    from website_test_pipeline.findings import auth_summary_lines
+    history = [{"account": "default", "method": "env", "status": "signed-in-env", "attempts": 1}]
+    assert auth_summary_lines(history) == ["Signed in to the site on the first attempt (env)."]
+    history = [{"account": "default", "method": "env", "status": "failed", "attempts": 1},
+               {"account": "default", "method": "popup", "status": "signed-in-popup", "attempts": 2}]
+    assert auth_summary_lines(history) == ["Signed in to the site after 2 attempts (popup)."]
+
+
+def test_auth_summary_lines_names_the_account_when_there_is_more_than_one():
+    from website_test_pipeline.findings import auth_summary_lines
+    history = [{"account": "admin", "method": "env", "status": "signed-in-env", "attempts": 1},
+               {"account": "customer", "method": "popup", "status": "failed", "attempts": 3}]
+    lines = auth_summary_lines(history)
+    assert lines[0] == "Signed in to 'admin' on the first attempt (env)."
+    assert lines[1] == "Could not sign in to 'customer' - see the finding below."
+
+
+def test_auth_summary_lines_empty_history_is_silent():
+    from website_test_pipeline.findings import auth_summary_lines
+    assert auth_summary_lines([]) == []
+
+
+def test_auth_failure_finding_fires_only_when_an_account_never_once_signed_in():
+    from website_test_pipeline.findings import auth_failure_findings
+    ok_then_fail = [{"account": "default", "method": "env", "status": "signed-in-env", "attempts": 1, "url": "https://x.test/login"},
+                    {"account": "default", "method": "env", "status": "failed", "attempts": 1, "url": "https://x.test/login"}]
+    assert auth_failure_findings(ok_then_fail) == []          # it worked at least once this run
+
+    never = [{"account": "default", "method": "env", "status": "failed", "attempts": 1, "url": "https://x.test/login", "error": "Wrong password"},
+             {"account": "default", "method": "popup", "status": "skipped", "attempts": 2, "url": "https://x.test/login"}]
+    findings = auth_failure_findings(never)
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.severity == "P1" and finding.kind == "auth_failure" and "default" in finding.summary
+    assert finding.url == "https://x.test/login" and "default" in finding.repro
+
+
+def test_auth_failure_finding_keeps_accounts_separate():
+    from website_test_pipeline.findings import auth_failure_findings
+    history = [{"account": "admin", "status": "signed-in-env", "attempts": 1, "url": "https://x.test/a"},
+               {"account": "customer", "status": "failed", "attempts": 1, "url": "https://x.test/c"}]
+    findings = auth_failure_findings(history)
+    assert len(findings) == 1 and "customer" in findings[0].summary
