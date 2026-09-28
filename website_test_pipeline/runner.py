@@ -101,6 +101,15 @@ def outcome_matches(predicted: dict, observed: dict) -> bool:
     return False
 
 
+def _now_showing_a_login_wall(page) -> bool:
+    """A visible password field appeared where the flow did not expect one - the session died mid-run and the
+    site redirected back to sign-in. Cheap and best-effort: never raises, never blocks."""
+    try:
+        return bool(page.locator('input[type="password"]:visible').count())
+    except Exception:
+        return False
+
+
 def hop_hint(step: dict, index: int, current_url: str) -> str:
     """When a step fails on a later hop, say which page it expected and where the browser is.
     Not a check by itself: a redirect (/ -> /en) makes the expected and actual page differ
@@ -458,6 +467,14 @@ def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | N
         except Exception as exc:
             reason = str(exc).splitlines()[0][:120] if str(exc) else exc.__class__.__name__
             hint = ""
+            if "control not found" in str(exc) and _now_showing_a_login_wall(page):
+                # the session died between sign-in and this step (a short server-side timeout, or another
+                # visitor on a shared account evicting us) - not a defect in the flow, and healing onto
+                # whatever the login page happens to have would only produce a nonsense "fix".
+                result["session_expired"] = True
+                result["error"] = (f'step "{describe_step(step)}" failed: the session expired mid-flow '
+                                   f'(landed back on a login page) - not a defect in the flow')
+                break
             if "control not found" in str(exc):
                 replacement, how = find_replacement(step, _visible_controls(page))
                 if replacement and heal:
@@ -583,6 +600,27 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                               "observed": classify(diff_snapshots(_empty(flow), _empty(flow)))}
                 finally:
                     context.close()
+                if result.get("session_expired") and not needs_fresh_session(flow):
+                    # the ONE sign-in at the start of this run (preflight_session) does not survive a site with a
+                    # short session lifetime, or a shared demo account another visitor is also signed into. Refresh
+                    # it and give this flow one more try before recording a result - self-healing, same spirit as
+                    # find_replacement above, so a long run against such a site does not silently lose every flow
+                    # from here on. The refreshed session file is picked up by every later flow's context too.
+                    from .authflow import ensure_session
+                    refreshed = ensure_session(settings, browser, getattr(settings, "seed_url", flow["start_url"]), log)
+                    if refreshed.status in {"signed-in-env", "signed-in-popup", "session-ok"}:
+                        log.info("verify: %s - the session had expired; signed in again and retrying", flow["id"])
+                        context = browser.new_context(**context_kwargs(settings))
+                        page = context.new_page()
+                        page.set_default_navigation_timeout(settings.navigation_timeout_ms)
+                        try:
+                            result = run_flow(page, flow, log, heal=flow.get("status") not in HUMAN_STATUSES)
+                        except Exception as exc:
+                            result = {"ok": False, "steps_done": 0, "steps_total": len(flow.get("steps") or []),
+                                      "error": f"runner crashed: {str(exc).splitlines()[0][:120]}", "step_effects": [],
+                                      "observed": classify(diff_snapshots(_empty(flow), _empty(flow)))}
+                        finally:
+                            context.close()
                 if result.get("unreachable"):
                     unreachable += 1
                     log.warning("verify: %s - skipped: %s. The site could not be reached, which says nothing about the "

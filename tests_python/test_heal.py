@@ -408,3 +408,88 @@ def test_option_healing_fires_through_run_verify_for_a_results_outcome_with_a_re
         assert heal["kind"] == "option" and 'showed no content; "Charlie" does' in heal["how"]
     finally:
         server.shutdown()
+
+
+# ------------------------------------------------------------------ a session that dies mid-flow (short-lived or
+# shared-account sites, e.g. a public demo whose single account gets evicted by another visitor) - found live
+# against OrangeHRM's public demo.
+
+def test_run_flow_recognises_a_login_wall_instead_of_healing_onto_it(fake_browser, monkeypatch):
+    page, log = fake_browser
+
+    def now_password(p):
+        assert p is page
+        return True
+
+    monkeypatch.setattr(runner, "_now_showing_a_login_wall", now_password)
+    result = run_flow(page, _flow(), heal=True)
+    assert result.get("session_expired") is True
+    assert "session expired mid-flow" in result["error"] and "not a defect" in result["error"]
+    assert result["heals"] == [] and len(log["steps"]) == 1          # never tried to heal onto the login page
+
+
+def test_run_verify_refreshes_an_expired_session_and_retries_the_flow_with_a_real_browser(tmp_path, monkeypatch):
+    import json
+    import threading
+    import http.server
+    import socketserver
+    from types import SimpleNamespace
+    from urllib.parse import parse_qs
+
+    LOGIN = ("<html><body><h1>Sign in</h1><form method='post' action='/login'>"
+            "<input name='u'><input name='pw' type='password'><button>Go</button></form></body></html>")
+    DASHBOARD = "<html><body><h1>Dashboard</h1><a href='/admin'>Admin</a></body></html>"
+    ADMIN = "<html><body><h1>Admin</h1></body></html>"
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            signed_in = "sid=1" in (self.headers.get("Cookie") or "")
+            if self.path == "/dashboard" and not signed_in:
+                self.send_response(302); self.send_header("Location", "/login"); self.end_headers(); return
+            body = {"/login": LOGIN, "/dashboard": DASHBOARD, "/admin": ADMIN}.get(self.path, LOGIN).encode()
+            self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            fields = parse_qs(self.rfile.read(length).decode())
+            self.send_response(302)
+            self.send_header("Location", "/dashboard")
+            if fields.get("pw") == ["right"]:
+                self.send_header("Set-Cookie", "sid=1; Path=/")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        from website_test_pipeline.authflow import env_names
+        wall = {"fields": [{"type": "text", "name": "u"}, {"type": "password", "name": "pw"}]}
+        for name in env_names("127.0.0.1", "default", wall):
+            monkeypatch.setenv(name, {"AUTH_127_0_0_1_DEFAULT_U": "admin", "AUTH_127_0_0_1_DEFAULT_PW": "right"}[name])
+
+        flow = {"id": "demo", "source": "intent", "status": "candidate",
+                "goal": "A visitor opens Admin from the dashboard.", "start_url": base + "/dashboard",
+                "outcome": {"effect": "navigates", "to": "/admin"},
+                "steps": [{"kind": "click", "selector": None, "name": "Admin", "page": "/dashboard"}]}
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / ".gitignore").write_text("w/\n", encoding="utf-8")
+        flows_file = tmp_path / "flows.json"
+        flows_file.write_text(json.dumps({"version": 1, "flows": [flow]}), encoding="utf-8")
+        settings = SimpleNamespace(flows_file=flows_file, ratings_file=tmp_path / "ratings.json", headless=True,
+                                   navigation_timeout_ms=15000, intents_file=tmp_path / "i.json",
+                                   workspace=tmp_path / "w", site="127.0.0.1", root=tmp_path,
+                                   auth_mode="auto", auth_account="default", seed_url=base + "/login")
+        code = run_verify(settings, LOG)          # no session file exists yet: the first attempt lands on /login
+        assert code == 0
+        saved = json.loads(flows_file.read_text(encoding="utf-8"))["flows"][0]
+        assert saved["status"] == "verified" and saved["observed"]["effect"] == "navigates"
+        ratings = json.loads((tmp_path / "ratings.json").read_text(encoding="utf-8"))
+        entries = ratings["ratings"]["demo"]
+        assert len(entries) == 1 and entries[-1]["passed"] is True     # only the retry's verdict is recorded, not the transient failure
+    finally:
+        server.shutdown()
