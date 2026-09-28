@@ -29,13 +29,16 @@ pages the run already captured, regardless of pass/fail:
 from __future__ import annotations
 import ast
 import json
+import importlib.metadata
+import os
 import platform
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-SEVERITIES = ("P1", "P2")          # P1: a user journey (flow) is broken or unproven; P2: a page-level check
+SEVERITIES = ("Critical", "High", "Medium", "Low")
 KINDS = ("test_defect", "flaky_data", "unclear", "capture_corruption", "localization_mismatch", "auth_failure")
 FLAP_WINDOW = 6                     # how many recent real executions are looked at per test/flow
 
@@ -295,7 +298,9 @@ def _spec_source(path: str | None) -> str:
 def classify_failure(test_name: str, scope: str, url: str, error: str | None, spec_source: str,
                      inventories: list[dict], flow: dict | None = None, definite: bool = False) -> Finding:
     """One Finding for a failed or errored test/flow. Never raises; an unrecognised failure is 'unclear'."""
-    severity = "P1" if scope == "flow" else "P2"
+    # Severity answers business impact.  Scope and kind remain separate fields;
+    # neither is overloaded as a pseudo-severity.
+    severity = "High" if scope == "flow" else "Medium"
     line = _first_error_line(error)
     if definite:
         return Finding(test_name, scope, url, severity, "flaky_data",
@@ -360,7 +365,7 @@ def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id:
         mismatch = direction_mismatch_finding(inv)
         if mismatch:
             findings.append(mismatch)
-    order = {"P1": 0, "P2": 1}
+    order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     return sorted(findings, key=lambda f: (order.get(f.severity, 9), f.test))
 
 
@@ -484,7 +489,7 @@ def auth_failure_findings(history: list[dict]) -> list[Finding]:
         attempts = sum(r.get("attempts", 1) for r in rows)
         error = last.get("error") or "no further detail recorded"
         findings.append(Finding(
-            test=f"login: {account}", scope="page", url=url, severity="P1", kind="auth_failure",
+            test=f"login: {account}", scope="page", url=url, severity="High", kind="auth_failure",
             summary=f"the login for account '{account}' never succeeded this run ({last.get('status')}: {error})",
             repro=f"open {url or 'the login page'} and try the account '{account}' by hand ({attempts} attempt(s) recorded)",
             next_action="check the .env details for this account are current, or run `auth` to sign in by hand"))
@@ -493,12 +498,42 @@ def auth_failure_findings(history: list[dict]) -> list[Finding]:
 # ------------------------------------------------------------------ environment
 
 def environment_block(run, settings=None) -> dict[str, str]:
+    def version(package: str) -> str:
+        try:
+            return importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            return "NOT CAPTURED"
+
+    try:
+        git_sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+            cwd=Path(__file__).resolve().parents[1], check=False,
+        ).stdout.strip() or "NOT CAPTURED"
+    except OSError:
+        git_sha = "NOT CAPTURED"
+    browser_version = os.getenv("BROWSER_VERSION", "NOT CAPTURED")
+    pipeline_version = version("website-test-pipeline")
+    if pipeline_version == "NOT CAPTURED":
+        try:
+            project_file = Path(__file__).resolve().parents[1] / "pyproject.toml"
+            match = re.search(r'^version\s*=\s*["\']([^"\']+)', project_file.read_text(encoding="utf-8"), re.M)
+            pipeline_version = match.group(1) if match else "NOT CAPTURED"
+        except OSError:
+            pipeline_version = "NOT CAPTURED"
     return {
-        "Browser": "Chromium (Playwright)",
+        "Browser": "Chromium",
+        "Browser version": browser_version,
+        "Playwright": version("playwright"),
+        "pytest": version("pytest"),
+        "Pipeline version": pipeline_version,
+        "Pipeline git SHA": git_sha,
         "Headless": str(getattr(settings, "headless", True)),
         "OS": platform.platform(),
         "Python": sys.version.split()[0],
         "Site": run.base_url or (getattr(settings, "seed_url", "") or ""),
-        "Model": run.model or "(none used this run)",
+        "Internal model": run.model or "NOT CAPTURED",
+        # Kept as a machine-readable compatibility alias.  The customer-facing
+        # DOCX intentionally omits model details.
+        "Model": run.model or "NOT CAPTURED",
         "Run window": f"{run.started_at or '?'} - {run.finished_at or '?'}",
     }

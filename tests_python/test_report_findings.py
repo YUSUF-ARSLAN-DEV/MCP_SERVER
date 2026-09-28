@@ -81,7 +81,7 @@ def test_load_run_populates_findings_and_flapping_from_real_files(tmp_path):
     run = load_run(artifacts, tests)
     assert len(run.findings) == 1
     f = run.findings[0]
-    assert f.severity == "P2" and f.kind == "test_defect" and 'role="group"' in f.summary and "no role recorded" in f.summary
+    assert f.severity == "Medium" and f.kind == "test_defect" and 'role="group"' in f.summary and "no role recorded" in f.summary
     assert (len(run.flapping) == 1 and run.flapping[0].test == "A visitor searches and sees the flaky results page."
             and run.flapping[0].sequence == "P F P")
 
@@ -91,20 +91,24 @@ def test_the_combined_report_leads_with_a_findings_section(tmp_path):
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
-    assert headings.index("Findings") < headings.index("User flows") < headings.index("Flow coverage")
+    assert headings.index("Defect Report (Bugs Found)") < headings.index("User flows") < headings.index("Test Coverage / Requirements Traceability")
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
-    for part in ("Findings", "Browser: Chromium", "OS:", "Python:", "P2", 'role="group"',
-                 "no role recorded", "1 failure(s), classified below", "Coverage:", "content controls acted on",
-                 "Executed", "Blocked", "Pass rate"):
+    for part in ("Defects and blockers", "Browser", "Operating system", "Python", "Medium",
+                             "1 recorded defect or blocker(s)", "Flow coverage", "Content controls a tested flow acts on",
+                 "Tests run", "Blocked", "Pass rate"):
         assert part in joined, part
+    main = joined[:joined.index("Appendix: full evidence")]
+    assert 'role="group"' not in main and "expect(" not in main
 
 
-def test_reports_include_a_word_table_of_contents_field(tmp_path):
+def test_reports_include_a_populated_clickable_table_of_contents(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     assert "Table of Contents" in [p.text for p in doc.paragraphs]
-    assert 'TOC \\o "1-3" \\h \\z \\u' in doc.part.element.xml
+    assert "Executive Summary" in [p.text for p in doc.paragraphs]
+    assert "Right-click this table" not in doc.part.element.xml
+    assert doc.part.element.xml.count("w:hyperlink") >= 10
 
 
 def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verdict(tmp_path):
@@ -112,25 +116,24 @@ def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verd
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
-    assert headings.index("Test summary") < headings.index("Findings") < headings.index("User flows")
-    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Scope", "Test", "URL", "Expected", "Observed", "Verdict"])
+    assert headings.index("Test Execution Summary") < headings.index("Defect Report (Bugs Found)") < headings.index("User flows")
+    table = [t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"]][-1]
     rows = [[c.text for c in r.cells] for r in table.rows[1:]]
-    by_test = {r[1].split(" [")[0]: r for r in rows}
-    assert by_test["wizard step"][0] == "page" and by_test["wizard step"][5] == "FAILED"
-    assert "Passcode" in by_test["wizard step"][3] or "get_by_role" in by_test["wizard step"][3]
-    assert by_test["wizard step"][4] and by_test["wizard step"][4] != "as expected"
-    assert "[P2]" in rows[0][1] if rows[0][5] == "FAILED" else True             # the failing row carries its severity
-    flow_row = next(r for r in rows if r[1] == "A visitor picks a country and sees the results.")
-    assert flow_row[0] == "flow" and flow_row[3] == "navigates -> /en/find" and flow_row[5] == "PASSED"
-    assert flow_row[4] and flow_row[4] != "(never ran)"
+    by_test = {r[2]: r for r in rows}
+    assert by_test["wizard step"][1] == "page" and by_test["wizard step"][6] == "FAILED"
+    assert "Passcode" in by_test["wizard step"][4]
+    assert by_test["wizard step"][5] and by_test["wizard step"][5] != "As expected."
+    flow_row = next(r for r in rows if r[2] == "A visitor picks a country and sees the results.")
+    assert flow_row[1] == "flow" and flow_row[4] == "navigates -> /en/find" and flow_row[6] == "PASSED"
+    assert flow_row[5] and flow_row[5] != "(never ran)"
 
 
 def test_the_failing_test_is_listed_before_the_passing_ones(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
-    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Scope", "Test", "URL", "Expected", "Observed", "Verdict"])
-    verdicts = [r.cells[5].text for r in table.rows[1:]]
+    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"])
+    verdicts = [r.cells[6].text for r in table.rows[1:]]
     assert verdicts[0] == "FAILED" and verdicts.count("FAILED") == 1
     assert all(v == "PASSED" for v in verdicts[1:])
 
@@ -343,4 +346,24 @@ def test_a_skipped_test_is_excluded_from_the_pass_rate_and_failed_count(tmp_path
     create_report(artifacts, tests, tmp_path / "report", flows_file=tmp_path / "flows.json",
                  ratings_file=tmp_path / "flow_ratings.json", combined=True)
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
-    assert "3 executed test(s): 2 passed, 1 failed, 0 blocked, 1 skipped; pass rate: 67%" in joined
+    assert "3 tests ran: 2 passed and 1 failed. 1 were skipped" in joined
+
+
+# ------------------------------------------------------------------ Defect Report: steps to reproduce, and a
+# working link from the bug's Title straight to its own evidence in the Appendix
+
+def test_the_defect_report_has_steps_to_reproduce_and_links_to_its_own_evidence(tmp_path):
+    from docx.oxml.ns import qn
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    table = next(t for t in doc.tables
+                if [c.text for c in t.rows[0].cells] == ["ID", "Severity", "Type", "Status", "Title"])
+    row = table.rows[1]
+    assert row.cells[0].text == "BUG-001" and row.cells[1].text == "Medium"
+    detail = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Field", "Details"])
+    fields = {r.cells[0].text: r.cells[1].text for r in detail.rows[1:]}
+    assert "Open https://x.test/en." in fields["Steps to reproduce"]
+    assert "Run test tests/https-x-test-en_test.py::test_wizard_step[chromium]." in fields["Steps to reproduce"]
+
+    assert fields["Evidence"] == "NOT CAPTURED"

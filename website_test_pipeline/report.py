@@ -7,10 +7,12 @@ assertions it made and the screenshot evidence captured at each step.
 from __future__ import annotations
 
 import ast
+import hashlib
 import io
 import json
 import os
 import re
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +33,7 @@ from .flowgen import file_name as flow_spec_name
 from .flowreport import FlowReport, build_flow_report
 from .flows import FlowsFileError, load_flows
 from .ratings import RatingsFileError, load_ratings
+from .report_model import canonical_counts, validate_report_data, write_report_data
 from .sitemap import load_inventories
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
@@ -132,15 +135,15 @@ class RunReport:
 
     @property
     def total(self) -> int:
-        return sum(u.total for u in self.url_reports) + len(self.tested_flows)
+        return int(canonical_counts(self)["executed_tests"])
 
     @property
     def passed(self) -> int:
-        return sum(u.passed for u in self.url_reports) + sum(f.passed for f in self.tested_flows)
+        return int(canonical_counts(self)["passed"])
 
     @property
     def failed(self) -> int:
-        return sum(u.failed for u in self.url_reports) + sum(f.failed for f in self.tested_flows)
+        return int(canonical_counts(self)["failed"])
 
     @property
     def warnings(self) -> list[str]:
@@ -564,6 +567,8 @@ def _evidence_caption(stem: str) -> str:
 
 def _render_evidence(document, outcome: TestOutcome, *, embed: bool = True, link_base: Path | None = None) -> None:
     document.add_heading("Browser evidence", 3)
+    seen: dict[str, str] = getattr(document, "_evidence_hashes", {})
+    setattr(document, "_evidence_hashes", seen)
     if not outcome.evidence:
         para = document.add_paragraph("No screenshot evidence was captured for this test.")
         para.runs[0].italic = True
@@ -571,17 +576,24 @@ def _render_evidence(document, outcome: TestOutcome, *, embed: bool = True, link
         path = Path(image)
         if not path.is_file():
             continue
+        digest = _evidence_hash(str(path))
+        caption_text = f'{outcome.nodeid or outcome.title} — {_evidence_caption(path.stem)}'
+        if digest in seen:
+            document.add_paragraph(f"Duplicate screenshot; see {seen[digest]}.")
+            continue
+        evidence_id = f"E-{len(seen) + 1:04d}"
+        seen[digest] = evidence_id
         if embed:
             try:
                 document.add_picture(_embeddable(path), width=Inches(6.0))
             except Exception as exc:  # unreadable / truncated screenshot
                 document.add_paragraph(f"(could not embed {path.name}: {exc})")
                 continue
-            caption = document.add_paragraph(_evidence_caption(path.stem))
+            caption = document.add_paragraph(f"{evidence_id}: {caption_text}")
             caption.runs[0].italic = True
             caption.runs[0].font.size = Pt(9)
         else:
-            para = document.add_paragraph(f"{_evidence_caption(path.stem)}  —  ", style="List Bullet")
+            para = document.add_paragraph(f"{evidence_id}: {caption_text}  —  ", style="List Bullet")
             _add_hyperlink(para, _rel(str(path), link_base), path.name)
 
 
@@ -610,7 +622,9 @@ def _render_flow(document, flow: FlowReport, *, embed: bool = True, link_base: P
     run = para.add_run(f"Result: {outcome.status.upper()}")
     run.bold = True
     run.font.color.rgb = _GREEN if outcome.passed else _RED
-    para.add_run(f"    Flow status: {flow.status}    Duration: {outcome.duration:.2f}s")
+    stored_status = {"verified": "Verified", "approved": "Approved", "stale": "Needs retesting", "candidate": "Not yet verified"}.get(flow.status, "Not recorded")
+    current_status = "Passed" if flow.passed else ("Failed" if flow.failed else "Skipped")
+    para.add_run(f"    Current result: {current_status}    Stored review status: {stored_status}    Duration: {outcome.duration:.2f}s")
     where = (f" across {len(flow.pages)} pages: " + _ARROW.join(flow.pages)) if len(flow.pages) > 1 else (
         f" on {flow.pages[0]}" if flow.pages else "")
     origin = f" {flow.intent_id} (from the plain-sentence file)" if flow.intent_id else ""
@@ -646,17 +660,32 @@ def _render_flow(document, flow: FlowReport, *, embed: bool = True, link_base: P
 
 def _grid(document, labels: tuple[str, ...]):
     table = document.add_table(rows=1, cols=len(labels))
+    table.autofit = True
     try:
         table.style = "Table Grid"
     except KeyError:
         pass
     for cell, label in zip(table.rows[0].cells, labels):
-        cell.paragraphs[0].add_run(label).bold = True
+        run = cell.paragraphs[0].add_run(label)
+        run.bold = True
+        run.font.size = Pt(9)
+        shading = OxmlElement("w:shd")
+        shading.set(qn("w:fill"), "D9EAF7")
+        cell._tc.get_or_add_tcPr().append(shading)
     return table
 
 
+def _set_table_widths(table, widths: tuple[float, ...]) -> None:
+    """Give dense stakeholder tables intentional column proportions."""
+    table.autofit = False
+    for column, width in zip(table.columns, widths):
+        column.width = Inches(width)
+        for cell in column.cells:
+            cell.width = Inches(width)
+
+
 def _table_of_contents(document) -> None:
-    """Insert a visible clickable TOC plus a Word TOC field for optional page-number refresh."""
+    """Insert a populated, clickable TOC with no stale field placeholder."""
     document.add_heading("Table of Contents", 1)
     entries = (
         "Executive Summary", "Test Scope", "Test Environment", "Test Execution Summary",
@@ -666,22 +695,23 @@ def _table_of_contents(document) -> None:
     for entry in entries:
         paragraph = document.add_paragraph(style="List Bullet")
         _add_internal_hyperlink(paragraph, entry, _heading_anchor(entry))
-    document.add_paragraph("The links above are available immediately. Word can also refresh the field below to add page numbers.")
-    paragraph = document.add_paragraph()
+    document.add_page_break()
+
+
+def _add_page_reference(paragraph, anchor: str) -> None:
     run = paragraph.add_run()
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
     instruction = OxmlElement("w:instrText")
     instruction.set(qn("xml:space"), "preserve")
-    instruction.text = 'TOC \\o "1-3" \\h \\z \\u'
+    instruction.text = f" PAGEREF {anchor} \\h "
     separate = OxmlElement("w:fldChar")
     separate.set(qn("w:fldCharType"), "separate")
-    placeholder = OxmlElement("w:t")
-    placeholder.text = "Right-click this table and select Update Field to refresh it."
+    text = OxmlElement("w:t")
+    text.text = "-"
     end = OxmlElement("w:fldChar")
     end.set(qn("w:fldCharType"), "end")
-    run._r.extend([begin, instruction, separate, placeholder, end])
-    document.add_page_break()
+    run._r.extend([begin, instruction, separate, text, end])
 
 
 def _heading_anchor(text: str) -> str:
@@ -777,8 +807,10 @@ def _findings_section(document, run: RunReport) -> None:
         para = document.add_paragraph("No failures to triage this run.")
         para.runs[0].italic = True
         return
-    document.add_paragraph(f"{len(run.findings)} failure(s), classified below. P1 = a user journey (flow); "
-                           "P2 = a page-level check. test_defect means the assertion itself is provably wrong "
+    document.add_paragraph(f"{len(run.findings)} finding(s), classified by severity, failure class, and scope. "
+                           "The severity describes release impact; the failure class describes what kind of issue "
+                           "was observed, and the scope identifies whether it affects a page or user journey. "
+                           "test_defect means the assertion itself is provably wrong "
                            "against what was actually observed; flaky_data means the run completed but the site "
                            "did not return the content the sentence promised (may be content-dependent, not a "
                            "defect); capture_corruption means some captured text could not be decoded cleanly "
@@ -788,21 +820,436 @@ def _findings_section(document, run: RunReport) -> None:
                            "partway through; auth_failure means the login never succeeded this run - the details "
                            "in .env may be stale; unclear means it could not be classified automatically - read "
                            "the trace.")
-    table = _grid(document, ("ID", "Severity", "Title", "Expected", "Actual", "Status", "Owner"))
+    table = _grid(document, ("ID", "Severity", "Title", "Steps to reproduce", "Expected", "Actual", "Status", "Owner"))
     for number, finding in enumerate(run.findings, 1):
         cells = table.add_row().cells
         cells[0].text = f"BUG-{number:03d}"
         cells[1].text = finding.severity
-        cells[2].text = _shorten(finding.summary, 120)
-        cells[3].text = "The flow/page check completes as specified"
-        cells[4].text = _shorten(plain_error(finding.repro) if finding.repro else finding.summary, 140)
-        cells[5].text = "Open"
-        cells[6].text = "Unassigned"
+        # links to the page's or flow's own heading in the evidence Appendix, where the full run (screenshots,
+        # every assertion, review history) for this exact title/url lives - a reader is one click from proof.
+        _add_internal_hyperlink(cells[2].paragraphs[0], _shorten(finding.summary, 120),
+                               _heading_anchor(finding.url if finding.scope == "page" else finding.test))
+        cells[3].text = f'Open {finding.url} and run "{finding.test}".'
+        cells[4].text = "The flow/page check completes as specified"
+        cells[5].text = _shorten(plain_error(finding.repro) if finding.repro else finding.summary, 140)
+        cells[6].text = "Open"
+        cells[7].text = "Unassigned"
 
 
 def _shorten(text: str, limit: int = 90) -> str:
     text = re.sub(r"\s+", " ", text or "").strip()
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _display_id(value: str) -> str:
+    return value.replace("-", "‑") if value.startswith("BLOCK-") else value
+
+
+def _all_outcomes(run: RunReport) -> list[tuple[str, str, TestOutcome, FlowReport | None]]:
+    rows: list[tuple[str, str, TestOutcome, FlowReport | None]] = []
+    for report in run.url_reports:
+        for outcome in report.outcomes:
+            rows.append(("page", outcome.nodeid or outcome.title, outcome, None))
+    for flow in run.tested_flows:
+        if flow.outcome is not None:
+            rows.append(("flow", flow.flow_id, flow.outcome, flow))
+    return rows
+
+
+def _severity_label(value: str, scope: str = "page") -> str:
+    # Compatibility for old run data while keeping the rendered taxonomy clean.
+    if value == "P1":
+        return "High"
+    if value == "P2":
+        return "Medium"
+    return value if value in {"Critical", "High", "Medium", "Low"} else ("High" if scope == "flow" else "Medium")
+
+
+def _plain_flow_title(title: str) -> str:
+    """Keep selectors out of the stakeholder defect title; raw steps remain in the appendix."""
+    text = re.sub(r"\b(?:input|select|textarea|button)\[[^\]]+\]", "the form control", title or "")
+    text = re.sub(r"#[A-Za-z0-9_-]+", "the control", text)
+    return re.sub(r"\s+", " ", text).strip() or "User journey"
+
+
+def _finding_for(run: RunReport, test: str, url: str, scope: str):
+    candidates = [f for f in run.findings if f.test == test and f.url == url and f.scope == scope]
+    return candidates[0] if candidates else None
+
+
+def _relative_artifact(path: str | None, base: Path | None) -> str:
+    if not path:
+        return "NOT CAPTURED"
+    try:
+        return os.path.relpath(path, base) if base else path
+    except (OSError, ValueError):
+        return path
+
+
+def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict[str, Any]]:
+    """Build one complete, auditable defect/blocker object per failure and blocked flow."""
+    records: list[dict[str, Any]] = []
+    direct_keys: set[tuple[str, str, str]] = set()
+    number = 1
+    for scope, key, outcome, flow in _all_outcomes(run):
+        if outcome.status not in {"failed", "error"}:
+            continue
+        finding = _finding_for(run, flow.title if flow else outcome.title, outcome.url, scope)
+        test_id = key
+        title = _plain_flow_title(flow.title) if flow else outcome.title.replace("_", " ")
+        expected = (flow.expected if flow and flow.expected else
+                    (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "The check completes as specified."))
+        actual = plain_error(outcome.error) if outcome.error else "The test failed without a captured reason."
+        evidence = outcome.evidence[0] if outcome.evidence else None
+        record = {
+            "id": f"BUG-{number:03d}",
+            "severity": _severity_label(getattr(finding, "severity", ""), scope),
+            "title": _shorten(title, 160),
+            "description": actual if not finding else f"{actual} Failure class: {finding.kind}.",
+            "steps_to_reproduce": [f"Open {outcome.url}.", f"Run test {test_id}."],
+            "expected": expected or "NOT CAPTURED",
+            "actual": actual or "NOT CAPTURED",
+            "screenshot_url": _relative_artifact(evidence, report_dir),
+            "status": "Open",
+            "owner": "Unassigned",
+            "linked_flow_id": flow.flow_id if flow else "NOT CAPTURED",
+            "failure_class": getattr(finding, "kind", "unclear") if finding else "unclear",
+            "scope": scope,
+            "business_impact": "The affected check cannot confirm this part of the user journey until it is retested.",
+            "blocking": False,
+        }
+        records.append(record)
+        direct_keys.add((scope, outcome.title, outcome.url))
+        if flow:
+            direct_keys.add((scope, flow.title, outcome.url))
+        number += 1
+
+    # Findings produced from authentication history or capture/localization
+    # checks do not always have a pytest outcome of their own.  They still need
+    # the same complete defect shape as an ordinary failed test.
+    for finding in run.findings:
+        if (finding.scope, finding.test, finding.url) in direct_keys:
+            continue
+        records.append({
+            "id": f"BUG-{number:03d}",
+            "severity": _severity_label(finding.severity, finding.scope),
+            "title": _shorten(finding.summary, 160),
+            "description": finding.summary or "A recorded validation finding needs review.",
+            "steps_to_reproduce": [finding.repro or f"Open {finding.url or 'the affected page'}."] ,
+            "expected": "The recorded check should complete without this finding.",
+            "actual": finding.summary or "NOT CAPTURED",
+            "screenshot_url": "NOT CAPTURED",
+            "status": "Open",
+            "owner": "Unassigned",
+            "linked_flow_id": finding.test if finding.scope == "flow" else "NOT CAPTURED",
+            "failure_class": finding.kind or "unclear",
+            "scope": finding.scope,
+            "business_impact": "The affected area needs review before the release decision can be trusted.",
+        })
+        number += 1
+
+    for flow in run.untested_flows:
+        record = {
+            "id": f"BLOCK-{number:03d}",
+            "severity": "High",
+            "title": _shorten(_plain_flow_title(flow.title), 160),
+            "description": "This user journey has no passing executable result in the current run.",
+            "steps_to_reproduce": [f"Open {flow.start_url}.", f"Attempt journey {flow.flow_id}."],
+            "expected": flow.expected or "The journey should complete and produce a verified result.",
+            "actual": flow.observed or "The journey was not completed.",
+            "screenshot_url": _relative_artifact(flow.outcome.evidence[0] if flow.outcome and flow.outcome.evidence else None, report_dir),
+            "status": "Open",
+            "owner": "Unassigned",
+            "linked_flow_id": flow.flow_id,
+            "failure_class": "blocked_flow",
+            "scope": "flow",
+            "business_impact": "This user journey remains unverified and should be completed before release if it is release-critical.",
+            "blocking": True,
+        }
+        records.append(record)
+        number += 1
+
+    represented_pages = {d.get("url") for d in records}
+    for page in run.human_input_pages:
+        if page["url"] in represented_pages:
+            continue
+        records.append({
+            "id": f"BLOCK-{number:03d}",
+            "severity": "High",
+            "title": "Human input required to complete a form",
+            "description": page.get("detail", "A human-only step was detected."),
+            "steps_to_reproduce": [f'Open {page["url"]}.', f'Complete the {page["reason"]} step manually.'],
+            "expected": "The form should be completed and submitted.",
+            "actual": f'The run stopped at {page["reason"]}; the step was not automated.',
+            "screenshot_url": "NOT CAPTURED",
+            "status": "Open",
+            "owner": "Unassigned",
+            "linked_flow_id": "NOT CAPTURED",
+            "failure_class": "human_input_required",
+            "scope": "page",
+            "business_impact": "The form cannot be fully verified automatically until a person completes this step.",
+            "blocking": True,
+        })
+        number += 1
+
+    for wall in run.untested_auth:
+        records.append({
+            "id": f"BLOCK-{number:03d}",
+            "severity": "High",
+            "title": "Authentication required before protected pages can be tested",
+            "description": "A login or sign-up form was found, so content behind it was not exercised.",
+            "steps_to_reproduce": [f'Open {wall["url"]}.', "Sign in or create the account required by the form."],
+            "expected": "The authenticated area should be available for testing.",
+            "actual": "The run could not proceed beyond the authentication form.",
+            "screenshot_url": "NOT CAPTURED",
+            "status": "Open",
+            "owner": "Unassigned",
+            "linked_flow_id": "NOT CAPTURED",
+            "failure_class": "authentication_required",
+            "scope": "page",
+            "business_impact": "Authenticated pages may contain unverified release-critical behavior.",
+            "blocking": True,
+        })
+        number += 1
+
+    return records
+
+
+def _coverage_gaps(run: RunReport) -> list[dict[str, str]]:
+    if not run.coverage:
+        return []
+    gaps: list[dict[str, str]] = []
+    n = 1
+    for page in run.coverage.pages:
+        if not page.visited or page.untouched:
+            gaps.append({
+                "id": f"COV-{n:03d}",
+                "page": page.path,
+                "url": page.url,
+                "impact": "Some page behavior was not exercised by a passing user journey.",
+                "untouched_controls": "; ".join(page.untouched) or "The page was not visited by a tested flow.",
+            })
+            n += 1
+    return gaps
+
+
+def _release_decision(run: RunReport, defects: list[dict[str, Any]], gaps: list[dict[str, str]]) -> tuple[str, list[str]]:
+    if run.failed or any(d["status"] == "Open" for d in defects):
+        return "NO-GO", [f"Resolve {d['id']} ({d['title']}) and rerun the affected check." for d in defects if d["status"] == "Open"]
+    conditions = [f"Complete {d['id']} ({d['title']}) or formally accept the remaining test risk." for d in defects if d.get("blocking")]
+    conditions.extend(f"Review {gap['id']} ({gap['page']}) before release." for gap in gaps[:5])
+    if conditions:
+        return "CONDITIONAL GO", conditions
+    return "GO", []
+
+
+def _plain_warning(warning: str) -> tuple[str, str]:
+    text = warning
+    if "limited coverage is expected" in text:
+        return "Coverage note", "Some page behavior could not be driven automatically; this is informational, not a confirmed defect."
+    if "shallow coverage" in text:
+        return "Coverage risk", "The page has more controls than the passing journeys exercised."
+    if "only proves the URL changed" in text:
+        return "Coverage risk", "The journey reached a new address, but the resulting content was not confirmed."
+    if "inconsistent" in text or "flapping" in text:
+        return "Stability risk", "The same journey has produced different results and should be retested."
+    # Unknown warnings can contain selectors, raw URLs, or model-generated text.  Keep
+    # that detail in the appendix/run log; the stakeholder section should remain plain
+    # language and should never accidentally expose an implementation detail.
+    return "Review item", "A validation item needs manual review; see the appendix for details." if text else "NOT CAPTURED"
+
+
+def _report_data(run: RunReport, report_dir: Path) -> dict[str, Any]:
+    counts = canonical_counts(run)
+    defects = _defect_records(run, report_dir)
+    gaps = _coverage_gaps(run)
+    recommendation, conditions = _release_decision(run, defects, gaps)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return {
+        "schema_version": "1.0",
+        "generated_at": now,
+        "site": run.base_url or "NOT CAPTURED",
+        "run_started_at": _utc_timestamp(run.started_at),
+        "run_finished_at": _utc_timestamp(run.finished_at),
+        "run_duration_seconds": _duration_seconds(run.started_at, run.finished_at),
+        "counts": counts,
+        "recommendation": recommendation,
+        "conditions": conditions,
+        "defects": defects,
+        "coverage": {
+            "pages_total": run.coverage.pages_total if run.coverage else 0,
+            "pages_visited": run.coverage.pages_visited if run.coverage else 0,
+            "controls_total": run.coverage.controls_total if run.coverage else 0,
+            "controls_touched": run.coverage.controls_touched if run.coverage else 0,
+            "tested_flows": run.coverage.tested_flows if run.coverage else 0,
+            "planned_flows": run.coverage.planned_flows if run.coverage else 0,
+            "gaps": gaps,
+        },
+        "environment": environment_block(run),
+    }
+
+
+def _utc_timestamp(value: str | None) -> str:
+    if not value:
+        return "NOT CAPTURED"
+    try:
+        raw = value.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).isoformat(timespec="seconds")
+    except ValueError:
+        return "NOT CAPTURED"
+
+
+def _duration_seconds(start: str | None, finish: str | None) -> float | None:
+    if not start or not finish:
+        return None
+    try:
+        a = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        b = datetime.fromisoformat(finish.replace("Z", "+00:00"))
+        if a.tzinfo is None:
+            a = a.replace(tzinfo=timezone.utc)
+        if b.tzinfo is None:
+            b = b.replace(tzinfo=timezone.utc)
+        return round((b - a).total_seconds(), 2)
+    except ValueError:
+        return None
+
+
+def _findings_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
+    """Render complete defects and blockers in a readable, auditable format."""
+    document.add_heading("Defects and blockers", 2)
+    data = report_data or _report_data(run, Path.cwd())
+    defects = data["defects"]
+    if not defects:
+        document.add_paragraph("No open defects or blocked journeys were recorded in this run. No failures to triage this run.")
+        return
+    document.add_paragraph(f"{len(defects)} recorded defect or blocker(s), classified by severity, failure class, and scope.")
+    index = _grid(document, ("ID", "Severity", "Type", "Status", "Title"))
+    _set_table_widths(index, (1.0, 0.75, 1.15, 0.75, 2.55))
+    for defect in defects:
+        cells = index.add_row().cells
+        cells[0].text = _display_id(defect["id"])
+        cells[1].text = defect["severity"]
+        cells[2].text = f'{defect["scope"]} / {defect.get("failure_class", "NOT CAPTURED")}'
+        cells[3].text = defect["status"]
+        cells[4].text = _shorten(defect["title"], 90)
+    for defect in defects:
+        document.add_heading(f'{defect["id"]} — {defect["title"]}', 3)
+        table = _grid(document, ("Field", "Details"))
+        fields = (
+            ("Severity", defect["severity"]),
+            ("Description", defect["description"]),
+            ("Steps to reproduce", "\n".join(f"{i}. {s}" for i, s in enumerate(defect["steps_to_reproduce"], 1))),
+            ("Expected", defect["expected"]),
+            ("Actual", defect["actual"]),
+            ("Status", defect["status"]),
+            ("Owner", defect["owner"]),
+            ("Linked flow", defect["linked_flow_id"]),
+            ("Evidence", defect["screenshot_url"]),
+        )
+        for label, value in fields:
+            cells = table.add_row().cells
+            cells[0].text = label
+            if label == "Evidence" and value != "NOT CAPTURED":
+                _add_hyperlink(cells[1].paragraphs[0], value, value)
+            else:
+                cells[1].text = str(value)
+        document.add_paragraph(f'Business impact: {defect.get("business_impact", "NOT CAPTURED")}')
+
+
+def _write_execution_chart(report_dir: Path, counts: dict[str, Any]) -> Path | None:
+    """Create a dependency-light PNG so export cannot corrupt the summary chart."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+        width, height = 760, 360
+        image = Image.new("RGB", (width, height), "white")
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.load_default()
+        values = [("Passed", int(counts["passed"]), (35, 132, 67)),
+                  ("Failed", int(counts["failed"]), (179, 38, 26)),
+                  ("Skipped", int(counts["skipped"]), (138, 109, 0)),
+                  ("Blocked", int(counts["blocked_flows"]), (90, 90, 90))]
+        maximum = max(1, max(v for _, v, _ in values))
+        draw.text((30, 22), "Run result breakdown", fill="black", font=font)
+        bar_left, bar_top, bar_width, bar_height = 150, 55, 500, 42
+        for index, (label, value, color) in enumerate(values):
+            y = bar_top + index * 68
+            draw.text((30, y + 14), label, fill="black", font=font)
+            draw.rectangle((bar_left, y, bar_left + bar_width, y + bar_height), outline=(210, 210, 210))
+            draw.rectangle((bar_left, y, bar_left + round(bar_width * value / maximum), y + bar_height), fill=color)
+            draw.text((bar_left + bar_width + 15, y + 14), str(value), fill="black", font=font)
+        path = report_dir / "execution-summary.png"
+        image.save(path, format="PNG")
+        return path
+    except Exception:
+        return None
+
+
+def _risks_section(document, run: RunReport, report_data: dict[str, Any]) -> None:
+    document.add_heading("Risks & Issues", 1)
+    defects = report_data["defects"]
+    blockers = [d for d in defects if d.get("blocking") or d["severity"] in {"Critical", "High"}]
+    document.add_heading("Blockers", 2)
+    if blockers:
+        for defect in blockers:
+            document.add_paragraph(f'{defect["id"]}: {defect["title"]} — {defect["business_impact"]}', style="List Bullet")
+    else:
+        document.add_paragraph("No release blockers were recorded.")
+
+    document.add_heading("Risks", 2)
+    risks = []
+    if run.flapping:
+        risks.append(f"{len(run.flapping)} journey(s) produced inconsistent recent results and should be retested.")
+    if run.failed:
+        risks.append("The failed checks reduce confidence in the affected journeys until they pass consistently.")
+    risks.append("Mobile viewport coverage was not executed; responsive and mobile release risk remains unverified.")
+    for risk in risks:
+        document.add_paragraph(risk, style="List Bullet")
+
+    document.add_heading("Coverage notes", 2)
+    notes = [_plain_warning(w)[1] for w in run.warnings]
+    if run.auth_lines:
+        notes.extend(f"Authentication: {line}" for line in run.auth_lines)
+    if run.human_input_pages:
+        notes.append(f"Needs a human - {len(run.human_input_pages)} form step(s) require manual completion; those steps were not automated.")
+    if run.untested_auth:
+        notes.append(f"Not tested - {len(run.untested_auth)} login or sign-up form(s) found; content behind them was not exercised.")
+        for wall in run.untested_auth:
+            notes.append(f'Authentication form fields observed: {", ".join(wall["fields"]) or "NOT CAPTURED"}.')
+    notes = list(dict.fromkeys(notes))
+    if notes:
+        for note in notes:
+            document.add_paragraph(note, style="List Bullet")
+    else:
+        document.add_paragraph("No additional coverage notes were recorded.")
+
+
+def _test_index_section(document, run: RunReport) -> None:
+    """Append a complete, uniquely identified test index with plain expected/actual text."""
+    document.add_heading("Complete test index", 2)
+    table = _grid(document, ("Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"))
+    _set_table_widths(table, (0.65, 0.5, 1.25, 1.0, 1.15, 1.25, 0.55))
+    for number, (scope, key, outcome, flow) in enumerate(_all_outcomes(run), 1):
+        cells = table.add_row().cells
+        title = flow.title if flow else outcome.title.replace("_", " ")
+        expected = flow.expected if flow and flow.expected else (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "(no assertion captured)")
+        observed = flow.observed if flow and flow.observed else (plain_skip_reason(outcome.error) if outcome.status == "skipped" else ("As expected." if outcome.passed else plain_error(outcome.error)))
+        values = (_display_id(f"T-{number:03d}"), scope, title, outcome.url, expected, observed or "NOT CAPTURED", outcome.status.upper())
+        for cell, value in zip(cells, values):
+            cell.text = value
+
+
+def _evidence_hash(path: str) -> str:
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return "NOT CAPTURED"
 
 
 # ------------------------------------------------------------------ plain-language translation for the main
@@ -898,61 +1345,57 @@ def _flow_row(flow: FlowReport) -> tuple[str, str, str, str, str, str]:
     return "flow", flow.title, flow.start_url, flow.expected or "(not stated)", flow.observed or "(never ran)", verdict
 
 
-def _test_summary_section(document, run: RunReport) -> None:
-    """One row per test, page or flow, in one place - so a reader can scan what was tested, what it
-    expected, and what actually happened without opening the per-page/per-flow sections at all.
-    Failing tests are listed first (severity of the finding, if any, in the last column); the rest
-    keep the report's normal order. Full detail (screenshots, ARIA snapshots, traces) stays in the
-    per-page and per-flow sections below - this table is the index into them, not a replacement."""
-    rows = [_page_row(o) for u in run.url_reports for o in u.outcomes]
-    rows += [_flow_row(f) for f in run.tested_flows]
-    if not rows and not run.untested_flows:
+def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
+    """Render the quantitative summary and only the tests needing attention.
+
+    The complete test index is kept in the appendix, where it can be searched
+    without making the release decision pages unreadable.
+    """
+    data = report_data or _report_data(run, Path.cwd())
+    if not _all_outcomes(run) and not run.untested_flows:
         return
-    severity_of = {f.test: f.severity for f in run.findings}
+    counts = data["counts"]
     document.add_heading("Test Execution Summary", 1)
-    document.add_heading("Test summary", 2)
-    blocked = len(run.untested_flows)
-    page_skipped = sum(1 for r in rows if r[-1] == "SKIPPED")
-    skipped = sum(1 for f in run.untested_flows if f.status in {"rejected", "skipped"}) + page_skipped
-    passed_n = sum(1 for r in rows if r[-1] == "PASSED")
-    failed_n = sum(1 for r in rows if r[-1] == "FAILED")
-    executed = passed_n + failed_n      # a skip was never actually executed - it is excluded from the pass rate too
-    pass_rate = round(100 * passed_n / executed) if executed else 0
-    document.add_paragraph(f"{executed} executed test(s): {passed_n} passed, {failed_n} failed, {blocked} blocked, "
-                           f"{skipped} skipped; pass rate: {pass_rate}%. A blocked flow or a skipped test is "
-                           "counted as neither passed nor failed.")
-    metrics = _grid(document, ("Executed", "Passed", "Failed", "Blocked", "Skipped", "Pass rate"))
-    values = (str(executed), str(passed_n), str(failed_n), str(blocked), str(skipped), f"{pass_rate}%")
-    for cell, value in zip(metrics.add_row().cells, values):
-        cell.text = value
-    if not rows:
-        document.add_paragraph("No executable tests were generated because the candidate flows did not pass browser verification. See Defect Report and Risks & Issues for the blocker.")
-        return
-    table = _grid(document, ("Scope", "Test", "URL", "Expected", "Observed", "Verdict"))
-    order = {"FAILED": 0, "SKIPPED": 1, "PASSED": 2}
-    for scope, test, url, expected, observed, verdict in sorted(rows, key=lambda r: (order[r[-1]], r[0], r[1])):
-        cells = table.add_row().cells
-        cells[0].text = scope
-        cells[1].text = test + (f" [{severity_of[test]}]" if verdict == "FAILED" and test in severity_of else "")
-        cells[2].text = url
-        cells[3].text = expected
-        cells[4].text = observed
-        cells[5].text = verdict
-        if verdict in {"FAILED", "SKIPPED"}:
-            color = _RED if verdict == "FAILED" else RGBColor(0x8A, 0x6D, 0x00)
-            for p in cells[5].paragraphs:
-                for r in p.runs:
-                    r.font.color.rgb = color
-                    r.bold = True
+    document.add_heading("Run totals", 2)
+    document.add_paragraph(
+        f'{counts["executed_tests"]} tests ran: {counts["passed"]} passed and {counts["failed"]} failed. '
+        f'{counts["skipped"]} were skipped and {counts["blocked_flows"]} user journeys were blocked. '
+        f'Pass rate among tests that ran: {counts["pass_rate_percent"]}%. Blocked journeys are reported separately.'
+    )
+    metrics = _grid(document, ("Metric", "Value"))
+    for label, value in (("Tests that ran", counts["executed_tests"]), ("Passed", counts["passed"]),
+                         ("Failed", counts["failed"]), ("Skipped", counts["skipped"]),
+                         ("Blocked user journeys", counts["blocked_flows"]),
+                         ("Pass rate", f'{counts["pass_rate_percent"]}%')):
+        cells = metrics.add_row().cells
+        cells[0].text, cells[1].text = label, str(value)
+    attention = []
+    for test_number, (scope, key, outcome, flow) in enumerate(_all_outcomes(run), 1):
+        if outcome.status not in {"failed", "error", "skipped"}:
+            continue
+        title = flow.title if flow else outcome.title.replace("_", " ")
+        expected = flow.expected if flow and flow.expected else (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "NOT CAPTURED")
+        observed = flow.observed if flow and flow.observed else (plain_skip_reason(outcome.error) if outcome.status == "skipped" else plain_error(outcome.error))
+        attention.append((_display_id(f"T-{test_number:03d}"), scope, title, outcome.url, expected, observed or "NOT CAPTURED", outcome.status.upper()))
+    if attention:
+        document.add_heading("Tests requiring attention", 2)
+        table = _grid(document, ("Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"))
+        _set_table_widths(table, (0.65, 0.5, 1.25, 1.0, 1.15, 1.25, 0.55))
+        for row in attention:
+            cells = table.add_row().cells
+            for cell, value in zip(cells, row):
+                cell.text = value
+    else:
+        document.add_paragraph("No failed or skipped tests require attention in this run.")
 
 
 def _flows_table(document, flows: list[FlowReport]) -> None:
-    table = _grid(document, ("Flow", "Flow status", "Result", "Pages"))
+    table = _grid(document, ("Flow", "Stored status", "This run", "Pages"))
     for flow in flows:
         cells = table.add_row().cells
         cells[0].text = flow.title
-        cells[1].text = flow.status
-        cells[2].text = flow.outcome.status.upper() if flow.outcome else "not run"
+        cells[1].text = {"verified": "Verified", "approved": "Approved", "stale": "Needs retesting", "candidate": "Not yet verified"}.get(flow.status, "Not recorded")
+        cells[2].text = ("Passed" if flow.passed else "Failed") if flow.outcome else "Blocked / not run"
         cells[3].text = _ARROW.join(flow.pages) or "-"
 
 
@@ -979,9 +1422,14 @@ def _coverage_section(document, coverage: Coverage | None) -> None:
         f"Pages visited by a tested flow: {coverage.pages_visited} of {coverage.pages_total} ({coverage.percent_pages}%). "
         f"Content controls a tested flow acts on: {coverage.controls_touched} of {coverage.controls_total} "
         f"({coverage.percent_controls}%). Flows: {coverage.tested_flows} tested, {coverage.planned_flows} not yet backed by a "
-        "passing run. Header, navigation and footer links are left out of the totals: they repeat on every page and are "
-        "checked by the page tests.")
-    document.add_paragraph("Requirements/user stories are represented by the plain-language flow goals. A goal is traceable only when its flow is verified or approved; candidate and unbuildable goals remain coverage gaps.")
+        "passing run.")
+    document.add_paragraph(
+        "Method: the page denominator is the number of unique explored URL paths after redirect aliases are removed. "
+        "The control denominator is the number of visible, enabled content links, buttons, selects, and fields recorded "
+        "by the explorer; repeated header, navigation, and footer controls are excluded. The raw URL and control lists "
+        "are included in the machine-readable report-data.json and the coverage appendix.")
+    document.add_paragraph("Header, navigation and footer links are left out of the control denominator; they are shared chrome rather than page-specific requirements.")
+    document.add_paragraph("Requirements and user stories are represented by the plain-language flow goals. A goal is traceable only when its flow is verified or approved; unverified goals remain coverage gaps.")
     table = _grid(document, ("Page", "Visited", "Touched", "Not touched by any flow"))
     for page in coverage.pages:
         cells = table.add_row().cells
@@ -998,14 +1446,15 @@ def _untested_flows_section(document, flows: list[FlowReport]) -> None:
     if not flows:
         return
     document.add_heading("Flows without a test result in this run", 1)
-    document.add_paragraph("These flows exist but no generated test ran for them (not verified yet, rejected, "
-                           "or waiting to be rebuilt from a changed sentence).")
-    table = _grid(document, ("Flow", "Flow status", "Most recent attempt"))
+    document.add_paragraph("These journeys have no passing executable result in this run.")
+    table = _grid(document, ("Flow", "Stored status", "Latest result"))
     for flow in flows:
         cells = table.add_row().cells
         cells[0].text = flow.title
-        cells[1].text = flow.status
-        cells[2].text = flow.history[-1] if flow.history else "never run"
+        cells[1].text = {"verified": "Verified", "approved": "Approved", "stale": "Needs retesting", "candidate": "Not yet verified"}.get(flow.status, "Not recorded")
+        latest = flow.history[-1] if flow.history else "never run"
+        cells[2].text = f"Blocked / not run — {latest}"
+        document.add_paragraph(f'{flow.title} — Most recent attempt: {latest}')
 
 
 def _summary_table(document, reports: list[UrlReport]) -> None:
@@ -1026,14 +1475,14 @@ def _summary_table(document, reports: list[UrlReport]) -> None:
 
 def _metadata(document, run: RunReport, scope: str) -> None:
     document.add_paragraph(f"Scope: {scope}")
-    document.add_paragraph(f"Model: {run.model or 'unknown'}")
-    document.add_paragraph(f"Run started: {run.started_at or 'unknown'}")
+    counts = canonical_counts(run)
+    document.add_paragraph(f"Run started: {_utc_timestamp(run.started_at)}")
+    document.add_paragraph(f"Run finished: {_utc_timestamp(run.finished_at)}")
+    duration = _duration_seconds(run.started_at, run.finished_at)
+    document.add_paragraph(f"Run duration: {duration:.2f}s" if duration is not None else "Run duration: NOT CAPTURED")
     document.add_paragraph(
-        f"Generated: {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
-    )
-    document.add_paragraph(
-        f"Totals: {run.total} executable tests | {run.passed} passed | {run.failed} failed | "
-        f"{len(run.untested_flows)} blocked/unverified flows"
+        f"Totals: {counts['executed_tests']} tests ran | {counts['passed']} passed | {counts['failed']} failed | "
+        f"{counts['skipped']} skipped | {counts['blocked_flows']} blocked journeys"
     )
 
 
@@ -1051,52 +1500,86 @@ def _warnings_section(document, warnings: list[str]) -> None:
         para.runs[0].font.color.rgb = RGBColor(0xB3, 0x26, 0x1A)
 
 
-def _executive_summary_section(document, run: RunReport) -> None:
+def _executive_summary_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
     document.add_heading("Executive Summary", 1)
-    blocked = len(run.untested_flows)
-    status = ("BLOCKED" if blocked and not run.total else
-              "PASS WITH ISSUES" if blocked or run.failed or run.warnings else
-              "PASS" if run.total and run.passed else "FAIL")
-    recommendation = "GO" if status == "PASS" else ("CONDITIONAL GO" if status == "PASS WITH ISSUES" else "NO-GO")
-    document.add_paragraph("Test objective: assess the discovered website pages and user journeys using generated, browser-executed checks.")
-    table = _grid(document, ("Overall status", "Tests run", "Passed", "Failed", "Blocked flows", "Release recommendation"))
-    cells = table.add_row().cells
-    for cell, value in zip(cells, (status, str(run.total), str(run.passed), str(run.failed), str(blocked), recommendation)):
+    data = report_data or _report_data(run, Path.cwd())
+    counts = data["counts"]
+    recommendation = data["recommendation"]
+    status = "FAIL" if recommendation == "NO-GO" else ("PASS WITH ISSUES" if recommendation == "CONDITIONAL GO" else "PASS")
+    document.add_paragraph("Objective: check the discovered pages and the user journeys generated from them, then provide a release recommendation.")
+    document.add_paragraph(
+        f'Release decision: {recommendation}. {counts["passed"]} of {counts["executed_tests"]} tests passed; '
+        f'{counts["failed"]} failed, {counts["blocked_flows"]} journeys were blocked, and {counts["skipped"]} were skipped.'
+    )
+    table = _grid(document, ("Overall status", "Tests run", "Passed", "Failed", "Skipped", "Blocked journeys", "Recommendation"))
+    values = (status, str(counts["executed_tests"]), str(counts["passed"]), str(counts["failed"]),
+              str(counts["skipped"]), str(counts["blocked_flows"]), recommendation)
+    for cell, value in zip(table.add_row().cells, values):
         cell.text = value
-    document.add_paragraph("Top risks and blockers:")
-    risks = run.warnings[:5] or ["No blocking risks were recorded in this run."]
-    for risk in risks:
-        document.add_paragraph(risk, style="List Bullet")
+    document.add_heading("Conditions and top risks", 2)
+    conditions = data["conditions"]
+    if conditions:
+        for condition in conditions:
+            document.add_paragraph(condition, style="List Bullet")
+    else:
+        document.add_paragraph("No release conditions were recorded.")
 
 
 def _scope_section(document, run: RunReport) -> None:
     document.add_heading("Test Scope", 1)
     document.add_paragraph(f"In scope: {len(run.url_reports)} discovered URL(s), page-level checks, and generated user flows.")
     document.add_paragraph("Out of scope: performance benchmarking, penetration testing, full browser/device compatibility, and business-rule correctness unless explicitly represented by a verified flow.")
-    document.add_paragraph("Test types performed: functional smoke testing, authenticated navigation, flow verification, evidence capture, and coverage analysis.")
+    document.add_paragraph("Test types performed: functional smoke testing, navigation, flow verification, evidence capture, and coverage analysis.")
+    document.add_paragraph("Device coverage: Windows desktop only. Mobile viewport, Safari, Firefox, and Edge were not run and remain release risks for responsive or browser-specific behavior.")
 
 
 def _environment_section(document, run: RunReport) -> None:
     document.add_heading("Test Environment", 1)
     env = environment_block(run)
     table = _grid(document, ("Item", "Value"))
-    values = [("URL scope", run.base_url or "All discovered URLs"), ("Model", run.model or "unknown"),
-              ("Browser", env.get("Browser", "Chromium")), ("Operating system", env.get("OS", "unknown")),
-              ("Python", env.get("Python", "unknown")), ("Test data/accounts", "Configured local test account; secrets excluded from the report"),
-              ("Tools", "Playwright, pytest, website_test_pipeline")]
+    values = [("URL scope", run.base_url or "All discovered URLs"), ("Browser", f'{env.get("Browser", "Chromium")} {env.get("Browser version", "NOT CAPTURED")}'),
+              ("Operating system", env.get("OS", "unknown")), ("Python", env.get("Python", "unknown")),
+              ("Playwright", env.get("Playwright", "NOT CAPTURED")), ("pytest", env.get("pytest", "NOT CAPTURED")),
+              ("Pipeline version", f'{env.get("Pipeline version", "NOT CAPTURED")} ({env.get("Pipeline git SHA", "NOT CAPTURED")})'),
+              ("Desktop/device", "Windows desktop tested; mobile viewport not run"),
+              ("Test data/accounts", "Configured local test account; secrets excluded from the report")]
     for key, value in values:
         cells = table.add_row().cells
         cells[0].text, cells[1].text = key, value
 
 
-def _conclusion_section(document, run: RunReport) -> None:
+def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
     document.add_heading("Conclusions & Recommendations", 1)
-    if run.failed or run.untested_flows:
-        document.add_paragraph("The site is not ready for an unconditional release based on this run. Resolve the listed failures and coverage gaps, then rerun the affected journeys.")
+    data = report_data or _report_data(run, Path.cwd())
+    recommendation = data["recommendation"]
+    if recommendation == "GO":
+        document.add_paragraph("The tested scope is suitable for release. Review the documented out-of-scope items before signing off.")
+    elif recommendation == "CONDITIONAL GO":
+        document.add_paragraph("Release is acceptable only if every condition listed in the Executive Summary is reviewed and accepted.")
     else:
-        document.add_paragraph("The tested scope completed without recorded failures. Review the out-of-scope items before making a release decision.")
-    for recommendation in ("Review all open defects and blocked flows.", "Rerun failed or stale journeys after fixes.", "Expand coverage for pages and controls not exercised by a passing flow."):
-        document.add_paragraph(recommendation, style="List Bullet")
+        document.add_paragraph("Do not release based on this run. The open defects must be resolved and the affected journeys rerun.")
+    for condition in data["conditions"] or ["Review the out-of-scope mobile and compatibility coverage before sign-off."]:
+        document.add_paragraph(condition, style="List Bullet")
+
+
+def _validate_docx_export(destination: Path) -> None:
+    """Reject the known catastrophic export-corruption shapes before delivery.
+
+    This is deliberately a small integrity gate, not a substitute for rendering
+    visual QA.  The old exporter could emit pages containing repeated ``1`` or
+    year values and, in a separate failure mode, explode the table cell count.
+    Catching those signatures in the OOXML makes the regression test deterministic
+    and prevents a broken artifact from being presented as a finished report.
+    """
+    with zipfile.ZipFile(destination) as archive:
+        xml = archive.read("word/document.xml").decode("utf-8", errors="replace")
+    text = re.sub(r"<[^>]+>", " ", xml)
+    if re.search(r"(?:\b1\b[\s,;]*){30,}", text):
+        raise ValueError(f"DOCX export contains a repeated-value corruption sequence: {destination}")
+    if re.search(r"(?:(?:19|20)\d{2}[\s,;]*){20,}", text):
+        raise ValueError(f"DOCX export contains a repeated-year corruption sequence: {destination}")
+    if xml.count("<w:tc") > 20000:
+        raise ValueError(f"DOCX export contains an implausibly large table-cell count: {destination}")
 
 
 def _save_document(document, destination: Path, run: RunReport) -> Path:
@@ -1105,10 +1588,14 @@ def _save_document(document, destination: Path, run: RunReport) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
         document.save(destination)
+        if destination.is_file():
+            _validate_docx_export(destination)
         return destination
     except PermissionError:
         alternative = destination.with_name(destination.stem + "-new" + destination.suffix)
         document.save(alternative)
+        if alternative.is_file():
+            _validate_docx_export(alternative)
         run.notes.append(f"{destination.name} is open in another program and could not be overwritten; "
                          f"the new report was written to {alternative.name}")
         return alternative
@@ -1138,19 +1625,24 @@ def build_url_docx(run: RunReport, report: UrlReport, destination: Path) -> None
     _save_document(document, destination, run)
 
 
-def build_combined_docx(run: RunReport, destination: Path) -> None:
+def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str, Any] | None = None) -> None:
+    report_data = report_data or _report_data(run, destination.parent)
     document = Document()
-    document.add_heading("Website Test Report — Full Run", 0)
+    document.add_heading("Website Test Report Full Run", 0)
     _metadata(document, run, scope="all URLs")
     _table_of_contents(document)
-    document.add_paragraph("This report summarizes what was tested, what happened, and the risks that remain. Detailed screenshots, traces, videos, and assertion evidence are retained in the evidence section at the end.")
-    _executive_summary_section(document, run)
+    document.add_paragraph("This report states whether the tested scope is ready for release, identifies the checks that need attention, and records the remaining coverage risks. Technical evidence is indexed in the appendix.")
+    _executive_summary_section(document, run, report_data)
     _scope_section(document, run)
     _environment_section(document, run)
+    _test_summary_section(document, run, report_data)
+    chart = _write_execution_chart(destination.parent, report_data["counts"])
+    if chart:
+        document.add_paragraph("Result breakdown")
+        document.add_picture(str(chart), width=Inches(5.7))
     document.add_page_break()
-    _test_summary_section(document, run)
     document.add_heading("Defect Report (Bugs Found)", 1)
-    _findings_section(document, run)
+    _findings_section(document, run, report_data)
     link_base = destination.parent
     if run.tested_flows:
         document.add_heading("User flows", 1)
@@ -1162,36 +1654,73 @@ def build_combined_docx(run: RunReport, destination: Path) -> None:
     _untested_flows_section(document, run.untested_flows)
     _coverage_section(document, run.coverage)
     document.add_heading("Test Logs & Evidence", 1)
-    document.add_paragraph("The following appendix contains screenshots, videos, traces, full assertions, and failure details for the executed tests.")
-    document.add_heading("Risks & Issues", 1)
-    _warnings_section(document, run.warnings)
-    _conclusion_section(document, run)
+    document.add_paragraph("Screenshots, videos, traces, assertions, and failure details are indexed in the appendix. The machine-readable source is included as report-data.json.")
+    _risks_section(document, run, report_data)
+    _conclusion_section(document, run, report_data)
     _appendix_section(document, run, link_base=link_base)
     _bookmark_headings(document)
     _save_document(document, destination, run)
 
 
 def _appendix_section(document, run: RunReport, *, link_base: Path | None) -> None:
-    """Full per-test evidence - screenshots, assertion lists, failure detail (ARIA snapshots, tracebacks) -
-    kept out of the body so the findings/summary/coverage sections above stay skimmable. Organised the same
-    way the body refers to it: flows first, then pages, each in its usual order."""
+    """Indexed raw evidence, deduplicated screenshots, and machine-readable source data."""
     if not run.tested_flows and not any(r.outcomes for r in run.url_reports):
         return
     document.add_page_break()
     document.add_heading("Appendix: full evidence", 1)
     document.add_paragraph(
-        "Screenshots, full assertion lists and failure detail for every test, organised by flow then by page. "
-        "This is the raw evidence behind the Findings and Test summary sections above.")
+        "This appendix contains the searchable test index, screenshots, attachments, assertions, and failure details. "
+        "Repeated screenshots are stored once and referenced by evidence ID.")
+    para = document.add_paragraph("Machine-readable source: ")
+    _add_hyperlink(para, "report-data.json", "report-data.json")
+
+    document.add_heading("Appendix index", 2)
+    index = _grid(document, ("Entry", "Contents"))
+    for entry, contents in (("Complete test index", "Every executed test with a unique ID and expected/observed result."),
+                            ("Coverage data", "Page URLs, denominator rules, and untouched controls."),
+                            ("Evidence", "Deduplicated screenshots, traces, and videos by test and step."),
+                            ("Report data", "Validated JSON source used to render this document.")):
+        cells = index.add_row().cells
+        cells[0].text, cells[1].text = entry, contents
+
+    _test_index_section(document, run)
+    if run.coverage and run.coverage.pages:
+        document.add_heading("Coverage data", 2)
+        table = _grid(document, ("Page", "URL", "Visited", "Controls", "Untouched controls"))
+        for page in run.coverage.pages:
+            cells = table.add_row().cells
+            values = (page.path, page.url, "Yes" if page.visited else "No", f"{page.touched}/{page.total}", "; ".join(page.untouched) or "None")
+            for cell, value in zip(cells, values):
+                cell.text = value
+
+    document.add_heading("Evidence index", 2)
+    evidence_index = _grid(document, ("Evidence ID", "Test", "Type", "File"))
+    seen_files: set[str] = set()
+    evidence_number = 1
+    for _, key, outcome, flow in _all_outcomes(run):
+        test_label = flow.title if flow else (outcome.title or key)
+        for path in outcome.evidence + outcome.attachments:
+            if path in seen_files:
+                continue
+            seen_files.add(path)
+            cells = evidence_index.add_row().cells
+            evidence_id = f"E-{evidence_number:04d}"
+            evidence_number += 1
+            values = (evidence_id, test_label, "Screenshot" if path in outcome.evidence else "Trace/video")
+            for cell, value in zip(cells[:3], values):
+                cell.text = value
+            file_cell = cells[3]
+            file_cell.text = ""
+            _add_hyperlink(file_cell.paragraphs[0], _relative_artifact(path, link_base), Path(path).name)
+
     if run.tested_flows:
         document.add_heading("Flow evidence", 2)
         for flow in run.tested_flows:
-            document.add_page_break()
             _render_flow(document, flow, embed=True, link_base=link_base)
     pages_with_tests = [r for r in run.url_reports if r.outcomes]
     if pages_with_tests:
         document.add_heading("Page evidence", 2)
         for report in pages_with_tests:
-            document.add_page_break()
             document.add_heading(report.url, 2)
             for outcome in report.outcomes:
                 _render_outcome(document, outcome, embed=True, link_base=link_base)
@@ -1213,8 +1742,11 @@ def create_report(
 ) -> RunReport:
     run = load_run(artifacts_dir, tests_dir, model=model, flows_file=flows_file, ratings_file=ratings_file)
     out_dir.mkdir(parents=True, exist_ok=True)
+    report_data = _report_data(run, out_dir)
+    validate_report_data(report_data)
+    write_report_data(out_dir / "report-data.json", report_data)
     for report in run.url_reports:
         build_url_docx(run, report, out_dir / f"{name_for(report.url)}.docx")
     if combined:
-        build_combined_docx(run, out_dir / "full-report.docx")
+        build_combined_docx(run, out_dir / "full-report.docx", report_data)
     return run

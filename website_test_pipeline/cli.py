@@ -40,6 +40,7 @@ def main() -> int:
     parser.add_argument('--only', default='', help='flows run: run only these stages')
     parser.add_argument('--failed-only', action='store_true', help='verify: only flows that are candidate or stale (re-check after a site change)')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
+    parser.add_argument('--rerun', action='store_true', help='report: rerun the generated tests before rendering; default uses the existing test_results.json')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
     parser.add_argument('--commit', action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
@@ -125,13 +126,22 @@ def main() -> int:
         return run_execute(settings, log)
     if args.command == 'report':
         from . import report as report_mod
-        if preflight_session(settings, log) == 2:
+        # A report must describe one specific execution.  Re-running implicitly
+        # made the displayed report disagree with the run the user had just seen,
+        # and also made report generation depend on the live site being available.
+        # Use --rerun (or --repair) when a fresh execution is explicitly wanted.
+        result = subprocess.CompletedProcess([], 0)
+        if args.rerun or args.repair:
+            if preflight_session(settings, log) == 2:
+                return 2
+            if has_session(settings):
+                pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
+            pw_out = settings.artifacts_dir/'pw'
+            pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}']
+            result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
+        elif not (settings.artifacts_dir/'test_results.json').exists():
+            log.error('REPORT no existing test_results.json; run execute first or use --rerun')
             return 2
-        if has_session(settings):
-            pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
-        pw_out = settings.artifacts_dir/'pw'
-        pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}']
-        result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
         if args.repair:
             from .failrepair import repair_failures
             manifest = json.loads((settings.artifacts_dir/'run.json').read_text(encoding='utf-8')) if (settings.artifacts_dir/'run.json').exists() else {'urls': {}}
@@ -141,8 +151,9 @@ def main() -> int:
             if n:
                 log.info('REPAIR regenerated %s page(s); re-running', n)
                 result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
-        from .flowresults import feed_results
-        feed_results(settings, log)
+        if args.rerun or args.repair:
+            from .flowresults import feed_results
+            feed_results(settings, log)
         run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined, flows_file=settings.flows_file, ratings_file=settings.ratings_file)
         log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
         for warning in run.warnings:

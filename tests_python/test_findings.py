@@ -111,13 +111,13 @@ def test_broken_or_empty_source_does_not_raise():
 
 def test_a_definite_flow_failure_is_flaky_data_not_a_test_defect():
     f = classify_failure("flow x", "flow", "https://x.test/en", "some error", "", [], definite=True)
-    assert f.kind == "flaky_data" and f.severity == "P1" and "promised content never appeared" in f.summary
+    assert f.kind == "flaky_data" and f.severity == "High" and "promised content never appeared" in f.summary
 
 
 def test_role_mismatch_is_preferred_over_unclear():
     error = 'AssertionError: Locator expected to be visible\nE waiting for get_by_role("group", name="Passcode (default)")'
     f = classify_failure("t", "page", "https://x.test/en", error, "", INV)
-    assert f.kind == "test_defect" and f.severity == "P2" and "no role recorded" in f.summary
+    assert f.kind == "test_defect" and f.severity == "Medium" and "no role recorded" in f.summary
 
 
 def test_url_heuristic_is_used_when_role_heuristic_does_not_apply():
@@ -331,7 +331,7 @@ def test_collect_findings_covers_page_and_flow_failures_and_skips_passes():
     run = SimpleNamespace(url_reports=[report], tested_flows=[flow, passing_flow])
     findings = collect_findings(run, Path("/nope"), [], {}, {})
     assert [f.test for f in findings] == ["flow one", "t_bad"]              # P1 (flow) sorts before P2 (page)
-    assert findings[0].severity == "P1" and findings[1].severity == "P2"
+    assert findings[0].severity == "High" and findings[1].severity == "Medium"
 
 
 # ------------------------------------------------------------------ login walls (auth)
@@ -392,7 +392,7 @@ def test_auth_failure_finding_fires_only_when_an_account_never_once_signed_in():
     findings = auth_failure_findings(never)
     assert len(findings) == 1
     finding = findings[0]
-    assert finding.severity == "P1" and finding.kind == "auth_failure" and "default" in finding.summary
+    assert finding.severity == "High" and finding.kind == "auth_failure" and "default" in finding.summary
     assert finding.url == "https://x.test/login" and "default" in finding.repro
 
 
