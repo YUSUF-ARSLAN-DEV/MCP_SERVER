@@ -402,3 +402,20 @@ def test_auth_failure_finding_keeps_accounts_separate():
                {"account": "customer", "status": "failed", "attempts": 1, "url": "https://x.test/c"}]
     findings = auth_failure_findings(history)
     assert len(findings) == 1 and "customer" in findings[0].summary
+
+
+def test_plain_error_matches_case_insensitively_and_reports_what_the_field_actually_held():
+    from website_test_pipeline.findings import plain_error
+    # real text captured live against OrangeHRM: Playwright's own message capitalizes "Value", and the
+    # EXPECTED value in that first line ('') is not what went wrong - the field still held "TestUser".
+    real = ("E   AssertionError: Locator expected to have Value ''\n"
+           "E   Actual value: TestUser \n"
+           "E   Call log:\n"
+           "E     - Expect \"to_have_value\" with timeout 12000ms")
+    assert plain_error(real) == 'The field showed "TestUser" instead.'
+
+
+def test_plain_error_have_value_with_a_genuinely_empty_actual_reads_left_empty():
+    from website_test_pipeline.findings import plain_error
+    text = "E   AssertionError: Locator expected to have value 'hello'\nE   Actual value: \nE   Call log:"
+    assert plain_error(text) == "The field was left empty."

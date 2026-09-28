@@ -68,13 +68,15 @@ def _first_error_line(error: str | None) -> str:
     return (error or "").strip().splitlines()[0][:220] if error else ""
 
 
-_ERR_NOT_VISIBLE = re.compile(r"Locator expected to be visible")
-_ERR_URL = re.compile(r"Page URL expected to be")
-_ERR_URL_ACTUAL = re.compile(r"Actual value:\s*(\S+)")
-_ERR_TIMEOUT = re.compile(r"Timeout \d+ms exceeded")
-_ERR_STRICT = re.compile(r"strict mode violation.*?resolved to (\d+) elements", re.S)
-_ERR_VALUE = re.compile(r"Locator expected to have value '([^']*)'")
-_ERR_NOT_FOUND = re.compile(r"element\(s\) not found")
+_ERR_NOT_VISIBLE = re.compile(r"Locator expected to be visible", re.I)
+_ERR_URL = re.compile(r"Page URL expected to be", re.I)
+_ERR_URL_ACTUAL = re.compile(r"Actual value:\s*(\S+)", re.I)
+_ERR_TIMEOUT = re.compile(r"Timeout \d+ms exceeded", re.I)
+_ERR_STRICT = re.compile(r"strict mode violation.*?resolved to (\d+) elements", re.S | re.I)
+_ERR_VALUE = re.compile(r"Locator expected to have value", re.I)          # detector only - the expected value in
+                                                                           # this message is not what went wrong
+_ERR_ACTUAL_LINE = re.compile(r"^E[ \t]+Actual value:[ \t]*(.*?)[ \t]*$", re.M)
+_ERR_NOT_FOUND = re.compile(r"element\(s\) not found", re.I)
 
 
 def plain_error(error: str | None) -> str:
@@ -95,11 +97,29 @@ def plain_error(error: str | None) -> str:
         return "The action timed out waiting for the page to respond."
     if m := _ERR_STRICT.search(raw):
         return f"The check was ambiguous: {m.group(1)} matching elements were found instead of one."
-    if m := _ERR_VALUE.search(raw):
-        return "The field was left empty." if not m.group(1) else f'The field did not show "{m.group(1)}".'
+    if _ERR_VALUE.search(raw):
+        # what the field actually held, not what the assertion expected - "expected ''" does not mean "was empty"
+        actual = _ERR_ACTUAL_LINE.search(raw)
+        value = actual.group(1) if actual else ""
+        return "The field was left empty." if not value else f'The field showed "{value}" instead.'
     if _ERR_NOT_FOUND.search(raw):
         return "The expected element could not be found on the page."
     return line or "failed with no captured reason"
+
+
+_SKIP_REASON = re.compile(r"Skipped:\s*(.+)")
+
+
+def plain_skip_reason(error: str | None) -> str:
+    """A page test can be deliberately skipped (validator.py refused an unsafe spec) rather than failed. pytest
+    records the reason as the repr of a (file, line, message) tuple - e.g.
+    ('...spec.py', 5, "Skipped: NOT TESTABLE: no spec passed validation - ..."); this pulls just the message out,
+    so a reader sees why nothing was tested instead of that raw tuple."""
+    match = _SKIP_REASON.search(error or "")
+    if not match:
+        return "This page could not be safely tested."
+    reason = re.sub(r'["\')]+\s*$', "", match.group(1).strip())
+    return f"Not tested: {reason}"
 
 
 def _norm(text: str) -> str:
