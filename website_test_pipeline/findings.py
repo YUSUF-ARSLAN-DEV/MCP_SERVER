@@ -68,6 +68,40 @@ def _first_error_line(error: str | None) -> str:
     return (error or "").strip().splitlines()[0][:220] if error else ""
 
 
+_ERR_NOT_VISIBLE = re.compile(r"Locator expected to be visible")
+_ERR_URL = re.compile(r"Page URL expected to be")
+_ERR_URL_ACTUAL = re.compile(r"Actual value:\s*(\S+)")
+_ERR_TIMEOUT = re.compile(r"Timeout \d+ms exceeded")
+_ERR_STRICT = re.compile(r"strict mode violation.*?resolved to (\d+) elements", re.S)
+_ERR_VALUE = re.compile(r"Locator expected to have value '([^']*)'")
+_ERR_NOT_FOUND = re.compile(r"element\(s\) not found")
+
+
+def plain_error(error: str | None) -> str:
+    """The pytest failure, in one plain sentence, for a reader who has never seen Playwright - matched against
+    the known shapes the runner/generator/validator actually produce (see tests), never guessed. The raw
+    traceback this was built from is never discarded: it stays wherever the caller already keeps it (report.py's
+    Appendix; a finding's own repro line)."""
+    raw = error or ""
+    line = _first_error_line(raw)
+    if _ERR_NOT_VISIBLE.search(raw) and _ERR_NOT_FOUND.search(raw):
+        return "The expected element never appeared on the page."
+    if _ERR_NOT_VISIBLE.search(raw):
+        return "The expected element was there, but never became visible."
+    if _ERR_URL.search(raw):
+        actual = _ERR_URL_ACTUAL.search(raw)
+        return f"The page ended up at {actual.group(1) if actual else 'a different address'}, not the expected page."
+    if _ERR_TIMEOUT.search(raw):
+        return "The action timed out waiting for the page to respond."
+    if m := _ERR_STRICT.search(raw):
+        return f"The check was ambiguous: {m.group(1)} matching elements were found instead of one."
+    if m := _ERR_VALUE.search(raw):
+        return "The field was left empty." if not m.group(1) else f'The field did not show "{m.group(1)}".'
+    if _ERR_NOT_FOUND.search(raw):
+        return "The expected element could not be found on the page."
+    return line or "failed with no captured reason"
+
+
 def _norm(text: str) -> str:
     return "".join(ch for ch in (text or "").casefold() if ch.isalnum())
 
@@ -256,7 +290,7 @@ def classify_failure(test_name: str, scope: str, url: str, error: str | None, sp
     if why:
         return Finding(test_name, scope, url, severity, "test_defect", why, f"{test_name}: {line}",
                        "fix the test: assert the URL only after a step that actually navigates")
-    return Finding(test_name, scope, url, severity, "unclear", line or "failed with no captured reason",
+    return Finding(test_name, scope, url, severity, "unclear", plain_error(error),
                    f"{test_name}: {line}", "needs manual triage: open the screenshot/trace for this test")
 
 
@@ -344,6 +378,37 @@ def untested_auth(inventories: list[dict]) -> list[dict]:
             out.append({"url": inv.get("url", ""), "kind": wall.get("kind", "login"),
                         "fields": [f.get("label") or f.get("name") or f.get("type") or "?"
                                    for f in wall.get("fields") or []]})
+    return sorted(out, key=lambda w: w["url"])
+
+
+# ------------------------------------------------------------------ steps only a person can complete
+
+_CAPTCHA_RE = re.compile(r"captcha|recaptcha|hcaptcha|are you human|prove you|robot", re.I)
+_OTP_RE = re.compile(r"\b(one[- ]?time (code|password)|verification code|\botp\b|2fa|two[- ]?factor|"
+                     r"authenticator (code|app))\b", re.I)
+
+
+def _page_haystack(inv: dict) -> str:
+    return (json.dumps(inv.get("controls") or [], ensure_ascii=False) + " "
+            + json.dumps(inv.get("forms") or [], ensure_ascii=False) + " " + (inv.get("accessibility") or ""))
+
+
+def human_input_pages(inventories: list[dict]) -> list[dict]:
+    """Pages with a step that provably needs a person - a CAPTCHA image, or a one-time/verification code sent
+    somewhere the pipeline cannot read. Never a guess: both are matched against text the explorer actually
+    captured (control names, form fields, the accessibility snapshot), same signal already used to explain a
+    page's coverage ceiling (report._behaviour_ceiling) - collected here as its own list so a reader sees every
+    blocked page in one place instead of one footnote per page."""
+    out = []
+    for inv in inventories:
+        haystack = _page_haystack(inv)
+        if _CAPTCHA_RE.search(haystack):
+            out.append({"url": inv.get("url", ""), "reason": "CAPTCHA",
+                       "detail": "the form asks the visitor to prove they are human; that step cannot be automated"})
+        elif _OTP_RE.search(haystack):
+            out.append({"url": inv.get("url", ""), "reason": "verification code",
+                       "detail": "the form asks for a one-time/verification code sent elsewhere (email, SMS, "
+                                 "authenticator app), which the pipeline has no way to read"})
     return sorted(out, key=lambda w: w["url"])
 
 

@@ -25,7 +25,7 @@ from docx.shared import Inches, Pt, RGBColor
 from .coverage import Coverage, compute_coverage
 from .findings import (
     Finding, FlapRecord, auth_failure_findings, auth_summary_lines, collect_findings, detect_flapping,
-    environment_block, load_auth_history, untested_auth,
+    environment_block, human_input_pages, load_auth_history, plain_error, untested_auth,
 )
 from .flowgen import file_name as flow_spec_name
 from .flowreport import FlowReport, build_flow_report
@@ -115,6 +115,7 @@ class RunReport:
     coverage: Coverage | None = None                               # what the tested flows touch; None when there are no flows
     findings: list[Finding] = field(default_factory=list)          # triaged failures: severity, kind, one-line reason
     untested_auth: list[dict] = field(default_factory=list)        # login / sign-up walls the run could not pass
+    human_input_pages: list[dict] = field(default_factory=list)    # a step only a person can complete (CAPTCHA / OTP)
     auth_lines: list[str] = field(default_factory=list)            # one line per account: signed in, and on which attempt
     flapping: list[FlapRecord] = field(default_factory=list)       # flows/tests whose recent runs mix pass and fail
 
@@ -331,6 +332,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
     names = {f["id"]: (f.get("goal") or f["id"]) for f in flows_list}
     run.flapping = detect_flapping(ratings, names)
     run.untested_auth = untested_auth(inventories)
+    run.human_input_pages = human_input_pages(inventories)
     auth_history = load_auth_history(artifacts_dir)
     run.auth_lines = auth_summary_lines(auth_history)
     run.findings = auth_failure_findings(auth_history) + run.findings
@@ -759,6 +761,18 @@ def _findings_section(document, run: RunReport) -> None:
             cells[2].text = ", ".join(wall["fields"])
         document.add_paragraph()
 
+    if run.human_input_pages:
+        para = document.add_paragraph()
+        para.add_run(f"Needs a human - {len(run.human_input_pages)} page(s) have a step nothing but a person can "
+                     "complete. Everything up to that step was still tested; the step itself was not:").bold = True
+        table = _grid(document, ("Page", "Blocked on", "Why"))
+        for page in run.human_input_pages:
+            cells = table.add_row().cells
+            cells[0].text = page["url"]
+            cells[1].text = page["reason"]
+            cells[2].text = page["detail"]
+        document.add_paragraph()
+
     if not run.findings:
         para = document.add_paragraph("No failures to triage this run.")
         para.runs[0].italic = True
@@ -781,7 +795,7 @@ def _findings_section(document, run: RunReport) -> None:
         cells[1].text = finding.severity
         cells[2].text = _shorten(finding.summary, 120)
         cells[3].text = "The flow/page check completes as specified"
-        cells[4].text = _shorten(finding.repro or finding.summary, 140)
+        cells[4].text = _shorten(plain_error(finding.repro) if finding.repro else finding.summary, 140)
         cells[5].text = "Open"
         cells[6].text = "Unassigned"
 
@@ -791,19 +805,85 @@ def _shorten(text: str, limit: int = 90) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
-def _short_error(error: str | None) -> str:
-    match = re.search(r"^E\s+(.+)$", error or "", re.M)
-    return _shorten(match.group(1) if match else (error or ""))
+# ------------------------------------------------------------------ plain-language translation for the main
+# body (Test Execution Summary, Defect Report). The generator/flowgen templates only ever emit a small, known
+# set of expect(...) methods and pytest failure shapes (see tests_python for the full list this was built
+# against) - translated by pattern, never guessed. The raw Playwright code and pytest trace are never lost:
+# they stay exactly as captured in the Appendix (assertions_for / _render_failure_detail).
+
+_LOCATOR_ROLE = re.compile(r"get_by_role\(\s*['\"]([a-z]+)['\"][^)]*?name\s*=\s*['\"]([^'\"]*)['\"]", re.I)
+_LOCATOR_TEXT = re.compile(r"get_by_text\(\s*['\"]([^'\"]*)['\"]")
+_LOCATOR_LABEL = re.compile(r"get_by_label\(\s*['\"]([^'\"]*)['\"]")
+_LOCATOR_CSS = re.compile(r"\.locator\(\s*['\"]([^'\"]+)['\"]")
+
+
+def _plain_locator(code: str) -> str:
+    """What the assertion is about, in words - from the same source line, no separate lookup needed."""
+    if m := _LOCATOR_ROLE.search(code):
+        role, name = m.group(1), m.group(2)
+        return f'the "{name}" {role}' if name else f"the {role}"
+    if m := _LOCATOR_TEXT.search(code):
+        return f'the text "{m.group(1)}"' if m.group(1) else "the text"
+    if m := _LOCATOR_LABEL.search(code):
+        return f'the "{m.group(1)}" field'
+    if m := _LOCATOR_CSS.search(code):
+        return f"the element matching {m.group(1)}"
+    return "it"
+
+
+_ASSERT_METHOD = re.compile(r"\.(not_)?to_(be_visible|be_checked|be_in_viewport|be_enabled|be_disabled|"
+                            r"be_empty|have_url|have_count|have_value|have_attribute)\(([^)]*)\)")
+
+
+def _plain_assertion(code: str) -> str:
+    """One sentence for an Expected/Actual column, built from the source line itself - never the raw Python."""
+    match = _ASSERT_METHOD.search(code or "")
+    if not match:
+        return _shorten(code, 140)
+    negated, method, args = bool(match.group(1)), match.group(2), match.group(3).strip()
+    subject = _plain_locator(code)
+    subject_cap = subject[0].upper() + subject[1:]      # capitalize() would also lowercase a real name like "Passcode"
+    verb = "should not" if negated else "should"
+    if method == "be_visible":
+        return f"{subject_cap} {verb} be visible on the page."
+    if method == "be_checked":
+        return f"{subject_cap} {verb} be checked."
+    if method == "be_in_viewport":
+        return f"{subject_cap} {verb} be scrolled into view."
+    if method == "be_enabled":
+        return f"{subject_cap} {verb} be enabled."
+    if method == "be_disabled":
+        return f"{subject_cap} {verb} be disabled."
+    if method == "be_empty":
+        return f"{subject_cap} {verb} be empty."
+    if method == "have_url":
+        # args may be truncated (a nested re.compile(...) has its own closing paren), so read the literal
+        # straight out of the full source line instead of the captured args.
+        literal = re.search(r"to_have_url\([^'\"]*['\"]([^'\"]+)['\"]", code)
+        pattern = (literal.group(1) if literal else args).replace("\\.", ".").replace("\\-", "-")
+        path = re.sub(r"/\?\(\?:\[\?#\]\.\*\)\?\$?$", "", pattern).lstrip("^") or pattern
+        return f"The page {verb} end up at {path}."
+    if method == "have_count":
+        n = args.strip() or "0"
+        return f"{n} of {subject} {verb} be present."
+    if method == "have_value":
+        value = args.strip("'\" ") or "(empty)"
+        return f'{subject_cap} {verb} show "{value}".' if value != "(empty)" else f"{subject_cap} {verb} be left empty."
+    if method == "have_attribute":
+        parts = [a.strip().strip("'\"") for a in args.split(",", 1)]
+        attr = parts[0] if parts else "attribute"
+        return f'{subject_cap} {verb} have a "{attr}" attribute.'
+    return _shorten(code, 140)
 
 
 def _page_row(outcome: TestOutcome) -> tuple[str, str, str, str, str]:
     """(scope, test, url, expected, observed) for a page-level test - no verdict, added by the caller."""
     if outcome.assertions:
         extra = f" (+{len(outcome.assertions) - 1} more)" if len(outcome.assertions) > 1 else ""
-        expected = _shorten(outcome.assertions[0]) + extra
+        expected = _plain_assertion(outcome.assertions[0]) + extra
     else:
         expected = "(no assertion captured)"
-    observed = "as expected" if outcome.passed else (_short_error(outcome.error) or outcome.status)
+    observed = "As expected." if outcome.passed else (plain_error(outcome.error) or outcome.status)
     return "page", outcome.title.replace("_", " "), outcome.url, expected, observed
 
 

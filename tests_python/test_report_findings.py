@@ -217,3 +217,89 @@ def test_no_auth_history_means_no_authentication_line(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     assert "Authentication:" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+# ------------------------------------------------------------------ plain-language translation (no raw Playwright
+# code or pytest traces in the main-body tables; the Appendix keeps the raw form)
+
+def test_plain_assertion_turns_the_known_expect_shapes_into_english():
+    from website_test_pipeline.report import _plain_assertion
+    cases = {
+        "expect(page.get_by_role('heading', name='Login Page', exact=True)).to_be_visible()":
+            'The "Login Page" heading should be visible on the page.',
+        "expect(control).not_to_have_value('')": "It should not be left empty.",
+        "expect(control).to_have_value('standard_user')": 'It should show "standard_user".',
+        "expect(checkbox).to_be_checked()": "It should be checked.",
+        "expect(button).to_be_disabled()": "It should be disabled.",
+        "expect(page.locator('#inventory_container').first).to_have_count(1)":
+            "1 of the element matching #inventory_container should be present.",
+    }
+    for code, plain in cases.items():
+        assert _plain_assertion(code) == plain, code
+
+
+def test_plain_assertion_preserves_the_real_case_of_a_name_unlike_str_capitalize():
+    from website_test_pipeline.report import _plain_assertion
+    out = _plain_assertion("expect(page.get_by_role('group', name='Passcode (default)', exact=True)).to_be_visible()")
+    assert "Passcode (default)" in out and "passcode" not in out
+
+
+def test_plain_assertion_reads_a_url_pattern_that_has_a_nested_closing_paren():
+    from website_test_pipeline.report import _plain_assertion
+    code = "expect(page).to_have_url(re.compile('/web/index\\.php/dashboard/index/?(?:[?#].*)?$'))"
+    assert _plain_assertion(code) == "The page should end up at /web/index.php/dashboard/index."
+
+
+def test_an_assertion_shape_not_in_the_known_vocabulary_falls_back_to_a_shortened_raw_line():
+    from website_test_pipeline.report import _plain_assertion
+    assert _plain_assertion("assert something_custom(x) == y") == "assert something_custom(x) == y"
+
+
+def test_plain_error_covers_the_common_playwright_failure_shapes():
+    from website_test_pipeline.findings import plain_error
+    assert plain_error("E   AssertionError: Locator expected to be visible\nE   Error: element(s) not found") == \
+        "The expected element never appeared on the page."
+    assert "logout" not in plain_error(
+        "E   AssertionError: Page URL expected to be 're.compile(\'/logout\')'\nE   Actual value: https://x.test/login")
+    assert plain_error("E   playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.") == \
+        "The action timed out waiting for the page to respond."
+    assert "2 matching elements" in plain_error(
+        'E   AssertionError: strict mode violation: locator("#x") resolved to 2 elements')
+    assert plain_error(None) == "failed with no captured reason"
+
+
+def test_the_test_execution_summary_and_defect_report_contain_no_raw_playwright_code(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    lines = _text(tmp_path / "report" / "full-report.docx")
+    main_body = chr(10).join(lines[:lines.index("Appendix: full evidence")])   # the Appendix keeps the raw form on purpose
+    for jargon in ("get_by_role(", "expect(", "Locator.", "playwright._impl", "AssertionError:"):
+        assert jargon not in main_body, jargon
+
+
+# ------------------------------------------------------------------ "Needs a human" (CAPTCHA / verification code)
+
+def test_a_captcha_page_is_listed_as_needing_a_human(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    (artifacts / "subscribe.inventory.json").write_text(json.dumps(
+        {"url": "https://x.test/subscribe", "controls": [
+            {"name": "What code is in the image?", "tag": "input", "selector": "#edit-captcha-response",
+             "field_name": "captcha_response"}],
+         "forms": [], "accessibility": ""}), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Needs a human" in joined and "CAPTCHA" in joined and "https://x.test/subscribe" in joined
+
+
+def test_a_verification_code_field_is_also_flagged(tmp_path):
+    from website_test_pipeline.findings import human_input_pages
+    inv = [{"url": "https://x.test/2fa", "controls": [{"name": "Enter your verification code", "tag": "input"}],
+           "forms": [], "accessibility": ""}]
+    pages = human_input_pages(inv)
+    assert len(pages) == 1 and pages[0]["reason"] == "verification code"
+
+
+def test_an_ordinary_page_is_never_flagged_as_needing_a_human(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    assert "Needs a human" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
