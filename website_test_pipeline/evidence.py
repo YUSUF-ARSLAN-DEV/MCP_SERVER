@@ -4,8 +4,9 @@ import re
 def action_evidence(page, test_name: str, action, verify, directory: Path) -> Path:
     action(); verify()
     try:
-        from .pageutils import wait_for_loaders
+        from .pageutils import wait_for_content, wait_for_loaders
         wait_for_loaders(page, 3000)   # a spinner in the screenshot means the content had not arrived
+        wait_for_content(page, 1500)   # a client-rendered page can still be blank right after a navigation step
     except Exception:
         pass
     directory.mkdir(parents=True, exist_ok=True)

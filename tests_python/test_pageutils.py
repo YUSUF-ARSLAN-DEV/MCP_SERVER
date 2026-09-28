@@ -164,3 +164,61 @@ def test_the_evidence_screenshot_is_taken_after_the_page_stops_loading(tmp_path)
 
     action_evidence(_Page(), "01-x", lambda: order.append("action"), lambda: order.append("verify"), tmp_path)
     assert order == ["action", "verify", "loader-check", "screenshot"]
+
+
+# ------------------------------------------------------------------ waiting for a client-rendered page to paint
+
+class _FnPage:
+    def __init__(self, ready_after_calls):
+        self.ready_after_calls, self.calls = ready_after_calls, 0
+
+    def wait_for_function(self, script, timeout):
+        self.calls += 1
+        if self.calls < self.ready_after_calls:
+            raise TimeoutError("not ready")
+
+
+def test_wait_for_content_asks_the_page_to_wait_for_visible_text():
+    from website_test_pipeline.pageutils import wait_for_content
+    page = _FnPage(ready_after_calls=1)
+    assert wait_for_content(page) is True and page.calls == 1
+
+
+def test_wait_for_content_never_raises_when_the_page_stays_blank():
+    from website_test_pipeline.pageutils import wait_for_content
+
+    class _NeverReady:
+        def wait_for_function(self, script, timeout):
+            raise TimeoutError("still blank")
+
+    assert wait_for_content(_NeverReady()) is True     # falls through, exactly as before this existed
+
+
+def test_wait_for_content_never_raises_on_a_page_that_cannot_evaluate():
+    from website_test_pipeline.pageutils import wait_for_content
+
+    class _Broken:
+        def wait_for_function(self, script, timeout):
+            raise RuntimeError("closed")
+
+    assert wait_for_content(_Broken()) is True
+
+
+def test_a_client_rendered_page_no_longer_produces_a_blank_screenshot(browser):
+    """The real bug, reproduced: content appears via a JS re-render with no spinner element at all - the kind of
+    transition wait_for_loaders alone cannot see. Confirms the fix against a real screenshot, not just a mock."""
+    from website_test_pipeline.evidence import action_evidence
+    context = browser.new_context()
+    page = context.new_page()
+    page.set_content("<html><body style='background:#f0f0ff'></body></html>")
+    page.evaluate("""() => {
+        setTimeout(() => { document.body.innerHTML = '<h1>Dashboard</h1><a href="/admin">Admin</a>'; }, 600);
+    }""")
+    import tempfile
+    from pathlib import Path
+    from PIL import Image
+    with tempfile.TemporaryDirectory() as tmp:
+        path = action_evidence(page, "step", lambda: None, lambda: None, Path(tmp))
+        pixels = Image.open(path).convert("RGB").getcolors(maxcolors=2)
+        assert pixels is None or len(pixels) > 1    # not a single flat, empty-page color
+    context.close()

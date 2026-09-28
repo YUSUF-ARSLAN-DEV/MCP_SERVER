@@ -229,6 +229,20 @@ def _loader_js() -> str:
             " return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0'; })")
 
 
+def wait_for_content(page, timeout_ms: int = 1500) -> bool:
+    """Wait until the page has painted SOME visible text (up to timeout_ms). A client-rendered page (Vue/React)
+    has no spinner element for wait_for_loaders to catch, so right after a navigation step its body can still be
+    blank for a moment - a step's own assertion may already have passed by checking only the URL, not any
+    content, so the screenshot taken right after would otherwise be blank too. Cheap when content is already
+    there (one check), and never blocks indefinitely: a genuinely content-light page (a map/embed) just falls
+    through once the timeout is reached, exactly as before this existed."""
+    try:
+        page.wait_for_function("() => document.body && document.body.innerText.trim().length > 0", timeout=timeout_ms)
+    except Exception:
+        pass
+    return True
+
+
 def wait_for_loaders(page, timeout_ms: int = 4000, poll_ms: int = 250) -> bool:
     """Wait until no visible loading spinner is left (up to timeout_ms). Returns True if the page is idle.
     A screenshot or snapshot taken while a spinner still shows records the page BEFORE its content arrived.
