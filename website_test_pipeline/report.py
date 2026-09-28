@@ -25,7 +25,7 @@ from docx.shared import Inches, Pt, RGBColor
 from .coverage import Coverage, compute_coverage
 from .findings import (
     Finding, FlapRecord, auth_failure_findings, auth_summary_lines, collect_findings, detect_flapping,
-    environment_block, human_input_pages, load_auth_history, plain_error, untested_auth,
+    environment_block, human_input_pages, load_auth_history, plain_error, plain_skip_reason, untested_auth,
 )
 from .flowgen import file_name as flow_spec_name
 from .flowreport import FlowReport, build_flow_report
@@ -876,19 +876,26 @@ def _plain_assertion(code: str) -> str:
     return _shorten(code, 140)
 
 
-def _page_row(outcome: TestOutcome) -> tuple[str, str, str, str, str]:
-    """(scope, test, url, expected, observed) for a page-level test - no verdict, added by the caller."""
+def _page_row(outcome: TestOutcome) -> tuple[str, str, str, str, str, str]:
+    """(scope, test, url, expected, observed, verdict) for a page-level test. A pytest 'skipped' status (the
+    validator refused to emit an unsafe spec) is its own verdict - it is not a failure, and its raw skip reason
+    is a (file, line, message) tuple, not an error trace, so it needs its own plain-language reading too."""
+    if outcome.status == "skipped":
+        return ("page", outcome.title.replace("_", " "), outcome.url, "(no test could be safely generated)",
+                plain_skip_reason(outcome.error), "SKIPPED")
     if outcome.assertions:
         extra = f" (+{len(outcome.assertions) - 1} more)" if len(outcome.assertions) > 1 else ""
         expected = _plain_assertion(outcome.assertions[0]) + extra
     else:
         expected = "(no assertion captured)"
     observed = "As expected." if outcome.passed else (plain_error(outcome.error) or outcome.status)
-    return "page", outcome.title.replace("_", " "), outcome.url, expected, observed
+    verdict = "PASSED" if outcome.passed else "FAILED"
+    return "page", outcome.title.replace("_", " "), outcome.url, expected, observed, verdict
 
 
-def _flow_row(flow: FlowReport) -> tuple[str, str, str, str, str]:
-    return "flow", flow.title, flow.start_url, flow.expected or "(not stated)", flow.observed or "(never ran)"
+def _flow_row(flow: FlowReport) -> tuple[str, str, str, str, str, str]:
+    verdict = "SKIPPED" if flow.outcome and flow.outcome.status == "skipped" else ("PASSED" if flow.passed else "FAILED")
+    return "flow", flow.title, flow.start_url, flow.expected or "(not stated)", flow.observed or "(never ran)", verdict
 
 
 def _test_summary_section(document, run: RunReport) -> None:
@@ -897,41 +904,45 @@ def _test_summary_section(document, run: RunReport) -> None:
     Failing tests are listed first (severity of the finding, if any, in the last column); the rest
     keep the report's normal order. Full detail (screenshots, ARIA snapshots, traces) stays in the
     per-page and per-flow sections below - this table is the index into them, not a replacement."""
-    rows = [(*_page_row(o), not o.passed) for u in run.url_reports for o in u.outcomes]
-    rows += [(*_flow_row(f), not f.passed) for f in run.tested_flows]
+    rows = [_page_row(o) for u in run.url_reports for o in u.outcomes]
+    rows += [_flow_row(f) for f in run.tested_flows]
     if not rows and not run.untested_flows:
         return
     severity_of = {f.test: f.severity for f in run.findings}
     document.add_heading("Test Execution Summary", 1)
     document.add_heading("Test summary", 2)
     blocked = len(run.untested_flows)
-    skipped = sum(1 for f in run.untested_flows if f.status in {"rejected", "skipped"})
-    executed = len(rows)
-    pass_rate = round(100 * sum(1 for r in rows if not r[-1]) / executed) if executed else 0
-    document.add_paragraph(f"{len(rows)} executable test(s): {sum(1 for r in rows if not r[-1])} passed, "
-                           f"{sum(1 for r in rows if r[-1])} failed, {blocked} blocked, {skipped} skipped; "
-                           f"pass rate: {pass_rate}%. A blocked flow is not counted as passed or failed.")
+    page_skipped = sum(1 for r in rows if r[-1] == "SKIPPED")
+    skipped = sum(1 for f in run.untested_flows if f.status in {"rejected", "skipped"}) + page_skipped
+    passed_n = sum(1 for r in rows if r[-1] == "PASSED")
+    failed_n = sum(1 for r in rows if r[-1] == "FAILED")
+    executed = passed_n + failed_n      # a skip was never actually executed - it is excluded from the pass rate too
+    pass_rate = round(100 * passed_n / executed) if executed else 0
+    document.add_paragraph(f"{executed} executed test(s): {passed_n} passed, {failed_n} failed, {blocked} blocked, "
+                           f"{skipped} skipped; pass rate: {pass_rate}%. A blocked flow or a skipped test is "
+                           "counted as neither passed nor failed.")
     metrics = _grid(document, ("Executed", "Passed", "Failed", "Blocked", "Skipped", "Pass rate"))
-    values = (str(executed), str(sum(1 for r in rows if not r[-1])), str(sum(1 for r in rows if r[-1])),
-              str(blocked), str(skipped), f"{pass_rate}%")
+    values = (str(executed), str(passed_n), str(failed_n), str(blocked), str(skipped), f"{pass_rate}%")
     for cell, value in zip(metrics.add_row().cells, values):
         cell.text = value
     if not rows:
         document.add_paragraph("No executable tests were generated because the candidate flows did not pass browser verification. See Defect Report and Risks & Issues for the blocker.")
         return
     table = _grid(document, ("Scope", "Test", "URL", "Expected", "Observed", "Verdict"))
-    for scope, test, url, expected, observed, failed in sorted(rows, key=lambda r: (not r[-1], r[0], r[1])):
+    order = {"FAILED": 0, "SKIPPED": 1, "PASSED": 2}
+    for scope, test, url, expected, observed, verdict in sorted(rows, key=lambda r: (order[r[-1]], r[0], r[1])):
         cells = table.add_row().cells
         cells[0].text = scope
-        cells[1].text = test + (f" [{severity_of[test]}]" if failed and test in severity_of else "")
+        cells[1].text = test + (f" [{severity_of[test]}]" if verdict == "FAILED" and test in severity_of else "")
         cells[2].text = url
         cells[3].text = expected
         cells[4].text = observed
-        cells[5].text = "FAILED" if failed else "PASSED"
-        if failed:
+        cells[5].text = verdict
+        if verdict in {"FAILED", "SKIPPED"}:
+            color = _RED if verdict == "FAILED" else RGBColor(0x8A, 0x6D, 0x00)
             for p in cells[5].paragraphs:
                 for r in p.runs:
-                    r.font.color.rgb = _RED
+                    r.font.color.rgb = color
                     r.bold = True
 
 

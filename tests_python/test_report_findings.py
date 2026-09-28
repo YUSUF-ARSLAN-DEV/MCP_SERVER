@@ -303,3 +303,44 @@ def test_an_ordinary_page_is_never_flagged_as_needing_a_human(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     assert "Needs a human" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+# ------------------------------------------------------------------ a page test the validator deliberately
+# skipped (not a failure) - must not be counted or shown as one
+
+def test_a_skipped_page_test_is_its_own_verdict_not_a_failure(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    skip_spec = tests / "https-x-test-skip_test.py"
+    skip_spec.write_text("def test_page_not_testable(page): pass\n", encoding="utf-8")
+    skip_node = "tests/https-x-test-skip_test.py::test_page_not_testable[chromium]"
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    results["tests"].append({
+        "nodeid": skip_node, "title": "", "url": START + "skip", "status": "skipped", "duration": 0.0,
+        "error": ("('C:\\repo\\tests\\https-x-test-skip_test.py', 5, \"Skipped: NOT TESTABLE: no spec passed "
+                  "validation - unstable text selector 'get_by_text'\")")})
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", flows_file=tmp_path / "flows.json",
+                 ratings_file=tmp_path / "flow_ratings.json", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "SKIPPED" in joined
+    assert "Not tested: NOT TESTABLE" in joined
+    # the raw skip tuple never appears anywhere in the main body
+    lines = _text(tmp_path / "report" / "full-report.docx")
+    main_body = chr(10).join(lines[:lines.index("Appendix: full evidence")])
+    assert "C:\\repo" not in main_body and "get_by_text" not in main_body
+
+
+def test_a_skipped_test_is_excluded_from_the_pass_rate_and_failed_count(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    skip_spec = tests / "https-x-test-skip_test.py"
+    skip_spec.write_text("def test_page_not_testable(page): pass\n", encoding="utf-8")
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    results["tests"].append({
+        "nodeid": "tests/https-x-test-skip_test.py::test_page_not_testable[chromium]", "title": "",
+        "url": START + "skip", "status": "skipped", "duration": 0.0,
+        "error": "('f.py', 1, \"Skipped: no reason\")"})
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", flows_file=tmp_path / "flows.json",
+                 ratings_file=tmp_path / "flow_ratings.json", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "3 executed test(s): 2 passed, 1 failed, 0 blocked, 1 skipped; pass rate: 67%" in joined
