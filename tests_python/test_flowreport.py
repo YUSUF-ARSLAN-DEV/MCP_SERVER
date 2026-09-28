@@ -180,7 +180,8 @@ def test_without_a_flows_file_the_flow_test_stays_an_ordinary_test(tmp_path):
     run = load_run(artifacts, tests)
     assert run.flow_reports == [] and sum(u.total for u in run.url_reports) == 2 and run.total == 2
     create_report(artifacts, tests, tmp_path / "report", combined=True)
-    assert "User flows" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    assert not any(p.text == "User flows" and p.style.name.startswith("Heading") for p in doc.paragraphs)
 
 
 def test_an_unreadable_flows_file_never_breaks_the_report(tmp_path):
@@ -297,3 +298,25 @@ def test_coverage_never_breaks_the_report_when_there_are_no_explored_pages(tmp_p
     assert load_run(artifacts, tests).coverage is None
     create_report(artifacts, tests, tmp_path / "report", combined=True)       # must not raise
     assert (tmp_path / "report" / "full-report.docx").exists()
+
+
+def test_the_untested_flows_section_shows_the_most_recent_attempts_reason(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    ratings = json.loads((tmp_path / "flow_ratings.json").read_text(encoding="utf-8"))
+    ratings["ratings"]["x--map"] = [
+        {"source": "runner", "at": "2026-09-27T15:01:24", "passed": False,
+         "checks": {"steps_completed": "0/1", "outcome_matched": False, "observed_effect": "no-visible-change"},
+         "error": 'step "click \\"Admin\\"" failed: the session expired mid-flow (landed back on a login page) - not a defect in the flow'}]
+    (tmp_path / "flow_ratings.json").write_text(json.dumps(ratings), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", flows_file=tmp_path / "flows.json",
+                 ratings_file=tmp_path / "flow_ratings.json", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Most recent attempt" in joined and "session expired mid-flow" in joined
+
+
+def test_a_flow_with_no_history_reads_never_run_not_a_blank_cell(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", flows_file=tmp_path / "flows.json",
+                 ratings_file=tmp_path / "flow_ratings.json", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "never run" in joined

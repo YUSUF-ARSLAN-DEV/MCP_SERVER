@@ -36,6 +36,23 @@ def settle_page(page, timeout: int = 8000) -> None:
         page.wait_for_load_state("load", timeout=timeout)
     except Exception:
         pass
+    # SPAs often fire both DOMContentLoaded and load before their authenticated
+    # shell is hydrated. In that window the URL is correct but the body (and
+    # navigation controls) is still empty, which makes flow verification fail
+    # before the first step. Give client-rendered content a bounded chance to
+    # appear; this is deliberately tolerant of pages that keep network requests
+    # open forever.
+    try:
+        page.wait_for_function(
+            "() => document.body && document.body.innerText.trim().length > 0",
+            timeout=min(timeout, 4000),
+        )
+    except Exception:
+        pass
+    try:
+        page.wait_for_load_state("networkidle", timeout=2500)
+    except Exception:
+        pass
 
 
 def prime_lazy_content(page) -> None:

@@ -93,10 +93,18 @@ def test_the_combined_report_leads_with_a_findings_section(tmp_path):
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
     assert headings.index("Findings") < headings.index("User flows") < headings.index("Flow coverage")
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
-    for part in ("Findings", "Browser: Chromium", "OS:", "Python:", "changed verdict across recent runs",
-                 "flaky results page", "P F P", "no content shown", "P2", "test_defect", 'role="group"', "no role recorded",
-                 "1 failure(s), classified below", "Coverage:", "content controls acted on"):
+    for part in ("Findings", "Browser: Chromium", "OS:", "Python:", "P2", 'role="group"',
+                 "no role recorded", "1 failure(s), classified below", "Coverage:", "content controls acted on",
+                 "Executed", "Blocked", "Pass rate"):
         assert part in joined, part
+
+
+def test_reports_include_a_word_table_of_contents_field(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    assert "Table of Contents" in [p.text for p in doc.paragraphs]
+    assert 'TOC \\o "1-3" \\h \\z \\u' in doc.part.element.xml
 
 
 def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verdict(tmp_path):
@@ -104,7 +112,7 @@ def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verd
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
-    assert headings.index("Findings") < headings.index("Test summary") < headings.index("User flows")
+    assert headings.index("Test summary") < headings.index("Findings") < headings.index("User flows")
     table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Scope", "Test", "URL", "Expected", "Observed", "Verdict"])
     rows = [[c.text for c in r.cells] for r in table.rows[1:]]
     by_test = {r[1].split(" [")[0]: r for r in rows}
@@ -191,7 +199,7 @@ def test_the_report_shows_the_authentication_line_and_a_finding_when_login_never
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     assert "Authentication:" in joined and "Could not sign in to the site" in joined
-    assert "auth_failure" in joined and "login: default" in joined
+    assert "BUG-001" in joined and "Open" in joined and "Unassigned" in joined
 
 
 def test_the_report_shows_a_first_attempt_line_when_the_login_worked(tmp_path):
