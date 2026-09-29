@@ -82,6 +82,21 @@ def is_blocked(flow: dict) -> bool:
     return bool(flow.get("intent_state")) and flow.get("status") not in HUMAN_STATUSES
 
 
+def collapse_open_clicks(steps: list[dict]) -> list[dict]:
+    """Drop a click that only opens a dropdown when the very next step picks from that same control. Picking already
+    opens the widget, so the extra click toggled it shut again and the pick then found no open menu (found live on
+    the Arabic home page: click "اختر قناة", then pick "أختر الجميع" in "اختر قناة")."""
+    out: list[dict] = []
+    for i, step in enumerate(steps):
+        following = steps[i + 1] if i + 1 < len(steps) else None
+        if (step.get("kind") == "click" and following and following.get("kind") == "multiselect"
+                and step.get("name") and step.get("name") == following.get("name")
+                and step.get("page") == following.get("page")):
+            continue
+        out.append(step)
+    return out
+
+
 def load_flows(path: Path) -> dict:
     if not path.exists():
         return {"version": FLOWS_VERSION, "flows": []}
@@ -91,6 +106,9 @@ def load_flows(path: Path) -> dict:
         raise FlowsFileError(f"{path} is not valid JSON ({exc}); fix or delete it") from exc
     if not isinstance(doc, dict) or not isinstance(doc.get("flows"), list):
         raise FlowsFileError(f"{path} has no 'flows' list")
+    for flow in doc["flows"]:
+        if isinstance(flow, dict) and isinstance(flow.get("steps"), list):
+            flow["steps"] = collapse_open_clicks(flow["steps"])
     return doc
 
 
