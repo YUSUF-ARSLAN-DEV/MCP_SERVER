@@ -11,6 +11,8 @@ result does not parse the original source is returned untouched.
 """
 from __future__ import annotations
 import ast
+import difflib
+import json
 import re
 
 from .validator import _norm, _ID_FRAGMENT
@@ -268,6 +270,21 @@ def _select_option_texts(inventory) -> dict[str, set[str]]:
     return out
 
 
+def _select_option_raw(inventory) -> dict[str, list[str]]:
+    """Same keys as _select_option_texts, but the option texts exactly as the page spells them."""
+    out: dict[str, list[str]] = {}
+    for control in getattr(inventory, "controls", None) or []:
+        if control.get("tag") != "select":
+            continue
+        raw = [str(o) for o in (control.get("options") or []) if str(o).strip()]
+        if len(raw) < 2:
+            continue
+        for key in ("selector", "id", "field_name"):
+            if control.get(key):
+                out[_norm(str(control[key]))] = raw
+    return out
+
+
 def _repair_bad_select_label(source: str, inventory) -> tuple[str, int]:
     """`select_option(label='X')` where X is not one of the <select>'s observed
     option texts -> `select_option(index=1)`. The model guesses channel / plan /
@@ -278,12 +295,17 @@ def _repair_bad_select_label(source: str, inventory) -> tuple[str, int]:
     opt_map = _select_option_texts(inventory)
     if not opt_map:
         return source, 0
+    raw_map = _select_option_raw(inventory)
     count = 0
     for _ in range(20):
         try:
             tree = ast.parse(source)
         except SyntaxError:
             break
+        # a select held in a variable (channel = page.locator("#x")) is looked up through its assignment
+        assigned = {t.id: ast.get_source_segment(source, n.value) or ""
+                    for n in ast.walk(tree) if isinstance(n, ast.Assign) and len(n.targets) == 1
+                    for t in n.targets if isinstance(t, ast.Name)}
         hit = None
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
@@ -294,9 +316,11 @@ def _repair_bad_select_label(source: str, inventory) -> tuple[str, int]:
                                   and isinstance(kw.value.value, str)):
                 continue
             recv = ast.get_source_segment(source, node.func.value) or ""
+            recv = assigned.get(recv, recv) if recv.isidentifier() else recv
             targets = re.findall(r"#([A-Za-z0-9_-]+)", recv)
             targets += [m.group(2) for m in re.finditer(r"name\s*=\s*(['\"])([^'\"]+)\1", recv)]
-            opts = next((opt_map[_norm(t)] for t in targets if _norm(t) in opt_map), None)
+            key = next((_norm(t) for t in targets if _norm(t) in opt_map), None)
+            opts = opt_map.get(key) if key else None
             if opts is None:
                 continue
             label = _norm(kw.value.value)
@@ -306,7 +330,12 @@ def _repair_bad_select_label(source: str, inventory) -> tuple[str, int]:
             old = ast.get_source_segment(source, node)
             if not recv_seg or not old:
                 continue
-            hit = (old, f"{recv_seg}.select_option(index=1)")
+            # the model spelled a real option slightly differently ("Al Jazeera" for "Aljazeera"): use the page's spelling;
+            # a label that matches nothing at all falls back to the first real option
+            close = difflib.get_close_matches(kw.value.value, raw_map.get(key, []), n=1, cutoff=0.82)
+            replacement = (f"{recv_seg}.select_option(label={json.dumps(close[0], ensure_ascii=False)})" if close
+                           else f"{recv_seg}.select_option(index=1)")
+            hit = (old, replacement)
             break
         if hit is None or hit[0] == hit[1]:
             break
