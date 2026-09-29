@@ -265,7 +265,9 @@ def test_plain_error_covers_the_common_playwright_failure_shapes():
     assert "logout" not in plain_error(
         "E   AssertionError: Page URL expected to be 're.compile(\'/logout\')'\nE   Actual value: https://x.test/login")
     assert plain_error("E   playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.") == \
-        "The action timed out waiting for the page to respond."
+        "Timed out after 30s."
+    assert "never found" in plain_error(
+        'E   TimeoutError: Locator.click: Timeout 30000ms exceeded.\nE   Call log:\nE     - waiting for get_by_role("link", name="map")')
     assert "2 matching elements" in plain_error(
         'E   AssertionError: strict mode violation: locator("#x") resolved to 2 elements')
     assert plain_error(None) == "failed with no captured reason"

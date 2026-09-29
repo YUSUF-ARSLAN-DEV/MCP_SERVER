@@ -82,6 +82,25 @@ _ERR_ACTUAL_LINE = re.compile(r"^E[ \t]+Actual value:[ \t]*(.*?)[ \t]*$", re.M)
 _ERR_NOT_FOUND = re.compile(r"element\(s\) not found", re.I)
 
 
+def _timeout_sentence(raw: str) -> str:
+    """A timeout, with what it waited for and what was seen: the limit, the locator, and whether the element was found,
+    hidden or covered - the parts a developer needs. Read from Playwright's own call log; nothing is guessed."""
+    limit = re.search(r"Timeout (\d+)ms", raw)
+    waited = re.search(r"waiting for (.+)", raw)          # "." stops at the end of the log line
+    text = f"Timed out after {int(limit.group(1)) / 1000:g}s" if limit else "Timed out"
+    if waited:
+        text += " waiting for " + " ".join(waited.group(1).split())[:110]
+    if re.search(r"intercepts pointer events", raw):
+        text += "; another element was covering it"
+    elif re.search(r"locator resolved to", raw) and re.search(r"not visible|not enabled|not stable", raw):
+        text += "; the element was found but not visible or not ready"
+    elif re.search(r"locator resolved to", raw):
+        text += "; the element was found, but the action did not finish"
+    elif waited:
+        text += "; the element was never found on the page"
+    return text + "."
+
+
 def plain_error(error: str | None) -> str:
     """The pytest failure, in one plain sentence, for a reader who has never seen Playwright - matched against
     the known shapes the runner/generator/validator actually produce (see tests), never guessed. The raw
@@ -97,7 +116,7 @@ def plain_error(error: str | None) -> str:
         actual = _ERR_URL_ACTUAL.search(raw)
         return f"The page ended up at {actual.group(1) if actual else 'a different address'}, not the expected page."
     if _ERR_TIMEOUT.search(raw):
-        return "The action timed out waiting for the page to respond."
+        return _timeout_sentence(raw)
     if m := _ERR_STRICT.search(raw):
         return f"The check was ambiguous: {m.group(1)} matching elements were found instead of one."
     if _ERR_VALUE.search(raw):
