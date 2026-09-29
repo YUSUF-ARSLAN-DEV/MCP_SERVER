@@ -79,6 +79,7 @@ class TestOutcome:
     assertions: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)     # step screenshots
     attachments: list[str] = field(default_factory=list)  # video / trace
+    screenshots: list[str] = field(default_factory=list)  # Playwright's own screenshots (test-failed-1.png ...)
 
     @property
     def passed(self) -> bool:
@@ -227,6 +228,7 @@ def _make_outcome(row: dict, url: str, spec_path: str | None, artifacts_dir: Pat
         assertions=assertions_for(spec, title) if spec and spec.exists() else [],
         evidence=_find_images(artifacts_dir / "evidence" / _slug(row.get("nodeid", ""))),
         attachments=_find_attachments(artifacts_dir / "pw", _pw_slug(row.get("nodeid", ""))),
+        screenshots=_find_attachments(artifacts_dir / "pw", _pw_slug(row.get("nodeid", "")), IMAGE_EXTS),
     )
 
 
@@ -422,13 +424,13 @@ def _find_images(directory: Path) -> list[str]:
     return [str(p) for p in sorted(directory.iterdir()) if p.suffix.lower() in IMAGE_EXTS]
 
 
-def _find_attachments(pw_dir: Path, slug: str) -> list[str]:
+def _find_attachments(pw_dir: Path, slug: str, exts: set[str] = ATTACH_EXTS) -> list[str]:
     if not pw_dir.is_dir():
         return []
     out: list[str] = []
     for child in pw_dir.iterdir():
         if child.is_dir() and slug and slug in child.name:
-            out.extend(str(p) for p in sorted(child.iterdir()) if p.suffix.lower() in ATTACH_EXTS)
+            out.extend(str(p) for p in sorted(child.iterdir()) if p.suffix.lower() in exts)
     return out
 
 
@@ -904,7 +906,8 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
         expected = (flow.expected if flow and flow.expected else
                     (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "The check completes as specified."))
         actual = plain_error(outcome.error) if outcome.error else "The test failed without a captured reason."
-        evidence = outcome.evidence[0] if outcome.evidence else None
+        evidence = (outcome.evidence or outcome.screenshots or [None])[0]
+        trace = next((a for a in outcome.attachments if a.lower().endswith(".zip")), None)
         record = {
             "id": f"BUG-{number:03d}",
             "severity": _severity_label(getattr(finding, "severity", ""), scope),
@@ -914,6 +917,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "expected": expected or "NOT CAPTURED",
             "actual": actual or "NOT CAPTURED",
             "screenshot_url": _relative_artifact(evidence, report_dir),
+            "trace_url": _relative_artifact(trace, report_dir) if trace else "NOT CAPTURED",
             "status": "Open",
             "owner": "Unassigned",
             "linked_flow_id": flow.flow_id if flow else "NOT CAPTURED",
@@ -1152,11 +1156,14 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
             ("Owner", defect["owner"]),
             ("Linked flow", defect["linked_flow_id"]),
             ("Evidence", defect["screenshot_url"]),
+            ("Trace", defect.get("trace_url", "NOT CAPTURED")),
         )
         for label, value in fields:
             cells = table.add_row().cells
             cells[0].text = label
-            if label == "Evidence" and value != "NOT CAPTURED":
+            if label == "Trace" and value != "NOT CAPTURED":
+                cells[1].text = f"{value}  (open with: python -m playwright show-trace <file>; it holds the page snapshots, console and network log)"
+            elif label == "Evidence" and value != "NOT CAPTURED":
                 _add_hyperlink(cells[1].paragraphs[0], value, value)
             else:
                 cells[1].text = str(value)
