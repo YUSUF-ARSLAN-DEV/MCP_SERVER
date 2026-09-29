@@ -30,6 +30,7 @@ from .findings import (
     environment_block, human_input_pages, load_auth_history, plain_error, plain_skip_reason, untested_auth,
 )
 from .flowgen import file_name as flow_spec_name
+from .envinfo import capture_browser, load_browser_info
 from .flowreport import FlowReport, build_flow_report, disambiguate_titles
 from .flows import FlowsFileError, load_flows
 from .ratings import RatingsFileError, load_ratings
@@ -121,6 +122,7 @@ class RunReport:
     human_input_pages: list[dict] = field(default_factory=list)    # a step only a person can complete (CAPTCHA / OTP)
     auth_lines: list[str] = field(default_factory=list)            # one line per account: signed in, and on which attempt
     flapping: list[FlapRecord] = field(default_factory=list)       # flows/tests whose recent runs mix pass and fail
+    browser_info: dict = field(default_factory=dict)               # browser name/version/device the tests ran on (envinfo.py)
 
     @property
     def tested_flows(self) -> list[FlowReport]:
@@ -337,6 +339,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
     run.flapping = detect_flapping(ratings, names)
     run.untested_auth = untested_auth(inventories)
     run.human_input_pages = human_input_pages(inventories)
+    run.browser_info = load_browser_info(artifacts_dir) or ({} if os.environ.get("WTP_SKIP_BROWSER_PROBE") else capture_browser(artifacts_dir))
     auth_history = load_auth_history(artifacts_dir)
     run.auth_lines = auth_summary_lines(auth_history)
     run.findings = auth_failure_findings(auth_history) + run.findings
@@ -1554,7 +1557,7 @@ def _environment_section(document, run: RunReport) -> None:
               ("Operating system", env.get("OS", "unknown")), ("Python", env.get("Python", "unknown")),
               ("Playwright", env.get("Playwright", "NOT CAPTURED")), ("pytest", env.get("pytest", "NOT CAPTURED")),
               ("Pipeline version", f'{env.get("Pipeline version", "NOT CAPTURED")} ({env.get("Pipeline git SHA", "NOT CAPTURED")})'),
-              ("Desktop/device", "Windows desktop tested; mobile viewport not run"),
+              ("Desktop/device", env.get("Device", "Desktop (no device emulation)")),
               ("Test data/accounts", "Configured local test account; secrets excluded from the report")]
     for key, value in values:
         cells = table.add_row().cells

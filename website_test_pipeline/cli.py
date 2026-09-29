@@ -164,6 +164,8 @@ def main() -> int:
                 return 2
             if has_session(settings):
                 pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
+            from .envinfo import capture_browser
+            capture_browser(settings.artifacts_dir)       # record the browser build these results come from
             pw_out = settings.artifacts_dir/'pw'
             pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}']
             result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)

@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 
 from .authflow import has_session, preflight_session, session_path
 from .coverage import compute_coverage, render_coverage
+from .envinfo import capture_browser
 from .expand import run_expand
 from .flowgen import run_flowgen
 from .flowresults import feed_results
@@ -54,6 +55,7 @@ def run_execute(settings, log) -> int:
     env = {**os.environ, "WTP_ARTIFACTS": str(settings.artifacts_dir)}
     if has_session(settings):
         env["WTP_STORAGE_STATE"] = str(session_path(settings))
+    capture_browser(settings.artifacts_dir)     # record the browser build these results come from
     result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q"], cwd=settings.root, env=env)
     feed_results(settings, log)
     return result.returncode

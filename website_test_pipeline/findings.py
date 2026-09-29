@@ -511,7 +511,9 @@ def environment_block(run, settings=None) -> dict[str, str]:
         ).stdout.strip() or "NOT CAPTURED"
     except OSError:
         git_sha = "NOT CAPTURED"
-    browser_version = os.getenv("BROWSER_VERSION", "NOT CAPTURED")
+    captured = getattr(run, "browser_info", None) or {}
+    browser_version = captured.get("version") or os.getenv("BROWSER_VERSION", "NOT CAPTURED")
+    device = captured.get("device") or ""
     pipeline_version = version("website-test-pipeline")
     if pipeline_version == "NOT CAPTURED":
         try:
@@ -521,8 +523,9 @@ def environment_block(run, settings=None) -> dict[str, str]:
         except OSError:
             pipeline_version = "NOT CAPTURED"
     return {
-        "Browser": "Chromium",
+        "Browser": (captured.get("browser") or "chromium").capitalize(),
         "Browser version": browser_version,
+        "Device": device or "Desktop (no device emulation)",
         "Playwright": version("playwright"),
         "pytest": version("pytest"),
         "Pipeline version": pipeline_version,
