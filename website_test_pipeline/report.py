@@ -1765,9 +1765,15 @@ def _recommendation_plan(document, run: RunReport, data: dict[str, Any]) -> None
     blocked = [d for d in data["defects"] if d.get("blocking") or d.get("failure_class") in {"failed_last_check", "blocked_flow"}]
     document.add_heading("Immediate mitigation", 2)
     if blocked:
-        document.add_paragraph("Until these are automated or fixed, have a person check them by hand before release:")
+        document.add_paragraph("Until these are automated or fixed, have a person check them by hand before release. "
+                               "Owners come from the defect record; \"Unassigned\" means someone still has to be named.")
+        table = _grid(document, ("Item", "What to check", "Owner", "Due"))
         for d in blocked[:12]:
-            document.add_paragraph(f'{d["id"]}: {_shorten(d["title"], 110)}', style="List Bullet")
+            cells = table.add_row().cells
+            cells[0].text = _display_id(d["id"])
+            cells[1].text = _shorten(d["title"], 110)
+            cells[2].text = str(d.get("owner", "Unassigned"))
+            cells[3].text = "Before release sign-off"
         if len(blocked) > 12:
             document.add_paragraph(f"...and {len(blocked) - 12} more listed in the defect report.")
     else:
