@@ -69,7 +69,7 @@ class FlowReport:
         if self.outcome is not None:
             return {"passed": "Passed", "skipped": "Skipped"}.get(self.outcome.status, "Failed")
         if self.inconclusive:
-            return "Inconclusive (steps ran, no visible effect)"
+            return "Inconclusive (steps ran, outcome not observable)"
         return "Failed its last check" if self.verify_failed else "Not run in this run"
 
 
@@ -169,9 +169,16 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
     if outcome is None:
         fr.not_run_reason, fr.verify_failed = explain_not_run(flow, entries)
         executions = [e for e in entries if e.get("source") in {"runner", "pytest"}]
-        fr.inconclusive = ran_without_visible_effect(executions[-1] if executions else None) and not is_blocked(flow)
+        newest = executions[-1] if executions else None
+        fr.inconclusive = (ran_without_visible_effect(newest) or promised_content_missing(newest)) and not is_blocked(flow)
     fr.warnings = flow_warnings(fr)
     return fr
+
+
+def promised_content_missing(entry: dict | None) -> bool:
+    """The last real check did everything the sentence says and the site simply showed no content for that input
+    (recorded as definite: "promises content but ... only saw the URL change"). Data-dependent, not a broken page."""
+    return bool(entry and not entry.get("passed") and entry.get("definite") and "promises content" in str(entry.get("error") or ""))
 
 
 def ran_without_visible_effect(entry: dict | None) -> bool:
@@ -192,6 +199,9 @@ def explain_not_run(flow: dict, entries: list[dict]) -> tuple[str, bool]:
     last = executions[-1] if executions else None
     if is_blocked(flow):
         return "its plain sentence was edited or dropped since it was built; rebuild it before it can be tested", False
+    if promised_content_missing(last):
+        return ("every step ran, but the site showed no content for this input (for example a country and channel with no "
+                "frequency data); try another input - the site itself did not fail"), False
     if ran_without_visible_effect(last):
         return ("every step ran, but nothing on the page visibly changed, so the promised outcome could not be confirmed; "
                 "the site did not fail, the check could not observe an effect"), False
