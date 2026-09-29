@@ -1427,9 +1427,15 @@ def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] 
                          ("Failed", counts["failed"]), ("Skipped", counts["skipped"]),
                          ("User journeys with no result this run", counts["blocked_flows"]),
                          ("Pass rate (tests that ran only)", f'{counts["pass_rate_percent"]}%'),
-                         ("User journeys passed (of all journeys)", f'{counts["journeys_passed"]} of {counts["journeys_total"]} ({counts["journeys_passed_percent"]}%)')):
+                         ("User journeys passed (of all journeys)", f'{counts["journeys_passed"]} of {counts["journeys_total"]} ({counts["journeys_passed_percent"]}%)'),
+                         ("...of which only proved the URL changed", sum(f.passed and f.navigation_only for f in run.flow_reports))):
         cells = metrics.add_row().cells
         cells[0].text, cells[1].text = label, str(value)
+    nav_only = sum(f.passed and f.navigation_only for f in run.flow_reports)
+    if nav_only:
+        document.add_paragraph(
+            f"{nav_only} of the passed journeys only prove that the address changed; nothing on the resulting page was checked "
+            "(no heading, results or new controls were recorded). They show the click worked, not that the page is right.")
     attention = []
     for test_number, (scope, key, outcome, flow) in enumerate(_all_outcomes(run), 1):
         if outcome.status not in {"failed", "error", "skipped"}:
