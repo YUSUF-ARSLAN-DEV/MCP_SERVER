@@ -91,6 +91,8 @@ def _rating_line(entry: dict) -> str:
         s = entry.get("scores") or {}
         return (f'[vision {entry.get("verdict")}] matches {s.get("matches_sentence")}/5, content {s.get("content_visible")}/5'
                 f' - {_clip(entry.get("reason", ""), 110)}')
+    if source == "human_needed":
+        return f'[needs a person] {_clip(entry.get("reason", ""), 110)}'
     if source == "human":
         return f'[human {entry.get("by", "")}] {entry.get("decision")}' + (f' - {entry["reason"]}' if entry.get("reason") else "")
     return f"[{source}]"

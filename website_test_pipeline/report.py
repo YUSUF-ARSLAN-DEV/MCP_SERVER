@@ -990,7 +990,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "status": "Open",
             "owner": "Unassigned",
             "linked_flow_id": flow.flow_id,
-            "failure_class": ("failed_last_check" if failed_check else
+            "failure_class": ("failed_last_check" if failed_check else "human_input_required" if flow.needs_person else
                               "inconclusive" if flow.inconclusive else "blocked_flow"),
             "scope": "flow",
             "business_impact": f'Visitors cannot be shown to complete "{_shorten(_plain_flow_title(flow.title), 80)}" from {_page_of(flow.start_url)}; until it has a passing test, releasing carries that risk.',

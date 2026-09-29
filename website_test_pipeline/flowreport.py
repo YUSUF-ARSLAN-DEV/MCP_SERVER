@@ -44,6 +44,7 @@ class FlowReport:
     title_suffix: str = ""             # set when several flows share one sentence, so a reader can tell them apart
     not_run_reason: str = ""           # why an untested flow has no result in this run (empty when it ran)
     verify_failed: bool = False        # untested, and the last real check of it (runner or pytest) failed
+    needs_person: bool = False         # untested because the journey reaches a step only a person can do (a CAPTCHA)
     inconclusive: bool = False         # untested; its steps all ran but nothing visible changed, so the outcome could not be confirmed
 
     @property
@@ -68,6 +69,8 @@ class FlowReport:
         last check or was simply not run, and those are different things to a reader."""
         if self.outcome is not None:
             return {"passed": "Passed", "skipped": "Skipped"}.get(self.outcome.status, "Failed")
+        if self.needs_person:
+            return "Needs a person (CAPTCHA)"
         if self.inconclusive:
             return "Inconclusive (steps ran, outcome not observable)"
         return "Failed its last check" if self.verify_failed else "Not run in this run"
@@ -167,7 +170,12 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         stems = [_stem(p) for p in outcome.evidence]
         fr.failure = attribute_failure(flow, stems, outcome.error, outcome.status)
     if outcome is None:
+        latest = next((e for e in reversed(entries) if e.get("source") in {"runner", "pytest", "human_needed"}), None)
+        fr.needs_person = bool(latest and latest.get("source") == "human_needed")
         fr.not_run_reason, fr.verify_failed = explain_not_run(flow, entries)
+        if fr.needs_person:
+            fr.not_run_reason, fr.verify_failed = ("the journey reaches a CAPTCHA that only a person can answer; run with --ask-human "
+                                                   "to be asked for the code"), False
         executions = [e for e in entries if e.get("source") in {"runner", "pytest"}]
         newest = executions[-1] if executions else None
         fr.inconclusive = (ran_without_visible_effect(newest) or promised_content_missing(newest) or ran_but_prediction_missed(newest)) and not is_blocked(flow)

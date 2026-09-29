@@ -22,6 +22,7 @@ from .authflow import context_kwargs
 from .autorepair import _ICON_GLYPHS as ICON_GLYPHS
 from .secretrefs import is_ref, needs_fresh_session, resolve
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
+from .humanstep import solve_before_submit
 from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
 
@@ -460,6 +461,12 @@ def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | N
     result["landed_url"] = first["url"]  # where the start URL really ended up (it may redirect)
     for index, step in enumerate(steps):
         seen: dict = {}
+        if step.get("kind") in {"click", "submit"}:
+            control = _locate(page, step)
+            if control is not None and solve_before_submit(page, control, log) in {"not-asked", "skipped"}:
+                result["human_needed"] = True         # a form with a CAPTCHA and nobody to answer it: not a failure of the flow
+                result["error"] = "needs a person: the form has a CAPTCHA (run with --ask-human to be asked for the code)"
+                break
         try:
             _do_step(page, step, seen)
             if seen.get("options"):
@@ -644,6 +651,12 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
                     unreachable += 1
                     log.warning("verify: %s - skipped: %s. The site could not be reached, which says nothing about the "
                                 "flow, so nothing was recorded.", flow["id"], result["error"])
+                    continue
+                if result.get("human_needed"):
+                    append_rating(ratings, flow["id"], {"source": "human_needed", "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                                        "reason": result["error"]})
+                    save_ratings(settings.ratings_file, ratings)
+                    log.warning("verify: %s - stopped at a CAPTCHA and left as it was: %s", flow["id"], result["error"])
                     continue
                 if flow.get("status") not in HUMAN_STATUSES and result.get("ok"):
                     verdict = judge(flow, result)
