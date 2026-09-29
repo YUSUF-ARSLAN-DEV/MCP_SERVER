@@ -132,8 +132,8 @@ def test_the_failing_test_is_listed_before_the_passing_ones(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
-    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"])
-    verdicts = [r.cells[6].text for r in table.rows[1:]]
+    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Test ID", "Defect", "Scope", "Test name", "URL", "Expected", "Observed", "Result"])
+    verdicts = [r.cells[7].text for r in table.rows[1:]]
     assert verdicts[0] == "FAILED" and verdicts.count("FAILED") == 1
     assert all(v == "PASSED" for v in verdicts[1:])
 
