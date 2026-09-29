@@ -360,7 +360,7 @@ def test_the_defect_report_has_steps_to_reproduce_and_links_to_its_own_evidence(
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     table = next(t for t in doc.tables
-                if [c.text for c in t.rows[0].cells] == ["ID", "Severity", "Type", "Status", "Title"])
+                if [c.text for c in t.rows[0].cells] == ["ID", "Severity", "Priority", "Type", "Status", "Title"])
     row = table.rows[1]
     assert row.cells[0].text == "BUG-001" and row.cells[1].text == "Medium"
     detail = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Field", "Details"])

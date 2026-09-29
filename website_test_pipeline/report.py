@@ -1020,7 +1020,22 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
         })
         number += 1
 
+    for record in records:
+        record["priority"] = _priority(record)
     return records
+
+
+def _priority(record: dict[str, Any]) -> str:
+    """How urgently to fix it - separate from severity (how bad it is). A blocked or journey-level problem stops
+    a real user path, so it is urgent even when the underlying defect looks small."""
+    if record.get("blocking"):
+        return "P1 - before release"
+    high = record.get("severity") in {"Critical", "High"}
+    if record.get("scope") == "flow":
+        return "P1 - before release" if high else "P2 - next fix cycle"
+    if high:
+        return "P1 - before release"
+    return "P2 - next fix cycle" if record.get("severity") == "Medium" else "P3 - when convenient"
 
 
 def _coverage_gaps(run: RunReport) -> list[dict[str, str]]:
@@ -1134,20 +1149,22 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
         document.add_paragraph("No open defects or blocked journeys were recorded in this run. No failures to triage this run.")
         return
     document.add_paragraph(f"{len(defects)} recorded defect or blocker(s), classified by severity, failure class, and scope.")
-    index = _grid(document, ("ID", "Severity", "Type", "Status", "Title"))
-    _set_table_widths(index, (1.0, 0.75, 1.15, 0.75, 2.55))
+    index = _grid(document, ("ID", "Severity", "Priority", "Type", "Status", "Title"))
+    _set_table_widths(index, (0.9, 0.65, 0.9, 1.0, 0.65, 2.1))
     for defect in defects:
         cells = index.add_row().cells
         cells[0].text = _display_id(defect["id"])
         cells[1].text = defect["severity"]
-        cells[2].text = f'{defect["scope"]} / {defect.get("failure_class", "NOT CAPTURED")}'
-        cells[3].text = defect["status"]
-        cells[4].text = _shorten(defect["title"], 90)
+        cells[2].text = defect.get("priority", "NOT CAPTURED").split(" - ")[0]
+        cells[3].text = f'{defect["scope"]} / {defect.get("failure_class", "NOT CAPTURED")}'
+        cells[4].text = defect["status"]
+        cells[5].text = _shorten(defect["title"], 90)
     for defect in defects:
         document.add_heading(f'{defect["id"]} — {defect["title"]}', 3)
         table = _grid(document, ("Field", "Details"))
         fields = (
-            ("Severity", defect["severity"]),
+            ("Severity (how bad)", defect["severity"]),
+            ("Priority (how urgent)", defect.get("priority", "NOT CAPTURED")),
             ("Description", defect["description"]),
             ("Steps to reproduce", "\n".join(f"{i}. {s}" for i, s in enumerate(defect["steps_to_reproduce"], 1))),
             ("Expected", defect["expected"]),
