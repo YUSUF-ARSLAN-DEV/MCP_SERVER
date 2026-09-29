@@ -1473,6 +1473,15 @@ def _flows_section(document, flows: list[FlowReport], *, embed: bool, link_base:
         _render_flow(document, flow, embed=embed, link_base=link_base)
 
 
+_CRITICAL_CONTROL = re.compile(r"submit|subscribe|search|send|register|sign|log ?in|pay|buy|confirm|request|save|checkout|download|install|tune", re.I)
+
+
+def _critical_untouched(coverage: Coverage) -> list[tuple[str, str]]:
+    """(page, control) for every untouched control whose name suggests the page's main action - the untested parts
+    a release decision actually needs to know about, rather than a bare percentage."""
+    return [(page.path, control) for page in coverage.pages for control in page.untouched if _CRITICAL_CONTROL.search(control)]
+
+
 def _coverage_section(document, coverage: Coverage | None) -> None:
     """How much of the explored site the tested flows touch, and where the untested parts are."""
     if coverage is None or not coverage.pages:
@@ -1491,6 +1500,16 @@ def _coverage_section(document, coverage: Coverage | None) -> None:
         "are included in the machine-readable report-data.json and the coverage appendix.")
     document.add_paragraph("Header, navigation and footer links are left out of the control denominator; they are shared chrome rather than page-specific requirements.")
     document.add_paragraph("Requirements and user stories are represented by the plain-language flow goals. A goal is traceable only when its flow is verified or approved; unverified goals remain coverage gaps.")
+    critical = _critical_untouched(coverage)
+    document.add_paragraph("The percentages are a rough guide. What matters for a release decision is which specific controls nothing tested:")
+    if critical:
+        document.add_paragraph(f"Untested controls that look like a page's main action ({len(critical)}):")
+        for page_path, control in critical[:25]:
+            document.add_paragraph(f"{control} on {page_path}", style="List Bullet")
+        if len(critical) > 25:
+            document.add_paragraph(f"...and {len(critical) - 25} more; the table below and the coverage appendix list every untouched control.")
+    else:
+        document.add_paragraph("No untested control looks like a page's main action (submit, search, subscribe and similar).")
     table = _grid(document, ("Page", "Visited", "Touched", "Not touched by any flow"))
     for page in coverage.pages:
         cells = table.add_row().cells
