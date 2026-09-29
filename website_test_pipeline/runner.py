@@ -507,10 +507,29 @@ def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | N
         result["steps_done"] += 1
         previous = current
     result["ok"] = result["steps_done"] == len(steps) and not result["error"]
+    if result["ok"] and sentence_expects_content(flow) and not content_shown(classify(diff_snapshots(first, previous)), flow):
+        previous = _await_promised_content(page, first, previous, flow)        # a slow server is not a broken page
     result["observed"] = classify(diff_snapshots(first, previous))
     if result["ok"] and nav_anchor is not None:
         result["tail"] = classify(diff_snapshots(nav_anchor, previous))      # what the journey did AFTER it got there
     return result
+
+
+_LATE_CONTENT_MS = 8000     # how long a sentence that promises content may wait for it after the last step
+
+
+def _await_promised_content(page, first: dict, current: dict, flow: dict) -> dict:
+    """The last step ran and the page shows nothing new yet, but the sentence promises content: on a slow staging
+    server the results arrive a few seconds later. Poll for them (up to _LATE_CONTENT_MS) so a flow that passed
+    yesterday does not fail today only because of timing. Returns the latest snapshot either way."""
+    waited = 0
+    while waited < _LATE_CONTENT_MS:
+        page.wait_for_timeout(_SETTLE_POLL_MS * 2)
+        waited += _SETTLE_POLL_MS * 2
+        current = take_snapshot(page)
+        if content_shown(classify(diff_snapshots(first, current)), flow):
+            return settled_snapshot(page)
+    return current
 
 
 def _empty(flow: dict) -> dict:
