@@ -707,6 +707,59 @@ def _repair_role_from_inventory(source: str, inventory) -> tuple[str, int]:
     return raw.decode("utf-8"), len(edits)
 
 
+_CONTAINER_ROLES = {"group", "region", "form", "article", "dialog", "alert", "status", "navigation", "list", "heading"}
+
+
+def _names_without_aria_role(inventory) -> set[str]:
+    """Control names the explorer saw but for which it recorded no ARIA role at all (a fieldset's legend, a label)."""
+    from .validator import _ARIA_ROLES
+    seen: dict[str, bool] = {}
+    groups = [getattr(inventory, "controls", None) or []]
+    for entry in getattr(inventory, "revealed", None) or []:
+        groups.append(entry.get("controls") or [])
+    for group in groups:
+        for control in group:
+            name = control.get("name")
+            if name:
+                seen[str(name)] = seen.get(str(name), False) or control.get("role") in _ARIA_ROLES
+    return {name for name, has_role in seen.items() if not has_role}
+
+
+def _repair_role_lookup_of_plain_text(source: str, inventory) -> tuple[str, int]:
+    """`get_by_role("group", name="Passcode (default)")` for something the page only has as plain text (a fieldset's
+    legend the explorer recorded with no role): the role lookup never matches, though the text is right there. Look
+    it up by its text instead. Only container-type roles are rewritten, and only for a name the page really has."""
+    plain = _names_without_aria_role(inventory)
+    if not plain:
+        return source, 0
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source, 0
+    edits = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get_by_role"
+                and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in _CONTAINER_ROLES):
+            continue
+        name = next((k.value for k in node.keywords if k.arg == "name"), None)
+        if not (isinstance(name, ast.Constant) and isinstance(name.value, str) and name.value in plain):
+            continue
+        receiver = ast.get_source_segment(source, node.func.value)
+        if receiver:
+            edits.append((node.lineno, node.col_offset, node.end_lineno, node.end_col_offset,
+                          f"{receiver}.get_by_text({name.value!r}, exact=True).first"))
+    if not edits:
+        return source, 0
+    offsets = [0]
+    for line in source.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line.encode("utf-8")))
+    raw = source.encode("utf-8")
+    for l1, c1, l2, c2, text in sorted(edits, reverse=True):
+        start, end = offsets[l1 - 1] + c1, offsets[l2 - 1] + c2
+        raw = raw[:start] + text.encode("utf-8") + raw[end:]
+    return raw.decode("utf-8"), len(edits)
+
+
 def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
     """Return (possibly rewritten source, list of human-readable repairs applied).
     On any parse failure of the rewritten source, return the original untouched."""
@@ -728,6 +781,9 @@ def repair_spec(source: str, inventory=None) -> tuple[str, list[str]]:
         source, n = _repair_fragile_heading(source)
         if n:
             applied.append(f"rewrote {n} fragile exact-heading name(s) to re.compile()")
+        source, n = _repair_role_lookup_of_plain_text(source, inventory)
+        if n:
+            applied.append(f"looked up {n} plain-text name(s) by text instead of a role")
         source, n = _repair_role_from_inventory(source, inventory)
         if n:
             applied.append(f"corrected {n} guessed role(s) to the role the page really has")
