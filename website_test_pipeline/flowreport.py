@@ -174,8 +174,8 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         fr.needs_person = bool(latest and latest.get("source") == "human_needed")
         fr.not_run_reason, fr.verify_failed = explain_not_run(flow, entries)
         if fr.needs_person:
-            fr.not_run_reason, fr.verify_failed = ("the journey reaches a CAPTCHA that only a person can answer; run with --ask-human "
-                                                   "to be asked for the code"), False
+            fr.not_run_reason, fr.verify_failed = ("the journey reaches a CAPTCHA that only a person can answer; run it in a terminal with someone there "
+                                                   "and a window will ask for the code"), False
         executions = [e for e in entries if e.get("source") in {"runner", "pytest"}]
         newest = executions[-1] if executions else None
         fr.inconclusive = (ran_without_visible_effect(newest) or promised_content_missing(newest) or ran_but_prediction_missed(newest)) and not is_blocked(flow)

@@ -465,7 +465,7 @@ def run_flow(page, flow: dict, log=None, heal: bool = False, overrides: dict | N
             control = _locate(page, step)
             if control is not None and solve_before_submit(page, control, log) in {"not-asked", "skipped"}:
                 result["human_needed"] = True         # a form with a CAPTCHA and nobody to answer it: not a failure of the flow
-                result["error"] = "needs a person: the form has a CAPTCHA (run with --ask-human to be asked for the code)"
+                result["error"] = "needs a person: the form has a CAPTCHA and nobody was there to type the code"
                 break
         try:
             _do_step(page, step, seen)

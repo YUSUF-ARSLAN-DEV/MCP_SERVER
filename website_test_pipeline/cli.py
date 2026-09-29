@@ -45,15 +45,18 @@ def main() -> int:
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
     parser.add_argument('--no-window', action='store_true', help='all: do not open the progress pop-up (timer + bar)')
-    parser.add_argument('--ask-human', action='store_true', help='verify / execute / report --rerun / all: when a form needs a CAPTCHA, open a window asking you for the code instead of skipping it (needs a terminal and a display)')
+    parser.add_argument('--ask-human', action='store_true', help='force the CAPTCHA window on (it is on by default whenever a terminal and display are present)')
+    parser.add_argument('--no-ask-human', action='store_true', help='never open the CAPTCHA window: forms with a CAPTCHA are skipped and reported as needing a person')
     parser.add_argument('--browser', default='', choices=['', 'chromium', 'firefox', 'webkit'], help='execute / report --rerun / all: run the tests in this browser (default chromium); needs `playwright install <browser>`. Results replace the previous run: set SITE=<name> in .env to keep another workspace')
     parser.add_argument('--device', default='', help='execute / report --rerun / all: emulate a device, e.g. "iPhone 14" (Playwright device name)')
     parser.add_argument('--commit',action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
     args = parser.parse_args()
     if args.account:
         os.environ['AUTH_ACCOUNT'] = args.account
-    if args.ask_human:
-        os.environ['WTP_HUMAN'] = 'ask'                   # read by humanstep.human_mode(); inherited by every step `all` starts
+    if args.no_ask_human:
+        os.environ['WTP_HUMAN'] = 'skip'                  # read by humanstep.human_mode(); inherited by every step `all` starts
+    elif args.ask_human:
+        os.environ['WTP_HUMAN'] = 'ask'
     if args.browser:
         os.environ['WTP_BROWSER'] = args.browser          # read by pipeline.test_run_args, so every way of running the tests agrees
     if args.device:

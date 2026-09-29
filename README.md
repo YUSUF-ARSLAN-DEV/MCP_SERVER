@@ -33,7 +33,7 @@ python -m website_test_pipeline.cli crawl      # BFS from SEED_URL, overwrite ur
 python -m website_test_pipeline.cli explore    # load each URL, write page inventories
 python -m website_test_pipeline.cli generate   # explore + generate a validated spec per URL
 python -m website_test_pipeline.cli execute    # run the generated specs under pytest
-python -m website_test_pipeline.cli all --ask-human   # the whole pipeline; a form with a CAPTCHA opens a window for you
+python -m website_test_pipeline.cli all       # the whole pipeline; a form with a CAPTCHA opens a window for you
 pytest tests_python -q                          # unit tests for the pipeline itself
 ```
 
@@ -44,11 +44,12 @@ pytest tests_python -q                          # unit tests for the pipeline it
   `crawl` again. `crawl` requires `SEED_URL`; it is never run automatically.
 - Generated specs are written to `python_tests/`; run artifacts and inventories
   to `python_artifacts/`. Both directories are ignored by Git.
-- **CAPTCHA forms (`--ask-human`)**: a form that needs a CAPTCHA cannot finish on its own. With `--ask-human`
-  (on `all`, `verify`, `execute` or `report --rerun`) the run pauses just before the submit and opens a small window
-  showing every field of the form (prefilled, editable) and the CAPTCHA image, with "Show me a different code". Type the
-  code, press Continue, and the whole form is filled and submitted. It needs a terminal and a display; without the flag
-  (or unattended) the step is skipped and reported as "Needs a person". The code is never logged or stored.
+- **CAPTCHA forms**: a form that needs a CAPTCHA cannot finish on its own. When someone is at the terminal (a terminal
+  and a display), the run pauses just before the submit and opens a small window showing every field of the form
+  (prefilled, editable) and the CAPTCHA image, with "Show me a different code". Type the code, press Continue, and the
+  whole form is filled and submitted. It is automatic; `--no-ask-human` turns it off. If nobody answers (3 minute
+  countdown, or Skip), or the run is unattended, the step is skipped, not asked again in that run, and reported as
+  "Needs a person" - the flow is not marked failed. The code is never logged or stored.
 - Failures are isolated per URL — one unreachable page or one bad model
   response does not stop the run.
 

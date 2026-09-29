@@ -1,9 +1,10 @@
 """A step only a person can do - today an image CAPTCHA: a window shows the code and asks for it.
 
-A flow that submits a form with a CAPTCHA cannot finish on its own, so it used to stop as "needs a person". With
-`--ask-human` (env WTP_HUMAN=ask) and a real terminal + display, the run now pauses at the submit, opens a small
-always-on-top window with the CAPTCHA image, waits for the person to type the code, fills it in, and carries on.
-Without that (unattended, CI, or the flag off) nothing pops up: the step is skipped and reported as needing a person.
+A flow that submits a form with a CAPTCHA cannot finish on its own. When a person is there (a real terminal and a
+display) the run pauses at the submit, opens a small always-on-top window with the whole form and the CAPTCHA image,
+waits for the code, fills everything in, and carries on. Nothing needs switching on: it is automatic, like the
+sign-in window. When nobody is there - unattended, CI, --no-ask-human, or the window timed out or was skipped once -
+nothing pops up and the step is skipped and reported as needing a person, without marking the flow failed.
 
 Nothing here is specific to one site. The CAPTCHA input is found from the page's own signals (a text field whose
 name / id / label / hint says captcha, or that sits beside an image that does); the code is a one-time value, so it
@@ -170,19 +171,30 @@ def submits_this_form(page, control, info: dict) -> bool:
 
 # ------------------------------------------------------------------ when to ask
 
+_declined = False        # the person skipped (or the window timed out) once in this process: do not ask again, or a run
+                         # with several CAPTCHA steps would wait out the countdown for each of them
+
+
 def human_mode() -> str:
-    """"ask" only when the person opted in with --ask-human; everything else is "skip"."""
-    return "ask" if os.environ.get("WTP_HUMAN", "").strip().lower() == "ask" else "skip"
+    """"ask" (the default: ask whenever a person is there) or "skip" (--no-ask-human / WTP_HUMAN=skip)."""
+    return "skip" if os.environ.get("WTP_HUMAN", "").strip().lower() in {"skip", "never", "off", "no", "0"} else "ask"
 
 
 def can_ask() -> tuple[bool, str]:
-    """(ask?, reason). Needs the opt-in, a terminal and a display; never unattended."""
+    """(ask?, reason). Never when turned off, never unattended (no terminal or display), never twice after a skip."""
     if human_mode() != "ask":
-        return False, "not asked for (run with --ask-human to be prompted)"
+        return False, "turned off (--no-ask-human)"
+    if _declined:
+        return False, "it was skipped earlier in this run, so it is not asked again"
     from .authpopup import is_interactive
     if not is_interactive():
         return False, "no terminal or display to show a window on"
     return True, "a person can answer"
+
+
+def reset_declined() -> None:
+    global _declined
+    _declined = False
 
 
 # ------------------------------------------------------------------ the window
@@ -340,6 +352,8 @@ def solve_before_submit(page, control, log=None, asker=None) -> str:
                                  (lambda: image.screenshot(timeout=3000)) if image else None,
                                  (lambda: reload_button.click(timeout=2000)) if reload_button else None)
     if not answer or not getattr(answer, "code", ""):
+        global _declined
+        _declined = True
         return "skipped"
     _fill_form(page, fields, answer.values)
     page.locator(info["input"]).first.fill(answer.code, timeout=3000)       # the code is never logged or stored
@@ -370,4 +384,4 @@ def human_step(page, control, log=None) -> None:
     outcome = solve_before_submit(page, control, log)
     if outcome in {"not-asked", "skipped"}:
         import pytest
-        pytest.skip("needs a person: the form has a CAPTCHA (run with --ask-human to be asked for the code)")
+        pytest.skip("needs a person: the form has a CAPTCHA and nobody was there to type the code")

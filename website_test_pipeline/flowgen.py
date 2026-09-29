@@ -291,7 +291,7 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
         label = f"{i + 1:02d}-{step.get('kind')}-{_target_slug(step)}"
         body += [
             f"    control = {locator}",
-            *(["    human_step(page, control)      # a CAPTCHA on the form: ask for the code (--ask-human) or skip as needing a person"]
+            *(["    human_step(page, control)      # a CAPTCHA on the form: ask for the code (a window) or skip as needing a person"]
               if step.get("kind") in {"click", "submit"} else []),
             "    action_evidence(",
             "        page,",

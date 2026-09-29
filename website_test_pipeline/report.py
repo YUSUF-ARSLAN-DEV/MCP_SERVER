@@ -1017,8 +1017,8 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "linked_flow_id": "NOT CAPTURED",
             "failure_class": "human_input_required",
             "mitigation": (f'Not an application defect: an automated test cannot pass a {page["reason"]}. Ask the site owner for a staging '
-                           "bypass (test key or disabled check) so the form can be automated, or run with --ask-human so a window shows the form and the "
-                           "CAPTCHA and a person types the code during the run."),
+                           "bypass (test key or disabled check) so the form can be automated, or run it with someone at the terminal: a window then shows the form and "
+                           "the CAPTCHA and a person types the code during the run."),
             "scope": "page",
             "business_impact": f'The form at {_page_of(page["url"])} needs a {page["reason"]} step that no automated test can pass, so submitting it is unverified.',
             "blocking": True,
@@ -1783,7 +1783,7 @@ def _recommendation_plan(document, run: RunReport, data: dict[str, Any]) -> None
     document.add_heading("Process improvements", 2)
     steps = []
     if run.human_input_pages:
-        steps.append("Run with --ask-human so a person can type the CAPTCHA code during the run, or ask the site owner for a staging bypass (test key or disabled check) so the forms can be automated.")
+        steps.append("Run with someone at the terminal so a window can ask for the CAPTCHA code (automatic), or ask the site owner for a staging bypass (test key or disabled check) so the forms can be automated.")
     if run.untested_auth:
         steps.append("Provide a dedicated test account for the areas behind a sign-in, so those pages are tested.")
     if sum(f.passed and f.navigation_only for f in run.flow_reports):

@@ -111,11 +111,31 @@ def test_skipping_or_a_run_that_cannot_ask_leaves_the_field_empty(page, monkeypa
     assert solve_before_submit(page, page.locator("#go"), asker=lambda *a: HumanAnswer("never used")) == "not-asked"
 
 
-def test_asking_needs_the_opt_in(monkeypatch):
+def test_asking_is_automatic_when_a_person_is_there_and_never_when_turned_off_or_unattended(monkeypatch):
+    from website_test_pipeline import authpopup
     monkeypatch.delenv("WTP_HUMAN", raising=False)
-    assert human_mode() == "skip" and can_ask()[0] is False
-    monkeypatch.setenv("WTP_HUMAN", "ASK")
-    assert human_mode() == "ask"
+    humanstep.reset_declined()
+    assert human_mode() == "ask"                                     # the default: no switch to flip
+    monkeypatch.setattr(authpopup, "is_interactive", lambda: True)
+    assert can_ask()[0] is True
+    monkeypatch.setattr(authpopup, "is_interactive", lambda: False)
+    assert can_ask()[0] is False                                     # unattended: never
+    monkeypatch.setattr(authpopup, "is_interactive", lambda: True)
+    monkeypatch.setenv("WTP_HUMAN", "skip")
+    assert human_mode() == "skip" and can_ask()[0] is False          # --no-ask-human
+
+
+def test_after_one_skip_the_window_is_not_shown_again_in_the_same_run(page, monkeypatch):
+    from website_test_pipeline import authpopup
+    monkeypatch.delenv("WTP_HUMAN", raising=False)
+    monkeypatch.setattr(authpopup, "is_interactive", lambda: True)
+    humanstep.reset_declined()
+    page.set_content(PAGE)
+    shown = []
+    assert solve_before_submit(page, page.locator("#go"), asker=lambda *a: shown.append(1)) == "skipped"
+    assert solve_before_submit(page, page.locator("#go"), asker=lambda *a: shown.append(1)) == "not-asked"
+    assert len(shown) == 1                                           # asked once, then left alone
+    humanstep.reset_declined()
 
 
 def _tk_root():
