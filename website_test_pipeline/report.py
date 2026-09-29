@@ -1247,13 +1247,13 @@ def _write_execution_chart(report_dir: Path, counts: dict[str, Any]) -> Path | N
         values = [("Passed", int(counts["passed"]), (35, 132, 67)),
                   ("Failed", int(counts["failed"]), (179, 38, 26)),
                   ("Skipped", int(counts["skipped"]), (138, 109, 0)),
-                  ("Blocked", int(counts["blocked_flows"]), (90, 90, 90))]
+                  ("Journeys with no result", int(counts["blocked_flows"]), (90, 90, 90))]
         maximum = max(1, max(v for _, v, _ in values))
         draw.text((30, 22), "Run result breakdown", fill="black", font=font)
-        bar_left, bar_top, bar_width, bar_height = 150, 55, 500, 42
+        bar_left, bar_top, bar_width, bar_height = 170, 55, 480, 42
         for index, (label, value, color) in enumerate(values):
             y = bar_top + index * 68
-            draw.text((30, y + 14), label, fill="black", font=font)
+            draw.text((10, y + 14), label, fill="black", font=font)
             draw.rectangle((bar_left, y, bar_left + bar_width, y + bar_height), outline=(210, 210, 210))
             draw.rectangle((bar_left, y, bar_left + round(bar_width * value / maximum), y + bar_height), fill=color)
             draw.text((bar_left + bar_width + 15, y + 14), str(value), fill="black", font=font)
