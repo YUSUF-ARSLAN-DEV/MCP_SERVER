@@ -1635,10 +1635,29 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
         document.add_paragraph("No release conditions were recorded.")
 
 
+_EDGE_WORDS = re.compile(r"wrong|invalid|incorrect|empty|blank|error|unknown|missing", re.I)
+
+
+def _test_data_paragraphs(document, run: RunReport) -> None:
+    """What data the tests used, stated from the run itself (nothing here is a claim the run cannot back up)."""
+    accounts = len(run.auth_lines)
+    document.add_paragraph(
+        "Test data: " + (f"{accounts} test account(s) were used to sign in (details are kept out of the report). " if accounts
+                         else "no login was used, so only public pages were exercised. ")
+        + "Form values are stored per step in each flow, so a run repeats the same inputs; a step with no stored value "
+          "picks the first real option in the list.")
+    edge = [f for f in run.flow_reports if _EDGE_WORDS.search(f.goal or "")]
+    document.add_paragraph(
+        f"Edge cases: {len(edge)} flow(s) are worded as invalid, empty or error inputs (matched by their wording). "
+        + ("Beyond those, edge cases such as empty search results or invalid values are not tried unless someone writes them as a plain-sentence requirement."
+           if edge else "Empty search results, invalid values and similar cases are not tried unless someone writes them as a plain-sentence requirement."))
+
+
 def _scope_section(document, run: RunReport) -> None:
     document.add_heading("Test Scope", 1)
     document.add_paragraph(f"In scope: {len(run.url_reports)} discovered URL(s), page-level checks, and generated user flows.")
     document.add_paragraph("Out of scope: performance benchmarking, penetration testing, full browser/device compatibility, and business-rule correctness unless explicitly represented by a verified flow.")
+    _test_data_paragraphs(document, run)
     document.add_paragraph("Test types performed: functional smoke testing, navigation, flow verification, evidence capture, and coverage analysis.")
     document.add_paragraph("Device coverage: Windows desktop only. Mobile viewport, Safari, Firefox, and Edge were not run and remain release risks for responsive or browser-specific behavior.")
 
