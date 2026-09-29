@@ -170,7 +170,7 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         fr.not_run_reason, fr.verify_failed = explain_not_run(flow, entries)
         executions = [e for e in entries if e.get("source") in {"runner", "pytest"}]
         newest = executions[-1] if executions else None
-        fr.inconclusive = (ran_without_visible_effect(newest) or promised_content_missing(newest)) and not is_blocked(flow)
+        fr.inconclusive = (ran_without_visible_effect(newest) or promised_content_missing(newest) or ran_but_prediction_missed(newest)) and not is_blocked(flow)
     fr.warnings = flow_warnings(fr)
     return fr
 
@@ -179,6 +179,16 @@ def promised_content_missing(entry: dict | None) -> bool:
     """The last real check did everything the sentence says and the site simply showed no content for that input
     (recorded as definite: "promises content but ... only saw the URL change"). Data-dependent, not a broken page."""
     return bool(entry and not entry.get("passed") and entry.get("definite") and "promises content" in str(entry.get("error") or ""))
+
+
+def ran_but_prediction_missed(entry: dict | None) -> bool:
+    """Every step ran without an error and the page did change, yet it was not the change the flow predicted. The
+    prediction was written before the run (by a model, from a sentence), so a wrong guess is not a site failure."""
+    if not entry or entry.get("passed") or entry.get("error"):
+        return False
+    checks = entry.get("checks") or {}
+    done, _, total = str(checks.get("steps_completed", "")).partition("/")
+    return bool(done) and done == total and checks.get("observed_effect") not in {None, "no-visible-change"}
 
 
 def ran_without_visible_effect(entry: dict | None) -> bool:
@@ -205,6 +215,9 @@ def explain_not_run(flow: dict, entries: list[dict]) -> tuple[str, bool]:
     if ran_without_visible_effect(last):
         return ("every step ran, but nothing on the page visibly changed, so the promised outcome could not be confirmed; "
                 "the site did not fail, the check could not observe an effect"), False
+    if ran_but_prediction_missed(last):
+        return ("every step ran without an error, but the outcome that was predicted for it was not what the page showed; "
+                "the prediction may be wrong, the site did not fail"), False
     if last is not None and not last.get("passed"):
         return f'its last check ({last.get("source")}, {(last.get("at") or "")[:10]}) failed', True
     if flow.get("status") in {"verified", "approved"}:
