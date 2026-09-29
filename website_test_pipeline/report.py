@@ -1395,7 +1395,7 @@ def _flows_table(document, flows: list[FlowReport]) -> None:
         cells = table.add_row().cells
         cells[0].text = flow.title
         cells[1].text = {"verified": "Verified", "approved": "Approved", "stale": "Needs retesting", "candidate": "Not yet verified"}.get(flow.status, "Not recorded")
-        cells[2].text = ("Passed" if flow.passed else "Failed") if flow.outcome else "Blocked / not run"
+        cells[2].text = flow.run_label
         cells[3].text = _ARROW.join(flow.pages) or "-"
 
 
@@ -1446,14 +1446,16 @@ def _untested_flows_section(document, flows: list[FlowReport]) -> None:
     if not flows:
         return
     document.add_heading("Flows without a test result in this run", 1)
-    document.add_paragraph("These journeys have no passing executable result in this run.")
+    document.add_paragraph(
+        "These journeys have no test result in this run. \"Stored status\" is what was true at the last check; "
+        "\"Latest result\" says why this run has nothing for the flow, so a flow can be Verified earlier and still not run now.")
     table = _grid(document, ("Flow", "Stored status", "Latest result"))
     for flow in flows:
         cells = table.add_row().cells
         cells[0].text = flow.title
         cells[1].text = {"verified": "Verified", "approved": "Approved", "stale": "Needs retesting", "candidate": "Not yet verified"}.get(flow.status, "Not recorded")
         latest = flow.history[-1] if flow.history else "never run"
-        cells[2].text = f"Blocked / not run — {latest}"
+        cells[2].text = f"{flow.run_label}: {flow.not_run_reason}"
         document.add_paragraph(f'{flow.title} — Most recent attempt: {latest}')
 
 

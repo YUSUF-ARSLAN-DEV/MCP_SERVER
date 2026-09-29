@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .flows import describe_step
+from .flows import describe_step, is_blocked
 from .review import _rating_line
 from .runner import _path
 
@@ -41,6 +41,8 @@ class FlowReport:
     warnings: list[str] = field(default_factory=list)
     vision_broken: bool = False        # the latest vision rating says the final screenshot looks broken (an opinion)
     vision_reason: str = ""
+    not_run_reason: str = ""           # why an untested flow has no result in this run (empty when it ran)
+    verify_failed: bool = False        # untested, and the last real check of it (runner or pytest) failed
 
     @property
     def tested(self) -> bool:
@@ -57,6 +59,14 @@ class FlowReport:
     @property
     def title(self) -> str:
         return self.goal or self.flow_id
+
+    @property
+    def run_label(self) -> str:
+        """One plain word for this run's result. "Blocked" is not used: a flow with no result either failed its
+        last check or was simply not run, and those are different things to a reader."""
+        if self.outcome is not None:
+            return {"passed": "Passed", "skipped": "Skipped"}.get(self.outcome.status, "Failed")
+        return "Failed its last check" if self.verify_failed else "Not run in this run"
 
 
 def pages_touched(flow: dict) -> list[str]:
@@ -152,8 +162,24 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
     if outcome is not None and fr.failed:
         stems = [_stem(p) for p in outcome.evidence]
         fr.failure = attribute_failure(flow, stems, outcome.error, outcome.status)
+    if outcome is None:
+        fr.not_run_reason, fr.verify_failed = explain_not_run(flow, entries)
     fr.warnings = flow_warnings(fr)
     return fr
+
+
+def explain_not_run(flow: dict, entries: list[dict]) -> tuple[str, bool]:
+    """(why a flow has no test result in this run, whether its last real check failed). A stored "verified" next to
+    "not run" is not a contradiction: verified is what was true at the last check, and this run did not repeat it."""
+    executions = [e for e in entries if e.get("source") in {"runner", "pytest"}]
+    last = executions[-1] if executions else None
+    if is_blocked(flow):
+        return "its plain sentence was edited or dropped since it was built; rebuild it before it can be tested", False
+    if last is not None and not last.get("passed"):
+        return f'its last check ({last.get("source")}, {(last.get("at") or "")[:10]}) failed', True
+    if flow.get("status") in {"verified", "approved"}:
+        return "it was verified earlier, but no test of it ran in this run (no generated test, or it was skipped)", False
+    return "it has not been verified yet", False
 
 
 def _stem(path: str) -> str:
