@@ -1699,6 +1699,42 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
         document.add_paragraph("Do not release based on this run. The open defects must be resolved and the affected journeys rerun.")
     for condition in data["conditions"] or ["Review the out-of-scope mobile and compatibility coverage before sign-off."]:
         document.add_paragraph(condition, style="List Bullet")
+    _recommendation_plan(document, run, data)
+
+
+def _recommendation_plan(document, run: RunReport, data: dict[str, Any]) -> None:
+    """What to do about it, built from this run: manual checks for what could not be automated, process fixes, and
+    what to add to the next test run. Every line is tied to something the run actually found."""
+    blocked = [d for d in data["defects"] if d.get("blocking") or d.get("failure_class") in {"failed_last_check", "blocked_flow"}]
+    document.add_heading("Immediate mitigation", 2)
+    if blocked:
+        document.add_paragraph("Until these are automated or fixed, have a person check them by hand before release:")
+        for d in blocked[:12]:
+            document.add_paragraph(f'{d["id"]}: {_shorten(d["title"], 110)}', style="List Bullet")
+        if len(blocked) > 12:
+            document.add_paragraph(f"...and {len(blocked) - 12} more listed in the defect report.")
+    else:
+        document.add_paragraph("No journey needs a manual check beyond the defects already listed.")
+    document.add_heading("Process improvements", 2)
+    steps = []
+    if run.human_input_pages:
+        steps.append("Ask the site owner for a staging bypass (test key or disabled check) for the CAPTCHA forms so they can be automated.")
+    if run.untested_auth:
+        steps.append("Provide a dedicated test account for the areas behind a sign-in, so those pages are tested.")
+    if sum(f.passed and f.navigation_only for f in run.flow_reports):
+        steps.append("Give navigation-only journeys an outcome check (a heading or result that must appear) so passing means the page is right.")
+    if not (run.browser_info or {}).get("device"):
+        steps.append("Add a phone-size run (--device \"iPhone 14\") and a second engine (--browser firefox) to the release routine.")
+    for step in steps or ["No process change is suggested by this run."]:
+        document.add_paragraph(step, style="List Bullet")
+    document.add_heading("Revised test plan for the next run", 2)
+    plan = ["Re-run the failed and blocked journeys above and update their status."]
+    critical = _critical_untouched(run.coverage) if run.coverage else []
+    if critical:
+        plan.append(f"Write plain-sentence requirements for the {len(critical)} untested main-action control(s) listed under coverage, then rebuild flows from them.")
+    plan.append("Repeat the critical path (search, tune, subscribe) on the phone-size and second-engine runs.")
+    for step in plan:
+        document.add_paragraph(step, style="List Bullet")
 
 
 def _validate_docx_export(destination: Path) -> None:
