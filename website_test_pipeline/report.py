@@ -959,11 +959,12 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
         number += 1
 
     for flow in run.untested_flows:
+        failed_check = flow.verify_failed         # its last real check failed: a failure, not merely "could not run"
         record = {
-            "id": f"BLOCK-{number:03d}",
+            "id": f"{'BUG' if failed_check else 'BLOCK'}-{number:03d}",
             "severity": "High",
             "title": _shorten(_plain_flow_title(flow.title), 160),
-            "description": "This user journey has no passing executable result in the current run.",
+            "description": f"This user journey has no test result in this run: {flow.not_run_reason}.",
             "steps_to_reproduce": [f"Open {flow.start_url}.", f"Attempt journey {flow.flow_id}."],
             "expected": flow.expected or "The journey should complete and produce a verified result.",
             "actual": flow.observed or "The journey was not completed.",
@@ -971,10 +972,10 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "status": "Open",
             "owner": "Unassigned",
             "linked_flow_id": flow.flow_id,
-            "failure_class": "blocked_flow",
+            "failure_class": "failed_last_check" if failed_check else "blocked_flow",
             "scope": "flow",
             "business_impact": f'Visitors cannot be shown to complete "{_shorten(_plain_flow_title(flow.title), 80)}" from {_page_of(flow.start_url)}; until it has a passing test, releasing carries that risk.',
-            "blocking": True,
+            "blocking": not failed_check,
         }
         records.append(record)
         number += 1
@@ -1155,7 +1156,11 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
     if not defects:
         document.add_paragraph("No open defects or blocked journeys were recorded in this run. No failures to triage this run.")
         return
-    document.add_paragraph(f"{len(defects)} recorded defect or blocker(s), classified by severity, failure class, and scope.")
+    document.add_paragraph(f"{len(defects)} recorded defect or blocker(s), classified by severity, priority, failure class, and scope.")
+    document.add_paragraph(
+        "BUG means something ran and went wrong, or a journey whose last real check failed (it counts as a failure, even when this "
+        "run had no fresh result for it). BLOCK means a journey could not be run or completed for a reason outside the check itself: "
+        "no test exists for it, its sentence was edited, a login is required, or a step only a person can do (such as a CAPTCHA).")
     index = _grid(document, ("ID", "Severity", "Priority", "Type", "Status", "Title"))
     _set_table_widths(index, (0.9, 0.65, 0.9, 1.0, 0.65, 2.1))
     for defect in defects:
