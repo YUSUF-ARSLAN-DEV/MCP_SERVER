@@ -198,6 +198,24 @@ def _confirm_checked(option, text: str) -> None:
             continue          # is_checked() does not apply to this element; try the next, or give up quietly
 
 
+_ARABIC_VARIANTS = {"أ": "[أإآا]", "إ": "[أإآا]", "آ": "[أإآا]", "ا": "[أإآا]", "ى": "[ىي]", "ي": "[ىي]", "ة": "[ةه]", "ه": "[ةه]"}
+_ARABIC_MARKS = "\u064b\u064c\u064d\u064e\u064f\u0650\u0651\u0652\u0640"     # tashkeel and tatweel: never part of the spelling that matters
+
+
+def loose_text(text: str):
+    """A regex that finds `text` in an option's label the way a reader would: case-insensitive, spaces collapsed, and
+    Arabic letters that are written interchangeably (alef with or without hamza, ya / alef maqsura, ta marbuta / ha)
+    matching each other. A model or a person writing the name from memory often picks the other spelling, and that
+    is not a reason for a working page to fail. Non-Arabic text becomes an escaped literal."""
+    import re
+    out = []
+    for ch in " ".join((text or "").split()):
+        if ch in _ARABIC_MARKS:
+            continue
+        out.append(_ARABIC_VARIANTS.get(ch) or (r"\s+" if ch == " " else re.escape(ch)))
+    return re.compile("".join(out), re.I)
+
+
 def pick_option(page, trigger, text: str) -> None:
     """Open a dropdown / checkbox-menu widget and pick the option whose text contains `text`.
 
@@ -207,7 +225,7 @@ def pick_option(page, trigger, text: str) -> None:
     it was clicked but never actually became checked."""
     trigger.click(timeout=3000)
     page.wait_for_timeout(700)
-    option = _menu_for(page, trigger).locator(heuristics.option_selector()).filter(has_text=text).first
+    option = _menu_for(page, trigger).locator(heuristics.option_selector()).filter(has_text=loose_text(text)).first
     if option.count():
         option.click(timeout=2000)
         _confirm_checked(option, text)
