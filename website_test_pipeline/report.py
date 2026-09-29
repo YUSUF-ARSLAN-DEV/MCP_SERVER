@@ -1360,13 +1360,16 @@ def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] 
     document.add_paragraph(
         f'{counts["executed_tests"]} tests ran: {counts["passed"]} passed and {counts["failed"]} failed. '
         f'{counts["skipped"]} were skipped and {counts["blocked_flows"]} user journeys were blocked. '
-        f'Pass rate among tests that ran: {counts["pass_rate_percent"]}%. Blocked journeys are reported separately.'
+        f'Pass rate among tests that ran: {counts["pass_rate_percent"]}%. That rate ignores journeys with no result, so read it with the '
+        f'journey figure: {counts["journeys_passed"]} of {counts["journeys_total"]} user journeys passed '
+        f'({counts["journeys_passed_percent"]}%).'
     )
     metrics = _grid(document, ("Metric", "Value"))
     for label, value in (("Tests that ran", counts["executed_tests"]), ("Passed", counts["passed"]),
                          ("Failed", counts["failed"]), ("Skipped", counts["skipped"]),
-                         ("Blocked user journeys", counts["blocked_flows"]),
-                         ("Pass rate", f'{counts["pass_rate_percent"]}%')):
+                         ("User journeys with no result this run", counts["blocked_flows"]),
+                         ("Pass rate (tests that ran only)", f'{counts["pass_rate_percent"]}%'),
+                         ("User journeys passed (of all journeys)", f'{counts["journeys_passed"]} of {counts["journeys_total"]} ({counts["journeys_passed_percent"]}%)')):
         cells = metrics.add_row().cells
         cells[0].text, cells[1].text = label, str(value)
     attention = []
@@ -1511,9 +1514,10 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
     document.add_paragraph("Objective: check the discovered pages and the user journeys generated from them, then provide a release recommendation.")
     document.add_paragraph(
         f'Release decision: {recommendation}. {counts["passed"]} of {counts["executed_tests"]} tests passed; '
-        f'{counts["failed"]} failed, {counts["blocked_flows"]} journeys were blocked, and {counts["skipped"]} were skipped.'
+        f'{counts["failed"]} failed, {counts["blocked_flows"]} journeys had no result, and {counts["skipped"]} were skipped. '
+        f'Journeys passed: {counts["journeys_passed"]} of {counts["journeys_total"]} ({counts["journeys_passed_percent"]}%).'
     )
-    table = _grid(document, ("Overall status", "Tests run", "Passed", "Failed", "Skipped", "Blocked journeys", "Recommendation"))
+    table = _grid(document, ("Overall status", "Tests run", "Passed", "Failed", "Skipped", "Journeys with no result", "Recommendation"))
     values = (status, str(counts["executed_tests"]), str(counts["passed"]), str(counts["failed"]),
               str(counts["skipped"]), str(counts["blocked_flows"]), recommendation)
     for cell, value in zip(table.add_row().cells, values):

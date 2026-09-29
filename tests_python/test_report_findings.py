@@ -95,7 +95,7 @@ def test_the_combined_report_leads_with_a_findings_section(tmp_path):
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     for part in ("Defects and blockers", "Browser", "Operating system", "Python", "Medium",
                              "1 recorded defect or blocker(s)", "Flow coverage", "Content controls a tested flow acts on",
-                 "Tests run", "Blocked", "Pass rate"):
+                 "Tests run", "Journeys with no result", "Pass rate", "User journeys passed"):
         assert part in joined, part
     main = joined[:joined.index("Appendix: full evidence")]
     assert 'role="group"' not in main and "expect(" not in main

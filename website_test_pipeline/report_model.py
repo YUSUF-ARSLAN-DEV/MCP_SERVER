@@ -42,7 +42,21 @@ def canonical_counts(run: Any) -> dict[str, int | float]:
     executed = passed + failed
     all_items = executed + skipped + blocked
     pass_rate = round(100 * passed / executed) if executed else 0
+    flows = list(getattr(run, "flow_reports", []))
+    journeys_passed = sum(f.passed for f in flows)
+    journeys_failed = sum(f.failed for f in flows)
+    journeys_check_failed = sum(f.verify_failed for f in flows if not f.tested)
+    journeys_total = len(flows)
     counts: dict[str, int | float] = {
+        # Journeys are counted over ALL flows, so a blocked critical path lowers this number; the pass rate below
+        # only covers tests that ran and can look high while journeys are untested.
+        "journeys_total": journeys_total,
+        "journeys_passed": journeys_passed,
+        "journeys_failed": journeys_failed,
+        "journeys_failed_last_check": journeys_check_failed,
+        "journeys_not_run": journeys_total - journeys_passed - journeys_failed - journeys_check_failed - sum(
+            f.tested and not f.passed and not f.failed for f in flows),
+        "journeys_passed_percent": round(100 * journeys_passed / journeys_total) if journeys_total else 0,
         "executed_tests": executed,
         "passed": passed,
         "failed": failed,
