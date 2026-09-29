@@ -999,16 +999,19 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
         records.append({
             "id": f"BLOCK-{number:03d}",
             "severity": "High",
-            "title": "Human input required to complete a form",
+            "title": f'A person is needed to complete the form at {_page_of(page["url"])}',
             "description": page.get("detail", "A human-only step was detected."),
             "steps_to_reproduce": [f'Open {page["url"]}.', f'Complete the {page["reason"]} step manually.'],
             "expected": "The form should be completed and submitted.",
             "actual": f'The run stopped at {page["reason"]}; the step was not automated.',
             "screenshot_url": "NOT CAPTURED",
             "status": "Open",
-            "owner": "Unassigned",
+            "owner": "QA lead with the site owner (bypass or manual pass)",
             "linked_flow_id": "NOT CAPTURED",
             "failure_class": "human_input_required",
+            "mitigation": (f'Not an application defect: an automated test cannot pass a {page["reason"]}. Ask the site owner for a staging '
+                           "bypass (test key or disabled check) so the form can be automated, or have a person complete it in each release "
+                           "test pass and record the result here."),
             "scope": "page",
             "business_impact": f'The form at {_page_of(page["url"])} needs a {page["reason"]} step that no automated test can pass, so submitting it is unverified.',
             "blocking": True,
@@ -1198,7 +1201,7 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
             ("Linked flow", defect["linked_flow_id"]),
             ("Evidence", defect["screenshot_url"]),
             ("Trace", defect.get("trace_url", "NOT CAPTURED")),
-        )
+        ) + ((("Mitigation", defect["mitigation"]),) if defect.get("mitigation") else ())
         for label, value in fields:
             cells = table.add_row().cells
             cells[0].text = label
