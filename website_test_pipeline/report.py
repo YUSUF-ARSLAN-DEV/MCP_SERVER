@@ -15,6 +15,7 @@ import re
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from pathlib import Path
 from typing import Any
 
@@ -923,7 +924,8 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "linked_flow_id": flow.flow_id if flow else "NOT CAPTURED",
             "failure_class": getattr(finding, "kind", "unclear") if finding else "unclear",
             "scope": scope,
-            "business_impact": "The affected check cannot confirm this part of the user journey until it is retested.",
+            "business_impact": (f'Visitors doing "{_shorten(title, 80)}" from {_page_of(outcome.url)} may not be able to finish it; this run failed to confirm the journey works.'
+                                if flow else f'The check "{_shorten(title, 80)}" on {_page_of(outcome.url)} failed, so that part of the page is not confirmed to work.'),
             "blocking": False,
         }
         records.append(record)
@@ -952,7 +954,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "linked_flow_id": finding.test if finding.scope == "flow" else "NOT CAPTURED",
             "failure_class": finding.kind or "unclear",
             "scope": finding.scope,
-            "business_impact": "The affected area needs review before the release decision can be trusted.",
+            "business_impact": f'A {finding.kind or "validation"} finding on {_page_of(finding.url)}: {_shorten(finding.summary or "see the finding", 100)}. It needs review before the release decision can be trusted.',
         })
         number += 1
 
@@ -971,7 +973,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "linked_flow_id": flow.flow_id,
             "failure_class": "blocked_flow",
             "scope": "flow",
-            "business_impact": "This user journey remains unverified and should be completed before release if it is release-critical.",
+            "business_impact": f'Visitors cannot be shown to complete "{_shorten(_plain_flow_title(flow.title), 80)}" from {_page_of(flow.start_url)}; until it has a passing test, releasing carries that risk.',
             "blocking": True,
         }
         records.append(record)
@@ -995,7 +997,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "linked_flow_id": "NOT CAPTURED",
             "failure_class": "human_input_required",
             "scope": "page",
-            "business_impact": "The form cannot be fully verified automatically until a person completes this step.",
+            "business_impact": f'The form at {_page_of(page["url"])} needs a {page["reason"]} step that no automated test can pass, so submitting it is unverified.',
             "blocking": True,
         })
         number += 1
@@ -1015,7 +1017,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "linked_flow_id": "NOT CAPTURED",
             "failure_class": "authentication_required",
             "scope": "page",
-            "business_impact": "Authenticated pages may contain unverified release-critical behavior.",
+            "business_impact": f'Pages behind the sign-in at {_page_of(wall["url"])} were not tested, so anything a signed-in visitor does there is unverified.',
             "blocking": True,
         })
         number += 1
@@ -1023,6 +1025,11 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
     for record in records:
         record["priority"] = _priority(record)
     return records
+
+
+def _page_of(url: str | None) -> str:
+    """The path part of a URL for prose ("/en/subscribe"); the whole value when it has none."""
+    return urlsplit(url or "").path or (url or "the affected page")
 
 
 def _priority(record: dict[str, Any]) -> str:
