@@ -28,6 +28,7 @@ from .flowgen import run_flowgen
 from .flowresults import feed_results
 from .flows import FlowsFileError, load_flows
 from .intents import run_intents
+from .progress import report as report_progress
 from .runner import run_verify
 
 STAGES = ("intents", "expand", "verify", "flowgen", "execute")
@@ -97,6 +98,7 @@ def run_chain(settings, urls: list[str], log, skip=(), only=(), client_factory=N
         if stage in skip or (only and stage not in only):
             results.append((stage, "skipped (as asked)"))
             continue
+        report_progress(settings, f"Flow stage: {stage}", stages.index(stage), len(stages))
         try:
             if stage in MODEL_STAGES:
                 if reachable is None:

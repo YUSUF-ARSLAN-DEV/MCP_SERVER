@@ -32,7 +32,7 @@ PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--traci
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
-    parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report','auth'], nargs='?', default='generate')
+    parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report','auth','all'], nargs='?', default='generate')
     parser.add_argument('words', nargs='*', help='auth: <url> (sign in / sign up on it, keep the session) | flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run | judge [id...] (a vision model rates the final screenshot) | (intents: <file>... requirement documents)')
     parser.add_argument('--reason', default='', help='flows reject/approve: why (required to reject)')
     parser.add_argument('--status', default=None, help='flows list: only flows with this status')
@@ -43,7 +43,8 @@ def main() -> int:
     parser.add_argument('--rerun', action='store_true', help='report: rerun the generated tests before rendering; default uses the existing test_results.json')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
-    parser.add_argument('--commit', action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
+    parser.add_argument('--no-window', action='store_true', help='all: do not open the progress pop-up (timer + bar)')
+    parser.add_argument('--commit',action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
     args = parser.parse_args()
     if args.account:
         os.environ['AUTH_ACCOUNT'] = args.account
@@ -60,6 +61,8 @@ def main() -> int:
     if args.command == 'crawl':
         if not settings.seed_url:
             log.error('crawl requires SEED_URL in .env'); return 2
+        from . import progress
+        progress.report(settings, 'Crawling the site', note=settings.seed_url)
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=settings.headless)
             try:
@@ -84,6 +87,29 @@ def main() -> int:
         settings.urls_file.write_text('\n'.join(discovered) + '\n', encoding='utf-8')
         log.info('CRAWL SUMMARY seed=%s discovered=%s file=%s', settings.seed_url, len(discovered), settings.urls_file)
         return 0
+    if args.command == 'all':
+        # crawl (when SEED_URL is set) -> generate -> flows run -> report --rerun. The report step runs the tests itself,
+        # so execute is skipped in the flow chain. Exit 2 (a stage could not run) stops the chain; exit 1 (tests failed) does not.
+        base = [sys.executable, '-m', 'website_test_pipeline.cli']
+        steps = ([['crawl']] if settings.seed_url else []) + [['generate'], ['flows', 'run', '--skip', ','.join(filter(None, ['execute', args.skip]))], ['report', '--rerun']]
+        from . import progress
+        weights = {'crawl': 1, 'generate': 4, 'flows': 3, 'report': 3}          # each step's rough share of the total time
+        total_w = sum(weights[s[0]] for s in steps); t0 = datetime.now().timestamp(); done_w = 0
+        progress.report(settings, 'Starting', note=settings.site)
+        if not args.no_window:
+            subprocess.Popen([*base[:2], 'website_test_pipeline.progress_window', str(progress.progress_file(settings))], cwd=settings.root)
+        worst = 0
+        for step in steps:
+            log.info('ALL step: %s', ' '.join(step))
+            span = f'{done_w / total_w},{(done_w + weights[step[0]]) / total_w}'
+            env = {**os.environ, 'WTP_PROGRESS_SPAN': span, 'WTP_PROGRESS_START': str(t0)}
+            code = subprocess.run([*base, *step, *(['--account', args.account] if args.account else [])], cwd=settings.root, env=env).returncode
+            done_w += weights[step[0]]
+            if code == 2:
+                log.error('ALL stopped: "%s" could not run', step[0]); progress.finish(settings, f'Stopped at {step[0]}'); return 2
+            worst = max(worst, code)
+        progress.finish(settings)
+        return worst
     if args.command == 'auth':
         from .authflow import run_auth
         return run_auth(settings, log, args.words[0] if args.words else settings.seed_url)
@@ -131,6 +157,8 @@ def main() -> int:
         # and also made report generation depend on the live site being available.
         # Use --rerun (or --repair) when a fresh execution is explicitly wanted.
         result = subprocess.CompletedProcess([], 0)
+        from . import progress
+        progress.report(settings, 'Running tests and building the report')
         if args.rerun or args.repair:
             if preflight_session(settings, log) == 2:
                 return 2
@@ -173,7 +201,9 @@ def main() -> int:
                 pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
         except Exception as exc:
             log.warning('auth: could not check for a login wall (%s)', str(exc).splitlines()[0][:150])
-        for url in urls:
+        from . import progress
+        for i, url in enumerate(urls):
+            progress.report(settings, 'Exploring pages' if args.command == 'explore' else 'Generating tests', i, len(urls), url)
             log.info('Processing %s', url)
             try:
                 context = browser.new_context(**context_kwargs(settings)); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max, log)
