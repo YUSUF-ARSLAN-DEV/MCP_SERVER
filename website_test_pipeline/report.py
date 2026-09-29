@@ -927,7 +927,10 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "id": f"BUG-{number:03d}",
             "severity": _severity_label(getattr(finding, "severity", ""), scope),
             "title": _shorten(title, 160),
-            "description": actual if not finding else f"{actual} Failure class: {finding.kind}.",
+            "description": (actual if not finding else
+                            f"{actual} This is a defect in the automated test, not in the application: {finding.summary}. "
+                            f"Next step: {finding.next_action}." if finding.kind == "test_defect" else
+                            f"{actual} Failure class: {finding.kind}."),
             "steps_to_reproduce": [f"Open {outcome.url}.", f"Run test {test_id}."],
             "expected": expected or "NOT CAPTURED",
             "actual": actual or "NOT CAPTURED",
