@@ -291,6 +291,8 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
         label = f"{i + 1:02d}-{step.get('kind')}-{_target_slug(step)}"
         body += [
             f"    control = {locator}",
+            *(["    human_step(page, control)      # a CAPTCHA on the form: ask for the code (--ask-human) or skip as needing a person"]
+              if step.get("kind") in {"click", "submit"} else []),
             "    action_evidence(",
             "        page,",
             f"        {_lit(label)},",
@@ -315,6 +317,7 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
         MARKER, f"# Flow {flow['id']}: {goal}", "import re", "from pathlib import Path", "",
         "from playwright.sync_api import Page, expect",
         "from website_test_pipeline.evidence import action_evidence, observation_evidence",
+        "from website_test_pipeline.humanstep import human_step",
         "from website_test_pipeline.pageutils import open_page, pick_option",
         *(["from website_test_pipeline.secretrefs import secret"] if uses_env else []), "",
         f"URL = {_lit(flow['start_url'])}", "", "",
