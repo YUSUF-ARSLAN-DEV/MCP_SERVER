@@ -1165,7 +1165,20 @@ def _duration_seconds(start: str | None, finish: str | None) -> float | None:
         return None
 
 
-def _findings_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
+def _compact_defects(document, defects: list[dict[str, Any]]) -> None:
+    """One row per defect: what went wrong and what it means. Steps, expected result and trace links are in the appendix."""
+    table = _grid(document, ("ID", "What went wrong", "Impact", "Evidence"))
+    _set_table_widths(table, (0.8, 2.2, 2.6, 0.8))
+    for defect in defects:
+        cells = table.add_row().cells
+        cells[0].text = _display_id(defect["id"])
+        cells[1].text = _shorten(str(defect["actual"]), 130)
+        cells[2].text = _shorten(str(defect.get("business_impact", "")), 150)
+        cells[3].text = "none" if defect["screenshot_url"] == "NOT CAPTURED" else "yes"
+    document.add_paragraph("Steps to reproduce, the expected result, owner and trace link for each defect are in the appendix.")
+
+
+def _findings_section(document, run: RunReport, report_data: dict[str, Any] | None = None, *, compact: bool = False) -> None:
     """Render complete defects and blockers in a readable, auditable format."""
     document.add_heading("Defects and blockers", 2)
     data = report_data or _report_data(run, Path.cwd())
@@ -1188,6 +1201,13 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
         cells[3].text = f'{defect["scope"]} / {defect.get("failure_class", "NOT CAPTURED")}'
         cells[4].text = defect["status"]
         cells[5].text = _shorten(defect["title"], 90)
+    if compact:
+        _compact_defects(document, defects)
+        return
+    _defect_detail_tables(document, defects)
+
+
+def _defect_detail_tables(document, defects: list[dict[str, Any]]) -> None:
     for defect in defects:
         document.add_heading(f'{defect["id"]} — {defect["title"]}', 3)
         table = _grid(document, ("Field", "Details"))
@@ -1495,7 +1515,7 @@ def _critical_untouched(coverage: Coverage) -> list[tuple[str, str]]:
     return [(page.path, control) for page in coverage.pages for control in page.untouched if _CRITICAL_CONTROL.search(control)]
 
 
-def _coverage_section(document, coverage: Coverage | None) -> None:
+def _coverage_section(document, coverage: Coverage | None, *, per_page: bool = True) -> None:
     """How much of the explored site the tested flows touch, and where the untested parts are."""
     if coverage is None or not coverage.pages:
         return
@@ -1523,6 +1543,9 @@ def _coverage_section(document, coverage: Coverage | None) -> None:
             document.add_paragraph(f"...and {len(critical) - 25} more; the table below and the coverage appendix list every untouched control.")
     else:
         document.add_paragraph("No untested control looks like a page's main action (submit, search, subscribe and similar).")
+    if not per_page:
+        document.add_paragraph("The per-page table of untouched controls is in the appendix (Coverage data).")
+        return
     table = _grid(document, ("Page", "Visited", "Touched", "Not touched by any flow"))
     for page in coverage.pages:
         cells = table.add_row().cells
@@ -1535,7 +1558,7 @@ def _coverage_section(document, coverage: Coverage | None) -> None:
         document.add_paragraph("Counted once: " + ", ".join(f"{a} redirects to {b}" for a, b in sorted(coverage.aliases.items())))
 
 
-def _traceability_section(document, run: RunReport) -> None:
+def _traceability_section(document, run: RunReport, *, gaps_only: bool = False) -> None:
     """Each written requirement -> the flow built from it -> what this run said. A requirement with no flow, or
     whose flow did not pass, is a coverage gap and is listed as one."""
     if not run.requirements:
@@ -1546,14 +1569,17 @@ def _traceability_section(document, run: RunReport) -> None:
     gaps = 0
     for req in run.requirements:
         flow = by_id.get(req.get("flow_id") or "")
+        result = flow.run_label if flow else "No flow, so nothing was tested"
+        gaps += result != "Passed"
+        if gaps_only and result == "Passed":
+            continue
         cells = table.add_row().cells
         cells[0].text = f'{req["id"]}: {_shorten(str(req.get("sentence", "")), 110)}'
         cells[1].text = str(req.get("source", "?"))
         cells[2].text = "yes" if flow else f'no ({req.get("status", "new")})'
-        result = flow.run_label if flow else "No flow, so nothing was tested"
         cells[3].text = result
-        gaps += result != "Passed"
-    document.add_paragraph(f"{gaps} of {len(run.requirements)} requirement(s) are not backed by a passing result in this run; these are the coverage gaps.")
+    document.add_paragraph(f"{gaps} of {len(run.requirements)} requirement(s) are not backed by a passing result in this run; these are the coverage gaps."
+                           + (" Only the gaps are listed here; the full table is in the appendix." if gaps_only else ""))
 
 
 def _untested_flows_section(document, flows: list[FlowReport], *, detail: bool = True) -> None:
@@ -1842,7 +1868,7 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
         document.add_picture(str(chart), width=Inches(5.7))
     document.add_page_break()
     document.add_heading("Defect Report (Bugs Found)", 1)
-    _findings_section(document, run, report_data)
+    _findings_section(document, run, report_data, compact=lean)
     link_base = destination.parent
     if run.tested_flows:
         document.add_heading("User flows", 1)
@@ -1850,10 +1876,19 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
             "Each flow is one user journey, tested by a generated spec whose steps and assertions come from a "
             "real verified browser run. The title is the flow's plain-language description. Full detail for "
             "each flow (journey, evidence, review history) is in the Appendix.")
-        _flows_table(document, run.tested_flows)
-    _untested_flows_section(document, run.untested_flows, detail=not lean)
-    _coverage_section(document, run.coverage)
-    _traceability_section(document, run)
+        if lean:
+            attention = [f for f in run.tested_flows if not f.passed]
+            document.add_paragraph(f"{len(run.tested_flows) - len(attention)} of {len(run.tested_flows)} flows passed; the full list is in the appendix.")
+            if attention:
+                _flows_table(document, attention)
+        else:
+            _flows_table(document, run.tested_flows)
+    if lean and run.untested_flows:
+        document.add_paragraph(f"{len(run.untested_flows)} more flow(s) have no test result in this run; each is a BUG or BLOCK entry in the Defect Report, and the table with their history is in the appendix.")
+    else:
+        _untested_flows_section(document, run.untested_flows, detail=not lean)
+    _coverage_section(document, run.coverage, per_page=not lean)
+    _traceability_section(document, run, gaps_only=lean)
     if not lean:
         document.add_heading("Test Logs & Evidence", 1)
         document.add_paragraph("Screenshots, videos, traces, assertions, and failure details are indexed in the appendix. The machine-readable source is included as report-data.json.")
@@ -1871,15 +1906,23 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
     _bookmark_headings(document)
     _save_document(document, destination, run)
     if lean and has_evidence:
-        _build_appendix_docx(run, destination.with_name(APPENDIX_FILE), link_base)
+        _build_appendix_docx(run, destination.with_name(APPENDIX_FILE), link_base, report_data)
 
 
-def _build_appendix_docx(run: RunReport, destination: Path, link_base: Path) -> None:
+def _build_appendix_docx(run: RunReport, destination: Path, link_base: Path, report_data: dict[str, Any]) -> None:
     """The evidence that would otherwise make the decision report hundreds of pages long."""
     document = Document()
     document.add_heading("Website Test Report - Appendix", 0)
     _metadata(document, run, scope="all URLs")
+    if report_data["defects"]:
+        document.add_heading("Defect details", 1)
+        _defect_detail_tables(document, report_data["defects"])
+    if run.tested_flows:
+        document.add_heading("All tested flows", 1)
+        _flows_table(document, run.tested_flows)
     _untested_flows_section(document, run.untested_flows)
+    if run.requirements:
+        _traceability_section(document, run)
     _appendix_section(document, run, link_base=link_base)
     _bookmark_headings(document)
     _save_document(document, destination, run)
