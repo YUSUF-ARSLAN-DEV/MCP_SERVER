@@ -742,11 +742,13 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
             return None
         scope = page.locator(form.get("selector")) if form.get("selector") else page.locator("form").first
         field = None
+        field_name = None
         for name in fields:
             cand = scope.locator(f'input[name="{name}"], textarea[name="{name}"]').first
             try:
                 if cand.count() and (cand.get_attribute("type") or "text") in {"text", "search", None}:
                     field = cand
+                    field_name = name
                     break
             except Exception:
                 continue
@@ -763,7 +765,7 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
             pre = []
         pre_keys = {(p.get("selector"), (p.get("text") or "")[:40], p.get("rows")) for p in pre}
         before_url = page.url
-        field_sel = f'input[name="{fields[0]}"]'
+        field_sel = f'input[name="{field_name}"]'
         submit_sel = None
         for cand in ('button[type="submit"]', 'input[type="submit"]', 'button:not([type])'):
             probe_sel = f'{form["selector"]} {cand}' if form.get("selector") else f'form {cand}'
