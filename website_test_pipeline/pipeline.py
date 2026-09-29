@@ -50,13 +50,24 @@ def model_reachable(url: str, timeout: float = 3.0) -> bool:
         return False
 
 
+def test_run_args() -> list[str]:
+    """pytest-playwright options for the browser / device asked for with --browser / --device (env WTP_BROWSER,
+    WTP_DEVICE). Empty means the default: desktop Chromium."""
+    args: list[str] = []
+    if os.environ.get("WTP_BROWSER"):
+        args += ["--browser", os.environ["WTP_BROWSER"]]
+    if os.environ.get("WTP_DEVICE"):
+        args += ["--device", os.environ["WTP_DEVICE"]]
+    return args
+
+
 def run_execute(settings, log) -> int:
     """Run every generated spec under pytest and feed the flow results back into flow_ratings.json."""
     env = {**os.environ, "WTP_ARTIFACTS": str(settings.artifacts_dir)}
     if has_session(settings):
         env["WTP_STORAGE_STATE"] = str(session_path(settings))
-    capture_browser(settings.artifacts_dir)     # record the browser build these results come from
-    result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q"], cwd=settings.root, env=env)
+    capture_browser(settings.artifacts_dir, os.environ.get("WTP_BROWSER") or "chromium", os.environ.get("WTP_DEVICE", ""))   # the build these results come from
+    result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q", *test_run_args()], cwd=settings.root, env=env)
     feed_results(settings, log)
     return result.returncode
 

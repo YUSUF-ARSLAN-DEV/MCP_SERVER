@@ -44,10 +44,16 @@ def main() -> int:
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
     parser.add_argument('--no-window', action='store_true', help='all: do not open the progress pop-up (timer + bar)')
+    parser.add_argument('--browser', default='', choices=['', 'chromium', 'firefox', 'webkit'], help='execute / report --rerun / all: run the tests in this browser (default chromium); needs `playwright install <browser>`. Results replace the previous run: set SITE=<name> in .env to keep another workspace')
+    parser.add_argument('--device', default='', help='execute / report --rerun / all: emulate a device, e.g. "iPhone 14" (Playwright device name)')
     parser.add_argument('--commit',action='store_true', help='generate/report: git-commit runs/<site>/tests + urls.txt afterwards')
     args = parser.parse_args()
     if args.account:
         os.environ['AUTH_ACCOUNT'] = args.account
+    if args.browser:
+        os.environ['WTP_BROWSER'] = args.browser          # read by pipeline.test_run_args, so every way of running the tests agrees
+    if args.device:
+        os.environ['WTP_DEVICE'] = args.device
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
     log.info('WORKSPACE site=%s dir=%s', settings.site, settings.workspace)
     os.environ['WTP_HEURISTICS'] = str(settings.heuristics_file)   # generated specs read the same lists (see heuristics.py)
@@ -165,9 +171,10 @@ def main() -> int:
             if has_session(settings):
                 pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
             from .envinfo import capture_browser
-            capture_browser(settings.artifacts_dir)       # record the browser build these results come from
+            from .pipeline import test_run_args
+            capture_browser(settings.artifacts_dir, os.environ.get('WTP_BROWSER') or 'chromium', os.environ.get('WTP_DEVICE', ''))   # record the browser build these results come from
             pw_out = settings.artifacts_dir/'pw'
-            pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}']
+            pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}', *test_run_args()]
             result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
         elif not (settings.artifacts_dir/'test_results.json').exists():
             log.error('REPORT no existing test_results.json; run execute first or use --rerun')

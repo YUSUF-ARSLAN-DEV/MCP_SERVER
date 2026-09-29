@@ -1662,7 +1662,14 @@ def _scope_section(document, run: RunReport) -> None:
     document.add_paragraph("Out of scope: performance benchmarking, penetration testing, full browser/device compatibility, and business-rule correctness unless explicitly represented by a verified flow.")
     _test_data_paragraphs(document, run)
     document.add_paragraph("Test types performed: functional smoke testing, navigation, flow verification, evidence capture, and coverage analysis.")
-    document.add_paragraph("Device coverage: Windows desktop only. Mobile viewport, Safari, Firefox, and Edge were not run and remain release risks for responsive or browser-specific behavior.")
+    info = run.browser_info or {}
+    browser, device = (info.get("browser") or "chromium"), info.get("device") or ""
+    ran = f"{browser.capitalize()}{' emulating ' + device if device else ' on a desktop-size window'}"
+    document.add_paragraph(
+        f"Device and browser coverage: this run used {ran}. Other browsers and viewports were not run in it and remain release risks for "
+        "responsive or browser-specific behaviour. Re-run with --device \"iPhone 14\" for a phone-size check and --browser firefox (or webkit) for another engine."
+        if not device and browser == "chromium" else
+        f"Device and browser coverage: this run used {ran}. Desktop Chromium and any other browser or viewport are only covered by their own runs.")
 
 
 def _environment_section(document, run: RunReport) -> None:
