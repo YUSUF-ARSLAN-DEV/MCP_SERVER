@@ -1364,6 +1364,12 @@ def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] 
         f'journey figure: {counts["journeys_passed"]} of {counts["journeys_total"]} user journeys passed '
         f'({counts["journeys_passed_percent"]}%).'
     )
+    page_tests = sum(len(u.outcomes) for u in run.url_reports)
+    flow_tests = sum(f.outcome is not None for f in run.flow_reports)
+    document.add_paragraph(
+        f"What is counted: the test totals above are {page_tests} page test(s) plus {flow_tests} flow test(s). Each flow test "
+        f"is one user journey, so the {len(run.flow_reports)} journey(s) counted separately are the same flows, not extra tests; "
+        "a journey with no flow test has no result in this run.")
     metrics = _grid(document, ("Metric", "Value"))
     for label, value in (("Tests that ran", counts["executed_tests"]), ("Passed", counts["passed"]),
                          ("Failed", counts["failed"]), ("Skipped", counts["skipped"]),
