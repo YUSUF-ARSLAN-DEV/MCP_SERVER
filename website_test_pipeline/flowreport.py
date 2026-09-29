@@ -44,6 +44,7 @@ class FlowReport:
     title_suffix: str = ""             # set when several flows share one sentence, so a reader can tell them apart
     not_run_reason: str = ""           # why an untested flow has no result in this run (empty when it ran)
     verify_failed: bool = False        # untested, and the last real check of it (runner or pytest) failed
+    inconclusive: bool = False         # untested; its steps all ran but nothing visible changed, so the outcome could not be confirmed
 
     @property
     def tested(self) -> bool:
@@ -67,6 +68,8 @@ class FlowReport:
         last check or was simply not run, and those are different things to a reader."""
         if self.outcome is not None:
             return {"passed": "Passed", "skipped": "Skipped"}.get(self.outcome.status, "Failed")
+        if self.inconclusive:
+            return "Inconclusive (steps ran, no visible effect)"
         return "Failed its last check" if self.verify_failed else "Not run in this run"
 
 
@@ -165,8 +168,21 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         fr.failure = attribute_failure(flow, stems, outcome.error, outcome.status)
     if outcome is None:
         fr.not_run_reason, fr.verify_failed = explain_not_run(flow, entries)
+        executions = [e for e in entries if e.get("source") in {"runner", "pytest"}]
+        fr.inconclusive = ran_without_visible_effect(executions[-1] if executions else None) and not is_blocked(flow)
     fr.warnings = flow_warnings(fr)
     return fr
+
+
+def ran_without_visible_effect(entry: dict | None) -> bool:
+    """The last real check ran every step without an error, and the page showed no change at all. That says the
+    tool could not observe the promised outcome (a tab-style button that only switches something already on the
+    page, say) - it does not say the site failed."""
+    if not entry or entry.get("passed") or entry.get("error"):
+        return False
+    checks = entry.get("checks") or {}
+    done, _, total = str(checks.get("steps_completed", "")).partition("/")
+    return bool(done) and done == total and checks.get("observed_effect") == "no-visible-change"
 
 
 def explain_not_run(flow: dict, entries: list[dict]) -> tuple[str, bool]:
@@ -176,6 +192,9 @@ def explain_not_run(flow: dict, entries: list[dict]) -> tuple[str, bool]:
     last = executions[-1] if executions else None
     if is_blocked(flow):
         return "its plain sentence was edited or dropped since it was built; rebuild it before it can be tested", False
+    if ran_without_visible_effect(last):
+        return ("every step ran, but nothing on the page visibly changed, so the promised outcome could not be confirmed; "
+                "the site did not fail, the check could not observe an effect"), False
     if last is not None and not last.get("passed"):
         return f'its last check ({last.get("source")}, {(last.get("at") or "")[:10]}) failed', True
     if flow.get("status") in {"verified", "approved"}:
