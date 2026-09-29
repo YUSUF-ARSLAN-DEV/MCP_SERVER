@@ -124,6 +124,7 @@ class RunReport:
     human_input_pages: list[dict] = field(default_factory=list)    # a step only a person can complete (CAPTCHA / OTP)
     auth_lines: list[str] = field(default_factory=list)            # one line per account: signed in, and on which attempt
     flapping: list[FlapRecord] = field(default_factory=list)       # flows/tests whose recent runs mix pass and fail
+    requirements: list[dict] = field(default_factory=list)         # the plain-sentence intents (intents.json), dropped ones left out
     browser_info: dict = field(default_factory=dict)               # browser name/version/device the tests ran on (envinfo.py)
 
     @property
@@ -266,6 +267,16 @@ def _flow_reports(results: dict, tests_dir: Path, artifacts_dir: Path, flows_fil
     return reports, {r.get("nodeid") for rows in rows_by_flow.values() for r in rows}
 
 
+def _requirements(path: Path) -> list[dict]:
+    """The written requirements / user stories behind the flows: the plain sentences in intents.json, minus dropped ones.
+    A missing or unreadable file simply means no traceability table."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        return []
+    return [i for i in doc.get("intents", []) if isinstance(i, dict) and i.get("status") != "dropped" and i.get("id")]
+
+
 def _flows_list(flows_file: Path | None) -> list[dict]:
     try:
         return load_flows(flows_file)["flows"] if flows_file and flows_file.exists() else []
@@ -342,6 +353,7 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
     run.flapping = detect_flapping(ratings, names)
     run.untested_auth = untested_auth(inventories)
     run.human_input_pages = human_input_pages(inventories)
+    run.requirements = _requirements(workspace / "intents.json")
     run.browser_info = load_browser_info(artifacts_dir) or ({} if os.environ.get("WTP_SKIP_BROWSER_PROBE") else capture_browser(artifacts_dir))
     auth_history = load_auth_history(artifacts_dir)
     run.auth_lines = auth_summary_lines(auth_history)
@@ -1491,6 +1503,27 @@ def _coverage_section(document, coverage: Coverage | None) -> None:
         document.add_paragraph("Counted once: " + ", ".join(f"{a} redirects to {b}" for a, b in sorted(coverage.aliases.items())))
 
 
+def _traceability_section(document, run: RunReport) -> None:
+    """Each written requirement -> the flow built from it -> what this run said. A requirement with no flow, or
+    whose flow did not pass, is a coverage gap and is listed as one."""
+    if not run.requirements:
+        return
+    document.add_heading("Requirements traceability", 2)
+    by_id = {f.flow_id: f for f in run.flow_reports}
+    table = _grid(document, ("Requirement", "Source", "Flow built", "This run"))
+    gaps = 0
+    for req in run.requirements:
+        flow = by_id.get(req.get("flow_id") or "")
+        cells = table.add_row().cells
+        cells[0].text = f'{req["id"]}: {_shorten(str(req.get("sentence", "")), 110)}'
+        cells[1].text = str(req.get("source", "?"))
+        cells[2].text = "yes" if flow else f'no ({req.get("status", "new")})'
+        result = flow.run_label if flow else "No flow, so nothing was tested"
+        cells[3].text = result
+        gaps += result != "Passed"
+    document.add_paragraph(f"{gaps} of {len(run.requirements)} requirement(s) are not backed by a passing result in this run; these are the coverage gaps.")
+
+
 def _untested_flows_section(document, flows: list[FlowReport]) -> None:
     if not flows:
         return
@@ -1705,6 +1738,7 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
         _flows_table(document, run.tested_flows)
     _untested_flows_section(document, run.untested_flows)
     _coverage_section(document, run.coverage)
+    _traceability_section(document, run)
     document.add_heading("Test Logs & Evidence", 1)
     document.add_paragraph("Screenshots, videos, traces, assertions, and failure details are indexed in the appendix. The machine-readable source is included as report-data.json.")
     _risks_section(document, run, report_data)
