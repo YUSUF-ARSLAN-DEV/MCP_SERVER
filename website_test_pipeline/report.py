@@ -1427,6 +1427,16 @@ def _flow_row(flow: FlowReport) -> tuple[str, str, str, str, str, str]:
     return "flow", flow.title, flow.start_url, flow.expected or "(not stated)", flow.observed or "(never ran)", verdict
 
 
+def _defect_id_for(defects: list[dict[str, Any]], key: str, flow: FlowReport | None) -> str:
+    """The BUG id recorded for this failing test, so a row in "Tests requiring attention" can be found in the defect report."""
+    for defect in defects:
+        if flow and defect.get("linked_flow_id") == flow.flow_id and defect.get("scope") == "flow":
+            return defect["id"]
+        if any(step == f"Run test {key}." for step in defect.get("steps_to_reproduce", [])):
+            return defect["id"]
+    return "-"
+
+
 def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
     """Render the quantitative summary and only the tests needing attention.
 
@@ -1473,11 +1483,11 @@ def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] 
         title = flow.title if flow else outcome.title.replace("_", " ")
         expected = flow.expected if flow and flow.expected else (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "NOT CAPTURED")
         observed = flow.observed if flow and flow.observed else (plain_skip_reason(outcome.error) if outcome.status == "skipped" else plain_error(outcome.error))
-        attention.append((_display_id(f"T-{test_number:03d}"), scope, title, outcome.url, expected, observed or "NOT CAPTURED", outcome.status.upper()))
+        attention.append((_display_id(f"T-{test_number:03d}"), _display_id(_defect_id_for(data["defects"], key, flow)), scope, title, outcome.url, expected, observed or "NOT CAPTURED", outcome.status.upper()))
     if attention:
         document.add_heading("Tests requiring attention", 2)
-        table = _grid(document, ("Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"))
-        _set_table_widths(table, (0.65, 0.5, 1.25, 1.0, 1.15, 1.25, 0.55))
+        table = _grid(document, ("Test ID", "Defect", "Scope", "Test name", "URL", "Expected", "Observed", "Result"))
+        _set_table_widths(table, (0.6, 0.6, 0.45, 1.15, 0.95, 1.05, 1.15, 0.5))
         for row in attention:
             cells = table.add_row().cells
             for cell, value in zip(cells, row):
