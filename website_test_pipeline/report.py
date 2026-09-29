@@ -703,7 +703,7 @@ def _set_table_widths(table, widths: tuple[float, ...]) -> None:
             cell.width = Inches(width)
 
 
-def _table_of_contents(document) -> None:
+def _table_of_contents(document, lean: bool = False) -> None:
     """Insert a populated, clickable TOC with no stale field placeholder."""
     document.add_heading("Table of Contents", 1)
     entries = (
@@ -712,6 +712,8 @@ def _table_of_contents(document) -> None:
         "Test Logs & Evidence", "Risks & Issues", "Conclusions & Recommendations", "Appendix: full evidence",
     )
     for entry in entries:
+        if lean and entry in {"Test Logs & Evidence"}:
+            continue                                   # the lean report has no such section; its pointer is under the Appendix heading
         paragraph = document.add_paragraph(style="List Bullet")
         _add_internal_hyperlink(paragraph, entry, _heading_anchor(entry))
     document.add_page_break()
@@ -1242,12 +1244,14 @@ def _write_execution_chart(report_dir: Path, counts: dict[str, Any]) -> Path | N
         return None
 
 
-def _risks_section(document, run: RunReport, report_data: dict[str, Any]) -> None:
+def _risks_section(document, run: RunReport, report_data: dict[str, Any], *, lean: bool = False) -> None:
     document.add_heading("Risks & Issues", 1)
     defects = report_data["defects"]
     blockers = [d for d in defects if d.get("blocking") or d["severity"] in {"Critical", "High"}]
     document.add_heading("Blockers", 2)
-    if blockers:
+    if lean:
+        document.add_paragraph(f"{len(blockers)} release blocker(s) are listed with their impact in the Defect Report above; they are not repeated here.")
+    elif blockers:
         for defect in blockers:
             document.add_paragraph(f'{defect["id"]}: {defect["title"]} — {defect["business_impact"]}', style="List Bullet")
     else:
@@ -1552,7 +1556,7 @@ def _traceability_section(document, run: RunReport) -> None:
     document.add_paragraph(f"{gaps} of {len(run.requirements)} requirement(s) are not backed by a passing result in this run; these are the coverage gaps.")
 
 
-def _untested_flows_section(document, flows: list[FlowReport]) -> None:
+def _untested_flows_section(document, flows: list[FlowReport], *, detail: bool = True) -> None:
     if not flows:
         return
     document.add_heading("Flows without a test result in this run", 1)
@@ -1566,7 +1570,8 @@ def _untested_flows_section(document, flows: list[FlowReport]) -> None:
         cells[1].text = {"verified": "Verified", "approved": "Approved", "stale": "Needs retesting", "candidate": "Not yet verified"}.get(flow.status, "Not recorded")
         latest = flow.history[-1] if flow.history else "never run"
         cells[2].text = flow.not_run_reason.capitalize() if flow.verify_failed else f"{flow.run_label}: {flow.not_run_reason}"
-        document.add_paragraph(f'{flow.title} — Most recent attempt: {latest}')
+        if detail:
+            document.add_paragraph(f'{flow.title} — Most recent attempt: {latest}')
 
 
 def _summary_table(document, reports: list[UrlReport]) -> None:
@@ -1612,7 +1617,20 @@ def _warnings_section(document, warnings: list[str]) -> None:
         para.runs[0].font.color.rgb = RGBColor(0xB3, 0x26, 0x1A)
 
 
-def _executive_summary_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
+def _lean_conditions(conditions: list[str], lean: bool) -> list[str]:
+    """The lean report shows the many "Resolve BUG-xxx ... and rerun" lines as one; every other condition is kept.
+    The full list stays in report-data.json and the Defect Report."""
+    if not lean:
+        return conditions
+    resolve = [c for c in conditions if c.startswith("Resolve ")]
+    rest = [c for c in conditions if not c.startswith("Resolve ")]
+    if len(resolve) > 3:
+        rest.insert(0, f"Resolve the {len(resolve)} open items in the Defect Report and rerun the affected checks.")
+        return rest
+    return conditions
+
+
+def _executive_summary_section(document, run: RunReport, report_data: dict[str, Any] | None = None, *, lean: bool = False) -> None:
     document.add_heading("Executive Summary", 1)
     data = report_data or _report_data(run, Path.cwd())
     counts = data["counts"]
@@ -1630,7 +1648,7 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
     for cell, value in zip(table.add_row().cells, values):
         cell.text = value
     document.add_heading("Conditions and top risks", 2)
-    conditions = data["conditions"]
+    conditions = _lean_conditions(data["conditions"], lean)
     if conditions:
         for condition in conditions:
             document.add_paragraph(condition, style="List Bullet")
@@ -1687,7 +1705,7 @@ def _environment_section(document, run: RunReport) -> None:
         cells[0].text, cells[1].text = key, value
 
 
-def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
+def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | None = None, *, lean: bool = False) -> None:
     document.add_heading("Conclusions & Recommendations", 1)
     data = report_data or _report_data(run, Path.cwd())
     recommendation = data["recommendation"]
@@ -1697,7 +1715,7 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
         document.add_paragraph("Release is acceptable only if every condition listed in the Executive Summary is reviewed and accepted.")
     else:
         document.add_paragraph("Do not release based on this run. The open defects must be resolved and the affected journeys rerun.")
-    for condition in data["conditions"] or ["Review the out-of-scope mobile and compatibility coverage before sign-off."]:
+    for condition in _lean_conditions(data["conditions"], lean) or ["Review the out-of-scope mobile and compatibility coverage before sign-off."]:
         document.add_paragraph(condition, style="List Bullet")
     _recommendation_plan(document, run, data)
 
@@ -1800,14 +1818,21 @@ def build_url_docx(run: RunReport, report: UrlReport, destination: Path) -> None
     _save_document(document, destination, run)
 
 
-def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str, Any] | None = None) -> None:
+APPENDIX_FILE = "full-report-appendix.docx"
+
+
+def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str, Any] | None = None,
+                        appendix: str = "inline") -> None:
+    """The decision report. appendix="inline" keeps the evidence appendix in the same file (the long form);
+    "separate" writes it to full-report-appendix.docx and leaves this file short enough to read in one sitting."""
+    lean = appendix == "separate"
     report_data = report_data or _report_data(run, destination.parent)
     document = Document()
     document.add_heading("Website Test Report Full Run", 0)
     _metadata(document, run, scope="all URLs")
-    _table_of_contents(document)
+    _table_of_contents(document, lean=lean)
     document.add_paragraph("This report states whether the tested scope is ready for release, identifies the checks that need attention, and records the remaining coverage risks. Technical evidence is indexed in the appendix.")
-    _executive_summary_section(document, run, report_data)
+    _executive_summary_section(document, run, report_data, lean=lean)
     _scope_section(document, run)
     _environment_section(document, run)
     _test_summary_section(document, run, report_data)
@@ -1826,13 +1851,35 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
             "real verified browser run. The title is the flow's plain-language description. Full detail for "
             "each flow (journey, evidence, review history) is in the Appendix.")
         _flows_table(document, run.tested_flows)
-    _untested_flows_section(document, run.untested_flows)
+    _untested_flows_section(document, run.untested_flows, detail=not lean)
     _coverage_section(document, run.coverage)
     _traceability_section(document, run)
-    document.add_heading("Test Logs & Evidence", 1)
-    document.add_paragraph("Screenshots, videos, traces, assertions, and failure details are indexed in the appendix. The machine-readable source is included as report-data.json.")
-    _risks_section(document, run, report_data)
-    _conclusion_section(document, run, report_data)
+    if not lean:
+        document.add_heading("Test Logs & Evidence", 1)
+        document.add_paragraph("Screenshots, videos, traces, assertions, and failure details are indexed in the appendix. The machine-readable source is included as report-data.json.")
+    _risks_section(document, run, report_data, lean=lean)
+    _conclusion_section(document, run, report_data, lean=lean)
+    has_evidence = bool(run.tested_flows or any(r.outcomes for r in run.url_reports))
+    if not lean:
+        _appendix_section(document, run, link_base=link_base)
+    elif has_evidence:
+        document.add_heading("Appendix: full evidence", 1)
+        para = document.add_paragraph(
+            "The searchable test index, evidence index, per-journey detail (steps, history, screenshots) and raw failure output are in ")
+        _add_hyperlink(para, APPENDIX_FILE, APPENDIX_FILE)
+        para.add_run(" in the same folder. The machine-readable source is report-data.json.")
+    _bookmark_headings(document)
+    _save_document(document, destination, run)
+    if lean and has_evidence:
+        _build_appendix_docx(run, destination.with_name(APPENDIX_FILE), link_base)
+
+
+def _build_appendix_docx(run: RunReport, destination: Path, link_base: Path) -> None:
+    """The evidence that would otherwise make the decision report hundreds of pages long."""
+    document = Document()
+    document.add_heading("Website Test Report - Appendix", 0)
+    _metadata(document, run, scope="all URLs")
+    _untested_flows_section(document, run.untested_flows)
     _appendix_section(document, run, link_base=link_base)
     _bookmark_headings(document)
     _save_document(document, destination, run)
@@ -1915,6 +1962,7 @@ def create_report(
     combined: bool = False,
     flows_file: Path | None = None,
     ratings_file: Path | None = None,
+    appendix: str = "inline",
 ) -> RunReport:
     run = load_run(artifacts_dir, tests_dir, model=model, flows_file=flows_file, ratings_file=ratings_file)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1924,5 +1972,5 @@ def create_report(
     for report in run.url_reports:
         build_url_docx(run, report, out_dir / f"{name_for(report.url)}.docx")
     if combined:
-        build_combined_docx(run, out_dir / "full-report.docx", report_data)
+        build_combined_docx(run, out_dir / "full-report.docx", report_data, appendix=appendix)
     return run

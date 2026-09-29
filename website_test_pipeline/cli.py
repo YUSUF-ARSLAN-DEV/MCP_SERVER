@@ -40,6 +40,7 @@ def main() -> int:
     parser.add_argument('--only', default='', help='flows run: run only these stages')
     parser.add_argument('--failed-only', action='store_true', help='verify: only flows that are candidate or stale (re-check after a site change)')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
+    parser.add_argument('--inline-appendix', action='store_true', help='report --combined: keep the evidence appendix inside full-report.docx (hundreds of pages) instead of the separate full-report-appendix.docx')
     parser.add_argument('--rerun', action='store_true', help='report: rerun the generated tests before rendering; default uses the existing test_results.json')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
@@ -191,7 +192,7 @@ def main() -> int:
         if args.rerun or args.repair:
             from .flowresults import feed_results
             feed_results(settings, log)
-        run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined, flows_file=settings.flows_file, ratings_file=settings.ratings_file)
+        run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined, appendix='inline' if args.inline_appendix else 'separate', flows_file=settings.flows_file, ratings_file=settings.ratings_file)
         log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
         for warning in run.warnings:
             log.warning('REPORT WARNING %s', warning)
