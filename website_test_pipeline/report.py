@@ -1565,7 +1565,7 @@ def _untested_flows_section(document, flows: list[FlowReport]) -> None:
         cells[0].text = flow.title
         cells[1].text = {"verified": "Verified", "approved": "Approved", "stale": "Needs retesting", "candidate": "Not yet verified"}.get(flow.status, "Not recorded")
         latest = flow.history[-1] if flow.history else "never run"
-        cells[2].text = f"{flow.run_label}: {flow.not_run_reason}"
+        cells[2].text = flow.not_run_reason.capitalize() if flow.verify_failed else f"{flow.run_label}: {flow.not_run_reason}"
         document.add_paragraph(f'{flow.title} — Most recent attempt: {latest}')
 
 
