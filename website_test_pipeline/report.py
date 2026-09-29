@@ -30,7 +30,7 @@ from .findings import (
     environment_block, human_input_pages, load_auth_history, plain_error, plain_skip_reason, untested_auth,
 )
 from .flowgen import file_name as flow_spec_name
-from .flowreport import FlowReport, build_flow_report
+from .flowreport import FlowReport, build_flow_report, disambiguate_titles
 from .flows import FlowsFileError, load_flows
 from .ratings import RatingsFileError, load_ratings
 from .report_model import canonical_counts, validate_report_data, write_report_data
@@ -257,6 +257,7 @@ def _flow_reports(results: dict, tests_dir: Path, artifacts_dir: Path, flows_fil
             row = _worst(rows)
             outcome = _make_outcome(row, flow.get("start_url", ""), _guess_spec(row.get("nodeid", ""), tests_dir), artifacts_dir)
         reports.append(build_flow_report(flow, ratings.get(flow["id"], []), outcome))
+    disambiguate_titles(reports)
     return reports, {r.get("nodeid") for rows in rows_by_flow.values() for r in rows}
 
 

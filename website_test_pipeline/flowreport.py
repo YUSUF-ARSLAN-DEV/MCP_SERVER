@@ -41,6 +41,7 @@ class FlowReport:
     warnings: list[str] = field(default_factory=list)
     vision_broken: bool = False        # the latest vision rating says the final screenshot looks broken (an opinion)
     vision_reason: str = ""
+    title_suffix: str = ""             # set when several flows share one sentence, so a reader can tell them apart
     not_run_reason: str = ""           # why an untested flow has no result in this run (empty when it ran)
     verify_failed: bool = False        # untested, and the last real check of it (runner or pytest) failed
 
@@ -58,7 +59,7 @@ class FlowReport:
 
     @property
     def title(self) -> str:
-        return self.goal or self.flow_id
+        return (self.goal or self.flow_id) + self.title_suffix
 
     @property
     def run_label(self) -> str:
@@ -180,6 +181,28 @@ def explain_not_run(flow: dict, entries: list[dict]) -> tuple[str, bool]:
     if flow.get("status") in {"verified", "approved"}:
         return "it was verified earlier, but no test of it ran in this run (no generated test, or it was skipped)", False
     return "it has not been verified yet", False
+
+
+def disambiguate_titles(reports: list[FlowReport]) -> None:
+    """Flows recorded from different pages can carry the same sentence ("Search: select ..."). Say where each starts
+    (and its number, if that is still not enough) so the report never lists what looks like one flow several times."""
+    groups: dict[str, list[FlowReport]] = {}
+    for fr in reports:
+        groups.setdefault(fr.goal or fr.flow_id, []).append(fr)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        for fr in group:
+            fr.title_suffix = f" (starts at {_path(fr.start_url) or fr.start_url})"
+        seen: dict[str, int] = {}
+        for fr in group:
+            seen[fr.title] = seen.get(fr.title, 0) + 1
+        counter: dict[str, int] = {}
+        for fr in group:
+            if seen[fr.title] > 1:
+                base = fr.title
+                counter[base] = counter.get(base, 0) + 1
+                fr.title_suffix += f" #{counter[base]}"
 
 
 def _stem(path: str) -> str:
