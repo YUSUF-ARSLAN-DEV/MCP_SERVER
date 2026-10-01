@@ -148,12 +148,12 @@ def test_the_flow_test_leaves_the_page_tests_and_is_counted_once(tmp_path):
     assert run.flows_at(START)[0].failure.startswith("Step 2 of 3 did not complete")
 
 
-def test_the_combined_report_has_a_user_flows_section_in_plain_language(tmp_path):
+def test_the_combined_report_shows_flow_detail_in_plain_language(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     text = _text(tmp_path / "report" / "full-report.docx")
     joined = chr(10).join(text)
-    for part in (GOAL, "User flows", "Journey", "Expected vs observed", "Where it broke", "Review history",
+    for part in (GOAL, "Journey", "Expected vs observed", "Where it broke", "Review history",
                  "Step 2 of 3 did not complete", "[human sam] approved - core", "Flows without a test result in this run",
                  "A visitor opens the map.", "/en → /en/find"):
         assert part in joined, part
@@ -181,7 +181,7 @@ def test_without_a_flows_file_the_flow_test_stays_an_ordinary_test(tmp_path):
     assert run.flow_reports == [] and sum(u.total for u in run.url_reports) == 2 and run.total == 2
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
-    assert not any(p.text == "User flows" and p.style.name.startswith("Heading") for p in doc.paragraphs)
+    assert not any(p.text == "Flow evidence" and p.style.name.startswith("Heading") for p in doc.paragraphs)
 
 
 def test_an_unreadable_flows_file_never_breaks_the_report(tmp_path):
@@ -260,18 +260,19 @@ def test_the_combined_report_says_how_much_of_the_site_the_flows_cover(tmp_path)
 
 
 def test_the_combined_report_puts_full_evidence_in_an_appendix(tmp_path):
-    # the body (Findings, Test summary, User flows table, coverage) must stay skimmable - no screenshots
-    # or per-test detail until the reader reaches the appendix.
+    # the body (Findings, Test summary, coverage) must stay skimmable - no screenshots or per-test detail
+    # until the reader reaches Test Logs & Evidence.
     artifacts, tests = _workspace(tmp_path)
     _with_inventories(artifacts)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
-    assert headings.index("User flows") < headings.index("Flow coverage") < headings.index("Appendix: full evidence")
-    assert headings.index("Appendix: full evidence") < headings.index("Flow evidence") < headings.index("Journey")
+    assert headings.index("Flow coverage") < headings.index("Test Logs & Evidence")
+    assert headings.index("Test Logs & Evidence") < headings.index("Flow evidence") < headings.index("Journey")
     assert headings.index("Flow evidence") < headings.index("Page evidence")
-    assert headings.index("Appendix: full evidence") < headings.index("Browser evidence")
-    body = headings[:headings.index("Appendix: full evidence")]
+    assert headings.index("Test Logs & Evidence") < headings.index("Browser evidence")
+    assert headings.index("Test Logs & Evidence") < headings.index("Risks & Issues") < headings.index("Conclusions & Recommendations")
+    body = headings[:headings.index("Test Logs & Evidence")]
     for heavy in ("Journey", "Expected vs observed", "Where it broke", "Review history", "Browser evidence", "Failure detail"):
         assert heavy not in body, heavy
     assert len(doc.inline_shapes) > 0                 # the screenshots are still embedded, just later in the file

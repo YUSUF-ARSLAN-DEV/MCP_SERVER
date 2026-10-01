@@ -709,12 +709,10 @@ def _table_of_contents(document, lean: bool = False) -> None:
     document.add_heading("Table of Contents", 1)
     entries = (
         "Executive Summary", "Test Scope", "Test Environment", "Test Execution Summary",
-        "Defect Report (Bugs Found)", "User flows", "Test Coverage / Requirements Traceability",
-        "Test Logs & Evidence", "Risks & Issues", "Conclusions & Recommendations", "Appendix: full evidence",
+        "Defect Report (Bugs Found)", "Test Coverage / Requirements Traceability",
+        "Test Logs & Evidence", "Risks & Issues", "Conclusions & Recommendations",
     )
     for entry in entries:
-        if lean and entry in {"Test Logs & Evidence"}:
-            continue                                   # the lean report has no such section; its pointer is under the Appendix heading
         paragraph = document.add_paragraph(style="List Bullet")
         _add_internal_hyperlink(paragraph, entry, _heading_anchor(entry))
     document.add_page_break()
@@ -1758,17 +1756,13 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
         document.add_paragraph("Do not release based on this run. The open defects must be resolved and the affected journeys rerun.")
     for condition in _lean_conditions(data["conditions"], lean) or ["Review the out-of-scope mobile and compatibility coverage before sign-off."]:
         document.add_paragraph(condition, style="List Bullet")
-    _recommendation_plan(document, run, data)
-
-
-def _recommendation_plan(document, run: RunReport, data: dict[str, Any]) -> None:
-    """What to do about it, built from this run: manual checks for what could not be automated, process fixes, and
-    what to add to the next test run. Every line is tied to something the run actually found."""
+    if run.human_input_pages:
+        document.add_paragraph("Run with someone at the terminal so a window can ask for the CAPTCHA code (automatic), or ask the site owner for a staging bypass so the forms can be automated.", style="List Bullet")
+    if run.untested_auth:
+        document.add_paragraph("Provide a dedicated test account for the areas behind a sign-in, so those pages are tested.", style="List Bullet")
     blocked = [d for d in data["defects"] if d.get("blocking") or d.get("failure_class") in {"failed_last_check", "blocked_flow"}]
-    document.add_heading("Immediate mitigation", 2)
     if blocked:
-        document.add_paragraph("Until these are automated or fixed, have a person check them by hand before release. "
-                               "Owners come from the defect record; \"Unassigned\" means someone still has to be named.")
+        document.add_paragraph("Manual check required until automated (owner \"Unassigned\" means one still needs naming):")
         table = _grid(document, ("Item", "What to check", "Owner", "Due"))
         for d in blocked[:12]:
             cells = table.add_row().cells
@@ -1778,28 +1772,6 @@ def _recommendation_plan(document, run: RunReport, data: dict[str, Any]) -> None
             cells[3].text = "Before release sign-off"
         if len(blocked) > 12:
             document.add_paragraph(f"...and {len(blocked) - 12} more listed in the defect report.")
-    else:
-        document.add_paragraph("No journey needs a manual check beyond the defects already listed.")
-    document.add_heading("Process improvements", 2)
-    steps = []
-    if run.human_input_pages:
-        steps.append("Run with someone at the terminal so a window can ask for the CAPTCHA code (automatic), or ask the site owner for a staging bypass (test key or disabled check) so the forms can be automated.")
-    if run.untested_auth:
-        steps.append("Provide a dedicated test account for the areas behind a sign-in, so those pages are tested.")
-    if sum(f.passed and f.navigation_only for f in run.flow_reports):
-        steps.append("Give navigation-only journeys an outcome check (a heading or result that must appear) so passing means the page is right.")
-    if not (run.browser_info or {}).get("device"):
-        steps.append("Add a phone-size run (--device \"iPhone 14\") and a second engine (--browser firefox) to the release routine.")
-    for step in steps or ["No process change is suggested by this run."]:
-        document.add_paragraph(step, style="List Bullet")
-    document.add_heading("Revised test plan for the next run", 2)
-    plan = ["Re-run the failed and blocked journeys above and update their status."]
-    critical = _critical_untouched(run.coverage) if run.coverage else []
-    if critical:
-        plan.append(f"Write plain-sentence requirements for the {len(critical)} untested main-action control(s) listed under coverage, then rebuild flows from them.")
-    plan.append("Repeat the critical path (search, tune, subscribe) on the phone-size and second-engine runs.")
-    for step in plan:
-        document.add_paragraph(step, style="List Bullet")
 
 
 def _validate_docx_export(destination: Path) -> None:
@@ -1878,7 +1850,6 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
     document.add_heading("Website Test Report Full Run", 0)
     _metadata(document, run, scope="all URLs")
     _table_of_contents(document, lean=lean)
-    document.add_paragraph("This report states whether the tested scope is ready for release, identifies the checks that need attention, and records the remaining coverage risks. Technical evidence is indexed in the appendix.")
     _executive_summary_section(document, run, report_data, lean=lean)
     _scope_section(document, run)
     _environment_section(document, run)
@@ -1891,39 +1862,25 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
     document.add_heading("Defect Report (Bugs Found)", 1)
     _findings_section(document, run, report_data, compact=lean)
     link_base = destination.parent
-    if run.tested_flows:
-        document.add_heading("User flows", 1)
-        document.add_paragraph(
-            "Each flow is one user journey, tested by a generated spec whose steps and assertions come from a "
-            "real verified browser run. The title is the flow's plain-language description. Full detail for "
-            "each flow (journey, evidence, review history) is in the Appendix.")
-        if lean:
-            attention = [f for f in run.tested_flows if not f.passed]
-            document.add_paragraph(f"{len(run.tested_flows) - len(attention)} of {len(run.tested_flows)} flows passed; the full list is in the appendix.")
-            if attention:
-                _flows_table(document, attention)
-        else:
-            _flows_table(document, run.tested_flows)
     if lean and run.untested_flows:
-        document.add_paragraph(f"{len(run.untested_flows)} more flow(s) have no test result in this run; each is a BUG or BLOCK entry in the Defect Report, and the table with their history is in the appendix.")
+        document.add_paragraph(f"{len(run.untested_flows)} flow(s) have no test result in this run; each is a BUG or BLOCK entry above, and the table with their history is in the appendix.")
     else:
         _untested_flows_section(document, run.untested_flows, detail=not lean)
     _coverage_section(document, run.coverage, per_page=not lean)
     _traceability_section(document, run, gaps_only=lean)
-    if not lean:
-        document.add_heading("Test Logs & Evidence", 1)
-        document.add_paragraph("Screenshots, videos, traces, assertions, and failure details are indexed in the appendix. The machine-readable source is included as report-data.json.")
-    _risks_section(document, run, report_data, lean=lean)
-    _conclusion_section(document, run, report_data, lean=lean)
+    document.add_heading("Test Logs & Evidence", 1)
     has_evidence = bool(run.tested_flows or any(r.outcomes for r in run.url_reports))
     if not lean:
-        _appendix_section(document, run, link_base=link_base)
+        _appendix_section(document, run, link_base=link_base, heading=False)
     elif has_evidence:
-        document.add_heading("Appendix: full evidence", 1)
         para = document.add_paragraph(
             "The searchable test index, evidence index, per-journey detail (steps, history, screenshots) and raw failure output are in ")
         _add_hyperlink(para, APPENDIX_FILE, APPENDIX_FILE)
         para.add_run(" in the same folder. The machine-readable source is report-data.json.")
+    else:
+        document.add_paragraph("No test evidence was captured in this run.")
+    _risks_section(document, run, report_data, lean=lean)
+    _conclusion_section(document, run, report_data, lean=lean)
     _bookmark_headings(document)
     _save_document(document, destination, run)
     if lean and has_evidence:
@@ -1949,12 +1906,13 @@ def _build_appendix_docx(run: RunReport, destination: Path, link_base: Path, rep
     _save_document(document, destination, run)
 
 
-def _appendix_section(document, run: RunReport, *, link_base: Path | None) -> None:
+def _appendix_section(document, run: RunReport, *, link_base: Path | None, heading: bool = True) -> None:
     """Indexed raw evidence, deduplicated screenshots, and machine-readable source data."""
     if not run.tested_flows and not any(r.outcomes for r in run.url_reports):
         return
     document.add_page_break()
-    document.add_heading("Appendix: full evidence", 1)
+    if heading:
+        document.add_heading("Test Logs & Evidence", 1)
     document.add_paragraph(
         "This appendix contains the searchable test index, screenshots, attachments, assertions, and failure details. "
         "Repeated screenshots are stored once and referenced by evidence ID.")

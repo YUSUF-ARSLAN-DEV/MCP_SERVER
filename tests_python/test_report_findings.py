@@ -23,6 +23,11 @@ def _text(path: Path) -> list[str]:
     return lines
 
 
+def _last_index(lines: list[str], text: str) -> int:
+    """The real heading's position, not the Table of Contents entry of the same text near the top."""
+    return len(lines) - 1 - lines[::-1].index(text)
+
+
 def _flow(fid, status="verified", **over):
     flow = {"id": fid, "goal": "A visitor picks a country and sees the results.", "source": "intent", "status": status,
             "start_url": START, "steps": [{"kind": "click", "selector": None, "name": "Search"}],
@@ -91,13 +96,14 @@ def test_the_combined_report_leads_with_a_findings_section(tmp_path):
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
-    assert headings.index("Defect Report (Bugs Found)") < headings.index("User flows") < headings.index("Test Coverage / Requirements Traceability")
+    assert headings.index("Defect Report (Bugs Found)") < headings.index("Test Coverage / Requirements Traceability")
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     for part in ("Defects and blockers", "Browser", "Operating system", "Python", "Medium",
                              "1 recorded defect or blocker(s)", "Flow coverage", "Content controls a tested flow acts on",
                  "Tests run", "Journeys with no result", "Pass rate", "User journeys passed"):
         assert part in joined, part
-    main = joined[:joined.index("Appendix: full evidence")]
+    lines = _text(tmp_path / "report" / "full-report.docx")
+    main = chr(10).join(lines[:_last_index(lines, "Test Logs & Evidence")])
     assert 'role="group"' not in main and "expect(" not in main
 
 
@@ -116,7 +122,7 @@ def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verd
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
-    assert headings.index("Test Execution Summary") < headings.index("Defect Report (Bugs Found)") < headings.index("User flows")
+    assert headings.index("Test Execution Summary") < headings.index("Defect Report (Bugs Found)") < headings.index("Test Coverage / Requirements Traceability")
     table = [t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"]][-1]
     rows = [[c.text for c in r.cells] for r in table.rows[1:]]
     by_test = {r[2]: r for r in rows}
@@ -277,7 +283,7 @@ def test_the_test_execution_summary_and_defect_report_contain_no_raw_playwright_
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     lines = _text(tmp_path / "report" / "full-report.docx")
-    main_body = chr(10).join(lines[:lines.index("Appendix: full evidence")])   # the Appendix keeps the raw form on purpose
+    main_body = chr(10).join(lines[:_last_index(lines, "Test Logs & Evidence")])   # the evidence section keeps the raw form on purpose
     for jargon in ("get_by_role(", "expect(", "Locator.", "playwright._impl", "AssertionError:"):
         assert jargon not in main_body, jargon
 
@@ -331,7 +337,7 @@ def test_a_skipped_page_test_is_its_own_verdict_not_a_failure(tmp_path):
     assert "Not tested: NOT TESTABLE" in joined
     # the raw skip tuple never appears anywhere in the main body
     lines = _text(tmp_path / "report" / "full-report.docx")
-    main_body = chr(10).join(lines[:lines.index("Appendix: full evidence")])
+    main_body = chr(10).join(lines[:_last_index(lines, "Test Logs & Evidence")])
     assert "C:\\repo" not in main_body and "get_by_text" not in main_body
 
 
