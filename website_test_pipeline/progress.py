@@ -7,6 +7,7 @@ time it began (WTP_PROGRESS_START); a step run on its own uses the whole bar. Re
 from __future__ import annotations
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -15,6 +16,17 @@ _STARTED = time.time()
 
 def progress_file(settings) -> Path:
     return Path(settings.artifacts_dir) / "progress.json"
+
+
+def window_available() -> bool:
+    """Can the pop-up open here? False on a server: no tkinter in the image, or no display on Linux."""
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        return False
+    if sys.platform.startswith("linux") and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        return False
+    return True
 
 
 def _span() -> tuple[float, float]:
@@ -30,6 +42,9 @@ def _write(settings, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data), encoding="utf-8")
     os.replace(tmp, path)                     # the window never reads a half-written file
+    # the same state as one line of history, for a web UI that streams progress (appended, never rewritten)
+    with path.with_suffix(".jsonl").open("a", encoding="utf-8") as events:
+        events.write(json.dumps(data) + "\n")
 
 
 def report(settings, phase: str, done: int = 0, total: int = 0, note: str = "") -> None:

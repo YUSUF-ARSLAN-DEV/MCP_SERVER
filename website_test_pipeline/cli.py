@@ -109,7 +109,7 @@ def main() -> int:
         weights = {'crawl': 1, 'generate': 4, 'flows': 3, 'report': 3}          # each step's rough share of the total time
         total_w = sum(weights[s[0]] for s in steps); t0 = datetime.now().timestamp(); done_w = 0
         progress.report(settings, 'Starting', note=settings.site)
-        if not args.no_window:
+        if not args.no_window and progress.window_available():
             subprocess.Popen([*base[:2], 'website_test_pipeline.progress_window', str(progress.progress_file(settings))], cwd=settings.root)
         worst = 0
         for step in steps:
