@@ -1,4 +1,8 @@
+import contextlib
+import http.server
 import logging
+import socketserver
+import threading
 
 import pytest
 
@@ -7,6 +11,57 @@ from website_test_pipeline.review import render_show, _rating_line
 from website_test_pipeline.runner import apply_result, find_replacement, run_flow, run_verify
 
 LOG = logging.getLogger("test_heal")
+
+
+@contextlib.contextmanager
+def _serve(pages: dict[str, bytes]):
+    """A tiny local site: {path: html} -> base URL. Real navigation and real DOM, so _locate / _do_step /
+    find_replacement run exactly as they do against a live site, not against a hand-guessed fake Page."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = pages.get(self.path, b"<html><body>Not found</body></html>")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield base
+    finally:
+        server.shutdown()
+
+
+@pytest.fixture()
+def real_page():
+    sync_api = pytest.importorskip("playwright.sync_api")
+    try:
+        pw = sync_api.sync_playwright().start()
+        browser = pw.chromium.launch()
+    except Exception as exc:                       # no browser installed here
+        pytest.skip(f"no Chromium: {exc}")
+    page = browser.new_page()
+    yield page
+    browser.close()
+    pw.stop()
+
+
+def _spy_do_step(monkeypatch):
+    """Let _do_step run for real, but record which (selector, name) it was called with."""
+    calls = []
+    original = runner._do_step
+
+    def spy(page, step, seen=None):
+        calls.append((step.get("selector"), step.get("name")))
+        return original(page, step, seen)
+
+    monkeypatch.setattr(runner, "_do_step", spy)
+    return calls
 
 
 def _c(name, tag="button", selector=None, **extra):
@@ -73,34 +128,13 @@ def test_the_same_control_that_is_already_found_is_not_reported_as_a_heal():
     assert find_replacement({"kind": "click", "name": ""}, [_c("Search")])[0] is None
 
 
-# ------------------------------------------------------------------ running a flow with healing
+# ------------------------------------------------------------------ running a flow with healing, against a real
+# browser and a real local page: the flow's step always targets "#old-search", which never exists on these
+# pages, so _do_step's own real lookup is what raises "control not found" - nothing here is scripted.
 
-def _snap(url="https://x.test/en", headings=()):
-    return {"url": url, "headings": list(headings), "controls": [], "results": []}
-
-
-@pytest.fixture
-def fake_browser(monkeypatch):
-    """A page where '#old-search' no longer exists but a control called 'Search now' does."""
-    log = {"steps": []}
-
-    class _Page:
-        url = "https://x.test/en"
-
-        def goto(self, *a, **k): pass
-
-    def do_step(page, step, seen=None):
-        log["steps"].append((step.get("selector"), step.get("name")))
-        if step.get("selector") == "#old-search":
-            raise RuntimeError("control not found")
-
-    monkeypatch.setattr(runner, "settle_page", lambda p: None)
-    monkeypatch.setattr(runner, "dismiss_overlays", lambda p: None)
-    monkeypatch.setattr(runner, "take_snapshot", lambda p: _snap())
-    monkeypatch.setattr(runner, "settled_snapshot", lambda p: _snap("https://x.test/en/find", ["Results"]))
-    monkeypatch.setattr(runner, "_do_step", do_step)
-    monkeypatch.setattr(runner, "_visible_controls", lambda p: [_c("Search now", selector="#new-search")])
-    return _Page(), log
+def _real_flow(base: str, status="candidate"):
+    return {"id": "f", "status": status, "start_url": base + "/en", "outcome": {"effect": "navigates", "to": "/en/find"},
+            "steps": [{"kind": "click", "selector": "#old-search", "name": "Search"}]}
 
 
 def _flow(status="candidate"):
@@ -108,46 +142,54 @@ def _flow(status="candidate"):
             "steps": [{"kind": "click", "selector": "#old-search", "name": "Search"}]}
 
 
-def test_with_healing_the_step_is_retried_with_the_replacement_and_recorded(fake_browser):
-    page, log = fake_browser
-    result = run_flow(page, _flow(), heal=True)
+def test_with_healing_the_step_is_retried_with_the_replacement_and_recorded(real_page, monkeypatch):
+    calls = _spy_do_step(monkeypatch)
+    pages = {"/en": b'<html><body><button type="button" id="new-search" '
+                     b'onclick="location.href=\'/en/find\'">Search now</button></body></html>',
+             "/en/find": b"<html><body><h1>Results</h1></body></html>"}
+    with _serve(pages) as base:
+        result = run_flow(real_page, _real_flow(base), heal=True)
     assert result["ok"] and result["error"] is None
-    assert log["steps"] == [("#old-search", "Search"), ("#new-search", "Search now")]
+    assert calls == [("#old-search", "Search"), ("#new-search", "Search now")]
     heal = result["heals"][0]
     assert heal["step"] == 1 and heal["was"]["selector"] == "#old-search" and heal["now"]["selector"] == "#new-search"
 
 
-def test_without_healing_the_failure_names_the_control_that_looks_like_it(fake_browser):
-    page, log = fake_browser
-    result = run_flow(page, _flow("approved"), heal=False)
+def test_without_healing_the_failure_names_the_control_that_looks_like_it(real_page, monkeypatch):
+    calls = _spy_do_step(monkeypatch)
+    pages = {"/en": b'<html><body><button type="button" id="new-search">Search now</button></body></html>'}
+    with _serve(pages) as base:
+        result = run_flow(real_page, _real_flow(base, "approved"), heal=False)
     assert not result["ok"] and result["heals"] == []
     assert 'the page has "Search now"' in result["error"] and "decided by a person" in result["error"]
-    assert len(log["steps"]) == 1                                                        # nothing was retried
+    assert len(calls) == 1                                                               # nothing was retried
 
 
-def test_no_replacement_gives_a_clear_reason(fake_browser, monkeypatch):
-    page, _ = fake_browser
-    monkeypatch.setattr(runner, "_visible_controls", lambda p: [_c("Subscribe")])
-    result = run_flow(page, _flow(), heal=True)
+def test_no_replacement_gives_a_clear_reason(real_page):
+    pages = {"/en": b'<html><body><button type="button" id="subscribe">Subscribe</button></body></html>'}
+    with _serve(pages) as base:
+        result = run_flow(real_page, _real_flow(base), heal=True)
     assert not result["ok"] and "nothing could stand in for it" in result["error"]
 
 
-def test_a_replacement_that_also_fails_is_reported_and_not_kept(fake_browser, monkeypatch):
-    page, _ = fake_browser
-
-    def always_fail(page, step, seen=None):
-        raise RuntimeError("control not found" if step.get("selector") == "#old-search" else "Timeout 2000ms exceeded")
-
-    monkeypatch.setattr(runner, "_do_step", always_fail)
-    result = run_flow(page, _flow(), heal=True)
+def test_a_replacement_that_also_fails_is_reported_and_not_kept(real_page):
+    # "Search now" is a real, visible candidate (find_replacement will pick it), but an overlay sits over
+    # the whole page, so a real click on it times out instead of landing - a different, real kind of failure.
+    pages = {"/en": b'<html><body><button type="button" id="new-search">Search now</button>'
+                     b'<div style="position:fixed;inset:0;z-index:999;"></div></body></html>'}
+    with _serve(pages) as base:
+        result = run_flow(real_page, _real_flow(base), heal=True)
     assert not result["ok"] and result["heals"] == [] and 'tried "Search now" instead' in result["error"]
 
 
-def test_other_failures_are_not_treated_as_a_missing_control(fake_browser, monkeypatch):
-    page, log = fake_browser
-    monkeypatch.setattr(runner, "_do_step", lambda p, s, seen=None: (_ for _ in ()).throw(RuntimeError("no selectable option")))
-    result = run_flow(page, _flow(), heal=True)
-    assert not result["ok"] and result["heals"] == [] and "no selectable option" in result["error"]
+def test_other_failures_are_not_treated_as_a_missing_control(real_page):
+    # "#old-search" exists (so _do_step never raises "control not found"); the same page-covering overlay
+    # makes the real click time out for an unrelated reason, which must not trigger healing.
+    pages = {"/en": b'<html><body><button type="button" id="old-search">Search</button>'
+                     b'<div style="position:fixed;inset:0;z-index:999;"></div></body></html>'}
+    with _serve(pages) as base:
+        result = run_flow(real_page, _real_flow(base), heal=True)
+    assert not result["ok"] and result["heals"] == [] and "control not found" not in result["error"]
 
 
 # ------------------------------------------------------------------ keeping a heal
@@ -414,18 +456,16 @@ def test_option_healing_fires_through_run_verify_for_a_results_outcome_with_a_re
 # shared-account sites, e.g. a public demo whose single account gets evicted by another visitor) - found live
 # against OrangeHRM's public demo.
 
-def test_run_flow_recognises_a_login_wall_instead_of_healing_onto_it(fake_browser, monkeypatch):
-    page, log = fake_browser
-
-    def now_password(p):
-        assert p is page
-        return True
-
-    monkeypatch.setattr(runner, "_now_showing_a_login_wall", now_password)
-    result = run_flow(page, _flow(), heal=True)
+def test_run_flow_recognises_a_login_wall_instead_of_healing_onto_it(real_page, monkeypatch):
+    # a real, visible password field is the actual signal _now_showing_a_login_wall checks for - no need to
+    # fake that function itself.
+    calls = _spy_do_step(monkeypatch)
+    pages = {"/en": b'<html><body><h1>Sign in</h1><input type="password" name="pw"></body></html>'}
+    with _serve(pages) as base:
+        result = run_flow(real_page, _real_flow(base), heal=True)
     assert result.get("session_expired") is True
     assert "session expired mid-flow" in result["error"] and "not a defect" in result["error"]
-    assert result["heals"] == [] and len(log["steps"]) == 1          # never tried to heal onto the login page
+    assert result["heals"] == [] and len(calls) == 1                 # never tried to heal onto the login page
 
 
 def test_run_verify_refreshes_an_expired_session_and_retries_the_flow_with_a_real_browser(tmp_path, monkeypatch):

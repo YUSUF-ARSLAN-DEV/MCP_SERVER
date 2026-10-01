@@ -352,7 +352,20 @@ def test_run_flow_records_the_part_after_the_last_navigation(monkeypatch):
     monkeypatch.setattr(runner, "take_snapshot", lambda p: snap("https://x.test/"))
     monkeypatch.setattr(runner, "settled_snapshot", lambda p: next(after))
     monkeypatch.setattr(runner, "_do_step", lambda page, step, seen=None: None)
-    page = type("P", (), {"goto": lambda self, *a, **k: None, "url": "https://x.test/inventory.html"})()
+
+    class _Loc:
+        def __init__(self):
+            self.first = self
+
+        def count(self):
+            return 1
+
+    # run_flow resolves a control before every click/submit step (so it can check for a CAPTCHA); this test is
+    # about tail bookkeeping, not control resolution, so these just need to resolve to *something* harmlessly.
+    page = type("P", (), {
+        "goto": lambda self, *a, **k: None, "url": "https://x.test/inventory.html",
+        "locator": lambda self, sel: _Loc(), "get_by_role": lambda self, role, name=None, exact=None: _Loc(),
+    })()
     flow = {"id": "f", "start_url": "https://x.test/", "steps": [{"kind": "fill", "name": "a"}, {"kind": "click", "name": "Login"},
                                                                  {"kind": "click", "name": "Add"}]}
     result = runner.run_flow(page, flow)

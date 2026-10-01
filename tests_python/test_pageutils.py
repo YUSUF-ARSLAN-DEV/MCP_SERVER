@@ -70,7 +70,9 @@ def test_pick_option_opens_the_widget_then_clicks_the_option_with_that_text():
     trigger = _Loc(page, "trigger")
     pick_option(page, trigger, "Al Jazeera 2")
     assert page.log[0] == ("click", "trigger")
-    assert ("filter", "Al Jazeera 2") in page.log
+    # the filter is now a loose (Arabic-variant-tolerant) regex, not a literal string
+    filter_calls = [call[1] for call in page.log if call[0] == "filter"]
+    assert filter_calls and filter_calls[0].search("Al Jazeera 2")
     assert any(step[0] == "click" and step[1].startswith("option:") for step in page.log)
 
 

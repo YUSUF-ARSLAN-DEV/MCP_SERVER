@@ -23,7 +23,9 @@ class _Run:
 
 def test_canonical_counts_reconcile_and_exclude_skips_from_pass_rate():
     counts = canonical_counts(_Run())
-    assert counts == {
+    # subset check, not full equality: canonical_counts also reports journey-level stats unrelated to this test
+    assert {k: counts[k] for k in ("executed_tests", "passed", "failed", "skipped", "blocked_flows",
+                                   "all_items", "pass_rate_percent")} == {
         "executed_tests": 2,
         "passed": 1,
         "failed": 1,
