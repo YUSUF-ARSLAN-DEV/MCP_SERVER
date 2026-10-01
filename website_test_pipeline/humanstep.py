@@ -186,6 +186,9 @@ def can_ask() -> tuple[bool, str]:
         return False, "turned off (--no-ask-human)"
     if _declined:
         return False, "it was skipped earlier in this run, so it is not asked again"
+    from . import webhuman
+    if webhuman.active():
+        return True, "a person can answer on the web page"
     from .authpopup import is_interactive
     if not is_interactive():
         return False, "no terminal or display to show a window on"
@@ -312,6 +315,9 @@ class CodePopup:
 
 def ask_code(request: HumanRequest, get_image=None, reload=None, timeout_s: int = 180) -> HumanAnswer | None:
     """Show the window and block until the person continues, skips, or the time runs out. None = no code."""
+    from . import webhuman
+    if webhuman.active():                  # hosted: ask on the web page, not on a desktop
+        return webhuman.ask_code_web(request, get_image, reload)
     import tkinter as tk
     root = tk.Tk()
     root.attributes("-topmost", True)

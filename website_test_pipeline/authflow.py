@@ -125,9 +125,12 @@ def ensure_ignored(path: Path, repo_root: Path) -> bool:
         return subprocess.run(["git", "check-ignore", "-q", str(path)], cwd=repo_root,
                               capture_output=True).returncode == 0
     try:
+        rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return True            # outside the repository (a deployment's data volume): git can never track it
+    try:
         if ignored():
             return True
-        rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
         with open(repo_root / ".gitignore", "a", encoding="utf-8") as fh:
             fh.write(f"\n# added by the auth flow: holds a login secret\n{rel}\n")
         return ignored()

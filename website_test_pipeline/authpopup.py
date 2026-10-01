@@ -70,6 +70,9 @@ def should_ask(auth_mode: str, kind: str, has_session: bool, interactive: bool) 
 
 
 def is_interactive() -> bool:
+    from . import webhuman
+    if webhuman.active():                  # a person on the web page counts: it is the hosted version's window
+        return True
     if not sys.stdin or not sys.stdin.isatty():
         return False
     try:
@@ -158,6 +161,9 @@ class CredentialPopup:
 
 def ask_credentials(request: AuthRequest, get_screenshot=None, timeout_s: int = 180) -> AuthAnswer | None:
     """Show the popup and block until the person continues, skips, or the time runs out. None = no credentials."""
+    from . import webhuman
+    if webhuman.active():                  # hosted: ask on the web page, not on a desktop
+        return webhuman.ask_credentials_web(request, get_screenshot)
     import tkinter as tk
     root = tk.Tk()
     root.attributes("-topmost", True)
