@@ -156,6 +156,16 @@ def test_validator_rejects_long_heading_name():
     with pytest.raises(SpecError, match="fragile"):
         validate_python_spec(src, "https://x.test")
 
+def test_validator_rejects_a_dead_conditional_that_silently_skips_a_step():
+    # found live: a generated spec wrapped "click Search" in `... if False else None`, silently never clicking it
+    # while still asserting the navigation only that click could cause.
+    src = ('def test_x(page, evidence_dir):\n'
+           '    # https://x.test\n'
+           '    action_evidence(page, "a", lambda: btn.click(), lambda: expect(page).to_have_url("x"), evidence_dir) if False else None\n'
+           '    expect(page).to_have_url("x")\n')
+    with pytest.raises(SpecError, match="dead conditional"):
+        validate_python_spec(src, "https://x.test")
+
 def test_probe_returns_none_without_action_button():
     controls = [{"tag": "select", "name": "Country", "region": "content", "options": ["1", "2"]}]
     assert _probe_primary_flow(_NoBrowser(), "https://x.test", controls) is None

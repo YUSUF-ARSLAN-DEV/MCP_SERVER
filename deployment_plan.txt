@@ -1,0 +1,448 @@
+DEPLOYMENT PLAN - website test pipeline as a hosted web app
+===========================================================
+
+GOAL
+  A person opens a web page, pastes a public URL, and watches the pipeline run
+  (explore -> intents -> expand -> verify -> flowgen -> execute -> report).
+  If the site needs a login or a CAPTCHA, the page asks THEM, in the browser.
+  When it finishes they read the report on the website (not a folder of files),
+  and can still download the Word document. Everything survives a restart.
+
+DESIGN DECISIONS (made up front, so the steps below are unambiguous)
+  1. One container, one process tree: FastAPI serves the JSON API and also the
+     built front-end files. No separate web server, no CORS headaches.
+  2. The pipeline is NOT rewritten. FastAPI starts it as a subprocess
+     (`python -m website_test_pipeline.cli all`, env SEED_URL / SITE set per job).
+     Why: Settings reads the environment, Playwright is heavy and can leak
+     memory, and a crashed run must never take the API down.
+  3. One job at a time at first (a queue of 1). A run drives a real Chromium;
+     two at once on a small server will fight for RAM.
+  4. SQLite for job metadata (no database server to pay for or maintain).
+     The pipeline's own files (runs/<site>/...) stay exactly as they are.
+  5. Front-end: React + Vite + TypeScript (or plain HTML + HTMX if you want less
+     tooling - see Phase 5 note). Built once, copied into the image.
+  6. Hosting: a small VPS running Docker Compose (cheapest option that can run
+     Chromium reliably - see Phase 8).
+
+WHAT BREAKS IN A CONTAINER TODAY (found by reading the code - fix in Phase 2/3)
+  A. Tk pop-ups. authpopup.py, humanstep.py and progress_window.py all use
+     tkinter. A server has no display, so the login window, the CAPTCHA
+     window and the progress window cannot open. humanstep.can_ask() returns
+     false there, so CAPTCHA forms would just be skipped. They must become web
+     UI (Phase 3).
+  B. Paths. config.py builds RUNS from the repo folder (ROOT/runs). A volume
+     needs a configurable location (Phase 1).
+  C. requirements.txt is UTF-16 encoded and is a full `pip freeze` of the dev
+     machine (graphify, tree-sitter-*, networkx, pytest...). pip inside Docker
+     will choke on the encoding and the image will be huge. We need a clean
+     requirements-prod.txt (Phase 1).
+  D. Secrets. authflow.remember_credentials writes to .env. In a container
+     .env is not baked in and the image filesystem is throw-away; credentials
+     typed in the UI need a safe place on the volume (Phase 3).
+  E. The model host. API_URL points at an llm-N.iceroad.net machine. It must be
+     reachable FROM THE SERVER (it was not reachable from home). Confirm this
+     before buying hosting (Phase 0).
+  F. Safety. A public "enter any URL" box lets strangers make YOUR server
+     browse anything, including localhost and cloud-metadata addresses (SSRF).
+     Needs guards (Phase 2).
+
+
+=====================================================================
+PHASE 0 - DECISIONS AND CHECKS BEFORE WRITING CODE  (about 1 hour)
+=====================================================================
+  0.1 Confirm the LLM endpoint is reachable from wherever the server will live.
+      From a throw-away VPS: curl the API_URL with API_KEY. If it is only
+      reachable on a company network/VPN, the host must be inside it (or the
+      endpoint must be exposed with an allowlist). This decides the hosting.
+  0.2 Decide who may use it. Public-for-anyone is expensive and risky (each run
+      burns CPU and LLM tokens). Recommended v1: a single shared access code /
+      per-user login. (Phase 2.6)
+  0.3 Decide the max run size (pages, minutes). Defaults proposed:
+      max 25 pages, 30 minutes per job, 1 job at a time, 5 jobs per user per day.
+  0.4 Pick the sizes: server with >= 2 GB RAM (Chromium + Python). 1 GB
+      machines will be killed by the OOM killer mid-run.
+  0.5 Branch: `git checkout -b deploy`. One commit per step below, pushed after
+      each (same habit as the flows roadmap).
+
+
+=====================================================================
+PHASE 1 - MAKE THE CODE CONTAINER-FRIENDLY  (no new features yet)
+=====================================================================
+  1.1 Configurable data directory.
+      - config.py: add DATA_DIR = Path(os.getenv("DATA_DIR", ROOT)). RUNS becomes
+        DATA_DIR / "runs". Locally nothing changes (defaults to the repo).
+      - Grep for any other hard-coded ROOT / "runs" / "python_artifacts" use and
+        route them through the same setting.
+      - Test: run one small local pipeline with DATA_DIR=/some/other/folder and
+        confirm every output lands there. (Add a unit test for Settings paths.)
+  1.2 Clean production requirements.
+      - Create requirements-prod.txt (UTF-8) with only runtime deps:
+          playwright==1.63.0, python-docx, pytest, pytest-playwright, pillow,
+          python-dotenv, requests, plus new: fastapi, uvicorn[standard],
+          python-multipart, pydantic.
+        (pin versions; copy the exact pins from the current freeze.)
+      - Playwright version MUST match the Docker base image tag (Phase 4.1).
+      - Keep the old requirements.txt for dev, or convert it to UTF-8.
+  1.3 Headless and no display assumptions.
+      - Confirm HEADLESS defaults true (it does) and that nothing imports
+        tkinter at module import time on the pipeline path (guard the imports
+        in authpopup/humanstep/progress_window so a server without Tk does not
+        crash on import).
+  1.4 Make `all` report machine-readable progress (needed by the UI later).
+      - progress.py already tracks stages. Make it also append JSON lines to
+        <job_dir>/progress.jsonl: {ts, stage, done, total, message}.
+        The Tk window becomes optional; the file is the source of truth.
+
+
+=====================================================================
+PHASE 2 - FASTAPI BACKEND
+=====================================================================
+  Layout (new package, pipeline untouched):
+      api/
+        main.py            app creation, routers, static files
+        db.py              SQLite (sqlite3 or SQLModel), tables below
+        jobs.py            job queue + subprocess runner
+        security.py        URL validation (SSRF), auth, rate limits
+        reports.py         turns a finished run into JSON for the UI
+        models.py          pydantic request/response models
+  2.1 Database (SQLite file at $DATA_DIR/app.db, WAL mode).
+        jobs(id, url, site, status, created_at, started_at, finished_at,
+             stage, progress_pct, error, user_id, run_dir)
+        status: queued | running | needs_human | done | failed | cancelled
+        human_requests(id, job_id, kind, payload_json, answer_json, state)
+  2.2 Endpoints (all under /api):
+        POST   /api/jobs                 body {url, options}; validates; queues
+        GET    /api/jobs                 list (newest first)
+        GET    /api/jobs/{id}            status + stage + counts
+        GET    /api/jobs/{id}/events     Server-Sent Events: live progress
+        POST   /api/jobs/{id}/cancel
+        GET    /api/jobs/{id}/human      current question for a person (if any)
+        POST   /api/jobs/{id}/human      the person's answer
+        GET    /api/jobs/{id}/report     structured report JSON (Phase 6)
+        GET    /api/jobs/{id}/files/{p}  download docx / screenshots (whitelist)
+        GET    /api/health               for Docker healthcheck / uptime monitor
+  2.3 Job runner (jobs.py).
+        - One asyncio worker pulls the oldest `queued` job.
+        - Starts: python -m website_test_pipeline.cli all --no-window
+          with env: SEED_URL=<url>, SITE=<job id or host>, DATA_DIR=/data,
+          HEADLESS=true, API_URL/MODEL_NAME/API_KEY from the container env.
+        - Reads progress.jsonl (tail) and pushes it to SSE subscribers and the
+          jobs row.
+        - Hard timeout (kill the process group after N minutes), cancel support,
+          and on startup mark any job left `running` as `failed (server
+          restarted)` - this is what makes restarts safe.
+        - Capture stdout/stderr to <run_dir>/job.log (shown in the UI's
+          "details" panel).
+  2.4 Per-job workspace.
+        Today a workspace is runs/<site>/. Two jobs for the same site would
+        overwrite each other. Use SITE=<host>-<short job id> for isolation, or
+        deliberately reuse runs/<host>/ when the user chooses "re-run / update"
+        (keeps flows.json, ratings, approved flows). Offer both in the UI:
+        "New run" vs "Re-run this site".
+  2.5 URL safety (security.py) - REQUIRED before exposing it:
+        - http/https only; strip credentials from the URL.
+        - Resolve DNS and reject private/loopback/link-local ranges
+          (127.0.0.0/8, 10/8, 172.16/12, 192.168/16, 169.254.0.0/16 incl. cloud
+          metadata, ::1, fc00::/7). Re-check after redirects.
+        - Optional allowlist/denylist of domains.
+        - Length limits, one active job per user.
+  2.6 Access control.
+        v1: a shared ACCESS_CODE env var -> signed cookie (itsdangerous /
+        FastAPI dependency). v2: real accounts. Never leave the API open.
+        Add rate limiting (slowapi) on POST /api/jobs.
+  2.7 Tests (tests_python/test_api_*.py, FastAPI TestClient): job lifecycle with
+        the subprocess replaced by a fake that writes progress lines, URL
+        validator cases, restart recovery, file-download path traversal attempts
+        (../..) must 404.
+
+
+=====================================================================
+PHASE 3 - REPLACE THE DESKTOP POP-UPS WITH WEB UI (the hard part)
+=====================================================================
+  Good news: the code already has seams. humanstep.solve_before_submit takes an
+  `asker=` argument and ask_code(request) is a single call; authpopup has
+  should_ask / field_key and authflow takes the answers. We add a second
+  implementation that talks to the web instead of Tk.
+  3.1 "File-based human channel" (no extra infrastructure):
+        - Pipeline side (new module website_test_pipeline/webhuman.py):
+            ask(request) writes <run_dir>/human/request-<n>.json
+            {kind: "captcha"|"credentials", fields:[...], prompt, timeout}
+            plus the CAPTCHA image (request-<n>.png), then POLLS for
+            answer-<n>.json until it appears or the timeout passes (a timeout
+            behaves exactly like today's "skip: needs a person").
+        - API side: a watcher notices request-*.json, creates a human_requests
+          row, sets the job to `needs_human`, and pushes an SSE event.
+          POST /api/jobs/{id}/human writes answer-<n>.json and sets the job
+          back to `running`.
+        - Select the implementation with an env var HUMAN_CHANNEL=web|tk|off
+          (human_mode()/can_ask() already centralise this decision).
+  3.2 CAPTCHA step in the UI.
+        - Show the CAPTCHA image, the prefilled form fields (the Tk window
+          already shows the whole form prefilled), an input for the code, and
+          buttons: Submit / Refresh image / Skip.
+        - Note CAPTCHA images expire: keep the pipeline's existing reload logic
+          (ask_code has a `reload` callback); the UI's "Refresh" writes a
+          refresh signal file that the pipeline reads.
+  3.3 Login step in the UI.
+        - Render the detected fields (labels from authpopup.guidance), password
+          input masked, "Skip", and up to 3 attempts with the site's own error
+          message shown between them (matches authflow today).
+        - Credentials are sent over HTTPS only, written to the pipeline as a
+          0600 file on the volume, and deleted as soon as the session is saved.
+        - Replace the .env write (remember_credentials) with a per-job secrets
+          file under $DATA_DIR/secrets/<user>/ - never inside a folder the
+          file-download endpoint can serve.
+  3.4 Saved sessions (runs/<site>/auth/*.storage_state.json) are as sensitive as
+      passwords (already .gitignored). Keep them on the volume, mode 0600, never
+      downloadable, deletable from the UI ("Forget this login"). Consider
+      encrypting at rest with a key from an env secret.
+  3.5 Live "what is the agent doing" (optional but valuable): after each step
+      the pipeline already captures screenshots for evidence; stream the latest
+      screenshot URL over SSE so the user sees the real page.
+  3.6 Tests: fake pipeline that raises a request, API answers it, pipeline
+      resumes; timeout path; double-answer ignored.
+
+
+=====================================================================
+PHASE 4 - DOCKER
+=====================================================================
+  4.1 Dockerfile (multi-stage):
+        # --- stage 1: build the front-end ---
+        FROM node:20-slim AS web
+        WORKDIR /web
+        COPY frontend/package*.json ./
+        RUN npm ci
+        COPY frontend/ ./
+        RUN npm run build                      # outputs /web/dist
+
+        # --- stage 2: runtime ---
+        FROM mcr.microsoft.com/playwright/python:v1.63.0-jammy
+        # ^ tag MUST equal the playwright pin; it ships Chromium + all system libs
+        WORKDIR /app
+        COPY requirements-prod.txt .
+        RUN pip install --no-cache-dir -r requirements-prod.txt
+        COPY website_test_pipeline ./website_test_pipeline
+        COPY api ./api
+        COPY pyproject.toml conftest.py ./
+        COPY --from=web /web/dist ./static
+        ENV DATA_DIR=/data HEADLESS=true PYTHONUNBUFFERED=1 \
+            HUMAN_CHANNEL=web
+        RUN mkdir -p /data && chown -R pwuser:pwuser /data /app
+        USER pwuser                             # never run Chromium as root
+        EXPOSE 8000
+        HEALTHCHECK CMD curl -f http://localhost:8000/api/health || exit 1
+        CMD ["uvicorn","api.main:app","--host","0.0.0.0","--port","8000"]
+      Notes: the generated pytest specs need conftest.py (evidence plugin) next
+      to them - verify the path conftest resolution inside the image. Only
+      Chromium is needed by default (the --browser flag also supports
+      firefox/webkit; skip them to keep the image small).
+  4.2 .dockerignore: venv, .git, runs, python_artifacts, graphify-out, .env,
+      .env.*, __pycache__, .pytest_cache, tests_python (optional), *.docx.
+      (.env MUST be ignored so keys never enter an image layer.)
+  4.3 docker-compose.yml:
+        services:
+          app:
+            build: .
+            restart: unless-stopped
+            env_file: .env                # API_URL, MODEL_NAME, API_KEY, ACCESS_CODE
+            volumes:
+              - appdata:/data             # named volume (see Phase 5)
+            shm_size: "1gb"               # Chromium crashes with the 64 MB default
+            ports: ["127.0.0.1:8000:8000"]  # only the reverse proxy is public
+            mem_limit: 2g
+          caddy:                           # HTTPS + domain, automatic certificates
+            image: caddy:2
+            restart: unless-stopped
+            ports: ["80:80","443:443"]
+            volumes:
+              - ./Caddyfile:/etc/caddy/Caddyfile:ro
+              - caddy_data:/data
+            depends_on: [app]
+        volumes:
+          appdata:
+          caddy_data:
+      Caddyfile:   yourdomain.example { reverse_proxy app:8000 }
+      (SSE needs response buffering off; Caddy's reverse_proxy is fine.)
+  4.4 Local acceptance test:
+        docker compose build && docker compose up
+        open http://localhost:8000, run ONE small site (<= 3 URLs, the project
+        rule), confirm a docx appears and survives `docker compose restart`.
+
+
+=====================================================================
+PHASE 5 - DOCKER VOLUMES (persistence)
+=====================================================================
+  What must persist (everything under /data):
+      /data/app.db               job history, human requests
+      /data/runs/<site>/         flows.json, intents.json, flow_ratings.json,
+                                 tests/, artifacts/ (inventories, screenshots,
+                                 test_results.json, report/*.docx)
+      /data/runs/<site>/auth/    saved login sessions  (SENSITIVE)
+      /data/secrets/             typed credentials     (SENSITIVE)
+  What must NOT persist: the image filesystem, .env, Playwright browser cache
+  (already in the image).
+  5.1 Use a NAMED volume (`appdata`) for simplicity; use a bind mount
+      (./data:/data) if you want to browse files from the host. Pick one.
+  5.2 Permissions: the container user (pwuser, uid 1000) must own /data. If a
+      bind mount is created by root, chown it once or run an init step.
+  5.3 Backups (cheap and important): nightly cron on the host:
+        docker run --rm -v appdata:/data -v $PWD/backups:/b alpine \
+          tar czf /b/appdata-$(date +%F).tgz /data
+      Keep 7 days; copy off the server (object storage or rsync). Exclude
+      /data/secrets and auth/ from off-site copies or encrypt them.
+  5.4 Retention: runs accumulate screenshots. Add a cleanup job (delete runs
+      older than N days unless "pinned"), and show disk usage in the UI.
+  5.5 Test persistence on purpose: run a job, `docker compose down` (NOT -v!),
+      `up` again, the job and report must still be there. Document that
+      `down -v` deletes the data.
+
+
+=====================================================================
+PHASE 6 - SHOW REPORTS ON THE WEBSITE (not folders)
+=====================================================================
+  Today the report is a .docx (report.py / flowreport.py / report_model.py
+  build RunReport / FlowReport objects first, then render Word). The website
+  should render from the SAME structured data, so the page and the Word file can
+  never disagree.
+  6.1 Serialise the model. Add RunReport.as_dict() (or a small
+      report_to_json function) in a new module and write
+      <run_dir>/artifacts/report/report.json next to the docx at the end of the
+      `report` stage. (Check what report_model.py already exposes; reuse it.)
+      Suggested JSON shape:
+        {site, url, started, finished, environment,
+         summary:{flows, passed, failed, blocked, coverage_pct, findings},
+         flows:[{id, title, sentence, status, outcome, steps:[...],
+                 evidence:[screenshot paths], failure_plain_text}],
+         findings:[{severity, priority, title, page, detail}],
+         coverage:{pages, untested_controls},
+         appendix:[...]}
+  6.2 API: GET /api/jobs/{id}/report returns that JSON; screenshots served
+      through the whitelisted files endpoint with long cache headers.
+  6.3 Screens (front-end):
+        a) Home / New run: URL box, options (max pages, "ask me for CAPTCHA /
+           login: yes/skip"), Start button, recent runs list with status chips.
+        b) Run page: stage stepper (explore -> ... -> report), progress bar,
+           live log (collapsible), screenshot of what it is doing now, Cancel.
+           A modal appears when status = needs_human (Phase 3).
+        c) Report page (the main deliverable):
+             - Executive summary cards: flows tested, pass/fail, coverage %,
+               top findings (matches the "not fluffy" goal).
+             - Findings table (sortable by severity/priority, filter by page).
+             - Flow list: expandable rows -> plain-language sentence, steps,
+               result, screenshot gallery, the plain error text.
+             - Coverage view: pages explored, controls never touched.
+             - Environment block (browser build, language/direction, date).
+             - Buttons: Download Word report, Download generated tests (zip),
+               Re-run this site, Share link (read-only, unguessable token).
+        d) Sites page: every site ever tested, with last run and trend.
+        e) Flow review (nice to have, already supported by `flows approve /
+           reject`): approve or reject a flow with a reason from the UI.
+  6.4 Accessibility/RTL: sites can be Arabic (RTL). Render page text with
+      dir="auto" per block so mixed-direction content displays correctly.
+  6.5 Print/PDF: a print stylesheet so "Print to PDF" produces a clean report
+      (cheap alternative to server-side PDF).
+  6.6 Front-end stack note: React + Vite gives good tables/filters/SSE hooks.
+      If you prefer minimal tooling, serve Jinja2 templates from FastAPI with
+      HTMX + a few lines of JS for SSE - one language, no Node build stage.
+      Decide in Phase 0; the API above works for either.
+  6.7 Tests: report JSON schema test against a fixture run; front-end smoke
+      test with Playwright (the project already uses it) against the running
+      container: submit a tiny local test page, wait for the report page.
+
+
+=====================================================================
+PHASE 7 - HARDENING AND OPERATIONS
+=====================================================================
+  7.1 Secrets: ACCESS_CODE, API_KEY only via env/secret store, never committed
+      (scripts/check_secrets.ps1 already scans; add it to CI for the docker
+      files too). Rotate the Gemini/LLM keys used during development.
+  7.2 Resource limits: mem_limit, per-job timeout, max pages, max screenshot
+      count; reject a new job when disk free < threshold.
+  7.3 Logging: JSON logs to stdout (docker logs), job.log per run in the UI.
+  7.4 Monitoring: free uptime ping on /api/health (UptimeRobot / Better Stack
+      free tier); alert email on failure.
+  7.5 Politeness/legal: send a recognisable User-Agent, respect a per-host
+      delay, and show a checkbox "I am allowed to test this site". Consider
+      honouring robots.txt for the crawl stage.
+  7.6 CI: extend .github/workflows/ci.yml: run the Python tests, build the
+      image, run the smoke test, and (on master) push the image to GHCR
+      (ghcr.io is free for public/private repos within limits).
+
+
+=====================================================================
+PHASE 8 - HOSTING (cheapest that actually works)
+=====================================================================
+  Requirement: >= 2 GB RAM, a persistent disk, Docker, outbound access to the
+  LLM host. (Prices change - verify current numbers before buying.)
+  OPTION A (recommended): small VPS + Docker Compose + Caddy
+      Hetzner Cloud CX-class (about 4-5 EUR/month for 2 vCPU / 4 GB / 40 GB),
+      or DigitalOcean / Vultr / Contabo equivalents at a few more dollars.
+      + simplest model: the compose file from Phase 4 runs as-is.
+      + the disk is yours; named volume survives reboots.
+      - you patch the OS; you do your own backups (Phase 5.3).
+  OPTION B (free, if it works for you): Oracle Cloud "Always Free" ARM VM
+      (up to 4 cores / 24 GB). Free forever but capacity is often unavailable
+      and accounts can be reclaimed if idle. Playwright ships linux/arm64
+      images, so the same Dockerfile works. Good for a demo, risky for a
+      deliverable.
+  OPTION C (avoid for this workload): serverless/PaaS free tiers (Render,
+      Railway, Fly free allowances, Cloud Run). Typical free memory (256-512 MB)
+      cannot run Chromium, jobs outlive request timeouts, and persistent
+      volumes cost extra. Only consider paid tiers with >= 2 GB and a volume.
+  Steps for Option A:
+      8.1 Create the server (Ubuntu LTS), add your SSH key, disable password
+          login, enable the firewall (ufw allow 22,80,443), enable
+          unattended-upgrades.
+      8.2 Install Docker + compose plugin. Clone the repo (or pull the GHCR
+          image). Create .env on the server (never in git).
+      8.3 Point a domain (A record) at the server IP. A cheap domain or a free
+          subdomain (DuckDNS) works; Caddy gets HTTPS certificates itself.
+      8.4 `docker compose up -d --build`. Check `docker compose logs -f`.
+      8.5 Set the nightly backup cron (Phase 5.3) and the uptime monitor.
+      8.6 Update procedure: git pull && docker compose up -d --build (the
+          volume keeps all data). Keep the previous image tag for rollback.
+  Cost estimate: server ~5 EUR + domain ~1 EUR/month + LLM usage.
+
+
+=====================================================================
+PHASE 9 - ORDER OF WORK AND DEFINITION OF DONE
+=====================================================================
+  Suggested commits (each one pushed, each small and testable):
+    1  config: DATA_DIR + clean requirements-prod.txt          (Phase 1.1-1.2)
+    2  guard tkinter imports; progress.jsonl                   (1.3-1.4)
+    3  api skeleton: /health, db, jobs table                   (2.1-2.2)
+    4  job runner with subprocess + SSE + cancel + recovery    (2.3-2.4)
+    5  URL safety + access code + rate limit                   (2.5-2.6)
+    6  webhuman channel: pipeline side                         (3.1)
+    7  human endpoints + watcher                               (3.1)
+    8  report.json export + report endpoint                    (6.1-6.2)
+    9  front-end: new run + run page + human modal             (6.3 a,b)
+   10  front-end: report page, downloads, print stylesheet     (6.3 c, 6.5)
+   11  Dockerfile, .dockerignore, compose, Caddyfile           (Phase 4)
+   12  volume docs, backup script, retention job               (Phase 5)
+   13  CI: build + smoke test                                  (7.6)
+   14  deploy to the VPS, backups, monitoring                  (Phase 8)
+   15  sites page, flow approve/reject UI, share links         (6.3 d,e)
+
+  Done when:
+    [ ] A stranger-proof flow: paste URL -> watch progress -> answer a
+        CAPTCHA/login in the browser -> read the report on the site.
+    [ ] `docker compose down && up` keeps jobs, reports and saved sessions.
+    [ ] A private-IP or localhost URL is refused.
+    [ ] The Word file and the web report show the same numbers.
+    [ ] No secret in the image, the repo, or any downloadable path.
+    [ ] Restarting the server mid-run marks the job failed, not stuck.
+    [ ] Backup restore tested once on a fresh machine.
+
+  Testing rule carried over from the project: while developing, run the
+  pipeline on tiny sites only (<= 3 URLs) and never auto-run the full suite.
+
+KNOWN RISKS / OPEN QUESTIONS
+  - The LLM host reachability and cost per run (Phase 0.1).
+  - CAPTCHAs that expire quickly: the human round trip via the web is slower
+    than the desktop window; may need a longer timeout and a refresh button.
+  - Sites that block data-centre IP addresses (a VPS is not a home connection).
+    Some sites will show bot walls only for the hosted version.
+  - Running one browser at a time limits throughput; scaling later means a
+    real job queue (Redis + worker containers) - deliberately out of scope.
+  - Legal/consent for testing third-party sites (Phase 7.5).

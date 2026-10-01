@@ -162,6 +162,19 @@ _RUNTIME_NAMES = {
     "action_evidence", "observation_evidence", "open_page", "evidence_dir",
 }
 
+def _dead_conditional(tree: ast.AST) -> str | None:
+    """A literal `if True`/`if False` (as a statement or a ternary) always takes the same branch - a sign the
+    generator (or a repair pass) meant to keep or drop a step and instead left dead code that silently never runs,
+    or always runs, the wrapped action. Found live: a spec wrapped a "click Search" step in `... if False else
+    None`, silently skipping the click while still asserting the navigation only that click could cause."""
+    for node in ast.walk(tree):
+        test = node.test if isinstance(node, (ast.If, ast.IfExp)) else None
+        if isinstance(test, ast.Constant) and isinstance(test.value, bool):
+            return (f"dead conditional at line {node.lineno}: `if {test.value}` never varies - remove the "
+                    "conditional instead of leaving a branch that silently never runs")
+    return None
+
+
 def _module_bindings(tree: ast.AST) -> set[str]:
     bound: set[str] = set()
     for node in getattr(tree, "body", []):
@@ -442,6 +455,9 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     empty = _empty_verify(tree)
     if empty:
         raise SpecError(empty)
+    dead = _dead_conditional(tree)
+    if dead:
+        raise SpecError(dead)
     undefined = _undefined_names(tree)
     if undefined:
         raise SpecError(undefined)

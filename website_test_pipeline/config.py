@@ -4,7 +4,9 @@ from urllib.parse import urlsplit
 import os
 from dotenv import load_dotenv
 
-load_dotenv(override=True)  # .env is the source of truth, even over a stale shell env
+# .env is the source of truth, even over a stale shell env - except for a run the web API started (WTP_JOB=1),
+# whose per-job SEED_URL / SITE / DATA_DIR arrive in the environment and must not be overwritten by a local .env
+load_dotenv(override=os.getenv("WTP_JOB") != "1")
 
 ROOT = Path(__file__).resolve().parents[1]
 # Where per-site workspaces live. DATA_DIR lets a deployment (a Docker volume) keep them off the code folder;

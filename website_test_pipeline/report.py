@@ -906,6 +906,13 @@ def _relative_artifact(path: str | None, base: Path | None) -> str:
         return path
 
 
+# Severity reflects confidence that something is actually broken, not urgency (see _priority for that). A flow
+# whose last real check failed is a genuine signal; one that merely couldn't be verified, couldn't run, or is
+# waiting on a CAPTCHA/sign-in is not evidence of a defect at all, so it must not read as "High" like a real bug.
+_UNVERIFIED_SEVERITY = {"failed_last_check": "High", "inconclusive": "Medium", "blocked_flow": "Medium",
+                        "human_input_required": "Low", "authentication_required": "Low"}
+
+
 def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict[str, Any]]:
     """Build one complete, auditable defect/blocker object per failure and blocked flow."""
     records: list[dict[str, Any]] = []
@@ -976,9 +983,11 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
 
     for flow in run.untested_flows:
         failed_check = flow.verify_failed         # its last real check failed: a failure, not merely "could not run"
+        failure_class = ("failed_last_check" if failed_check else "human_input_required" if flow.needs_person else
+                         "inconclusive" if flow.inconclusive else "blocked_flow")
         record = {
             "id": f"{'BUG' if failed_check else 'BLOCK'}-{number:03d}",
-            "severity": "High",
+            "severity": _UNVERIFIED_SEVERITY.get(failure_class, "High"),
             "title": _shorten(_plain_flow_title(flow.title), 160),
             "description": f"This user journey has no test result in this run: {flow.not_run_reason}.",
             "steps_to_reproduce": [f"Open {flow.start_url}.", f"Attempt journey {flow.flow_id}."],
@@ -988,8 +997,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             "status": "Open",
             "owner": "Unassigned",
             "linked_flow_id": flow.flow_id,
-            "failure_class": ("failed_last_check" if failed_check else "human_input_required" if flow.needs_person else
-                              "inconclusive" if flow.inconclusive else "blocked_flow"),
+            "failure_class": failure_class,
             "scope": "flow",
             "business_impact": f'Visitors cannot be shown to complete "{_shorten(_plain_flow_title(flow.title), 80)}" from {_page_of(flow.start_url)}; until it has a passing test, releasing carries that risk.',
             "blocking": not failed_check,
@@ -1003,7 +1011,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
             continue
         records.append({
             "id": f"BLOCK-{number:03d}",
-            "severity": "High",
+            "severity": _UNVERIFIED_SEVERITY["human_input_required"],
             "title": f'A person is needed to complete the form at {_page_of(page["url"])}',
             "description": page.get("detail", "A human-only step was detected."),
             "steps_to_reproduce": [f'Open {page["url"]}.', f'Complete the {page["reason"]} step manually.'],
@@ -1026,7 +1034,7 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
     for wall in run.untested_auth:
         records.append({
             "id": f"BLOCK-{number:03d}",
-            "severity": "High",
+            "severity": _UNVERIFIED_SEVERITY["authentication_required"],
             "title": "Authentication required before protected pages can be tested",
             "description": "A login or sign-up form was found, so content behind it was not exercised.",
             "steps_to_reproduce": [f'Open {wall["url"]}.', "Sign in or create the account required by the form."],
@@ -1084,10 +1092,22 @@ def _coverage_gaps(run: RunReport) -> list[dict[str, str]]:
     return gaps
 
 
+def _condition_for(d: dict[str, Any]) -> str:
+    """The right next action for a defect - "resolve and rerun" only fits a confirmed bug. A flow that could not be
+    verified needs a manual check or a better outcome check, not a code fix; one that needs a person (CAPTCHA,
+    sign-in) needs exactly what its own mitigation already says, not a generic "resolve"."""
+    if d.get("mitigation"):
+        return d["mitigation"]
+    if d.get("failure_class") in {"inconclusive", "blocked_flow"}:
+        return (f"Confirm {d['id']} ({d['title']}) with a manual check, or give it an outcome check so a future "
+                "run can verify it automatically, before release.")
+    return f"Resolve {d['id']} ({d['title']}) and rerun the affected check."
+
+
 def _release_decision(run: RunReport, defects: list[dict[str, Any]], gaps: list[dict[str, str]]) -> tuple[str, list[str]]:
     if run.failed or any(d["status"] == "Open" for d in defects):
-        return "NO-GO", [f"Resolve {d['id']} ({d['title']}) and rerun the affected check." for d in defects if d["status"] == "Open"]
-    conditions = [f"Complete {d['id']} ({d['title']}) or formally accept the remaining test risk." for d in defects if d.get("blocking")]
+        return "NO-GO", [_condition_for(d) for d in defects if d["status"] == "Open"]
+    conditions = [_condition_for(d) for d in defects if d.get("blocking")]
     conditions.extend(f"Review {gap['id']} ({gap['page']}) before release." for gap in gaps[:5])
     if conditions:
         return "CONDITIONAL GO", conditions
