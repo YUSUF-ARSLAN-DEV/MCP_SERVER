@@ -105,6 +105,54 @@ class Database:
                 "WHERE status IN ('running','needs_human')", (now(),))
         return cur.rowcount
 
+    # ---- questions for a person ---------------------------------------------------------------------------------
+    # state: open (waiting for the person) -> answered (the run has not picked it up yet) -> closed (the run is done with it)
+    def add_human_request(self, job_id: str, seq: int, kind: str, payload: dict) -> None:
+        with self._conn() as conn:
+            conn.execute("INSERT OR IGNORE INTO human_requests (job_id, seq, kind, payload, created_at) VALUES (?,?,?,?,?)",
+                         (job_id, seq, kind, json.dumps(payload), now()))
+
+    def get_human_request(self, job_id: str, seq: int | None = None, state: str | None = "open") -> dict | None:
+        """One request of the job: `seq`, or the newest open one. state=None accepts any state."""
+        sql, args = "SELECT * FROM human_requests WHERE job_id = ?", [job_id]
+        if seq is not None:
+            sql, args = sql + " AND seq = ?", args + [seq]
+        if state is not None:
+            sql, args = sql + " AND state = ?", args + [state]
+        with self._conn() as conn:
+            row = conn.execute(sql + " ORDER BY seq DESC LIMIT 1", args).fetchone()
+        if row is None:
+            return None
+        found = dict(row)
+        found["payload"] = json.loads(found["payload"])
+        return found
+
+    def human_requests(self, job_id: str, states: tuple = ("open", "answered")) -> list[dict]:
+        marks = ",".join("?" for _ in states)
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT seq, state FROM human_requests WHERE job_id = ? AND state IN ({marks}) ORDER BY seq",
+                                (job_id, *states)).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_human_state(self, job_id: str, seq: int, state: str, answer: str = "") -> None:
+        """`answer` is only ever the action taken (submit / skip), never what the person typed."""
+        with self._conn() as conn:
+            conn.execute("UPDATE human_requests SET state = ?, answer = ?, answered_at = ? WHERE job_id = ? AND seq = ?",
+                         (state, answer, now(), job_id, seq))
+
+    def close_human_requests(self, job_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute("UPDATE human_requests SET state = 'closed' WHERE job_id = ? AND state != 'closed'", (job_id,))
+
+    def sync_waiting(self, job_id: str) -> None:
+        """The job is `needs_human` exactly while a question is open, and `running` otherwise."""
+        with self._conn() as conn:
+            waiting = conn.execute("SELECT COUNT(*) FROM human_requests WHERE job_id = ? AND state = 'open'", (job_id,)).fetchone()[0]
+            if waiting:
+                conn.execute("UPDATE jobs SET status = 'needs_human' WHERE id = ? AND status = 'running'", (job_id,))
+            else:
+                conn.execute("UPDATE jobs SET status = 'running' WHERE id = ? AND status = 'needs_human'", (job_id,))
+
     # ---- limits -----------------------------------------------------------------------------------------------
     def active_jobs_for(self, user_id: str) -> int:
         marks = ",".join("?" for _ in ACTIVE)

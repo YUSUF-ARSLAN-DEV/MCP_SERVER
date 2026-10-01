@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
+import shutil
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -14,14 +17,27 @@ from fastapi.staticfiles import StaticFiles
 from . import security
 from .db import ACTIVE, TERMINAL, Database
 from .jobs import JobRunner, site_name
-from .models import JobCreate, JobOut, Login
+from .models import HumanAnswerIn, JobCreate, JobOut, Login
 from .security import UrlRejected
 from .settings import AppSettings
 
 COOKIE = "wtp_session"
 # files a visitor may download from a run folder: results and evidence, never saved logins or credentials
 _DOWNLOADABLE = {".docx", ".pdf", ".png", ".jpg", ".jpeg", ".json", ".log", ".txt", ".md", ".zip"}
-_PRIVATE_PARTS = {"auth", "secrets", ".env"}
+_PRIVATE_PARTS = {"auth", "secrets", ".env", "human"}
+
+
+def _atomic_write(path: Path, data: bytes, private: bool = False) -> None:
+    """Write so the run never reads half a file; a typed answer is readable by this user only."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    if private:
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+    os.replace(tmp, path)
 
 
 def downloadable(run_dir: Path, relative: str) -> Path | None:
@@ -128,6 +144,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         job_or_404(job_id)
         if db.cancel_job(job_id):
             runner.cancel(job_id)
+            db.close_human_requests(job_id)
         return JobOut.of(db.get_job(job_id))
 
     @app.get("/api/jobs/{job_id}/events", dependencies=[Depends(require_access)])
@@ -163,6 +180,68 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         if target is None:
             raise HTTPException(404, "No such file.")
         return FileResponse(target, filename=target.name)
+
+    # ---- a person is needed: a CAPTCHA code or sign-in details (the run asks, the web page answers) ---------------
+    def question_view(job_id: str, row: dict) -> dict:
+        payload = row["payload"]
+        created = datetime.fromisoformat(payload.get("created_at") or row["created_at"])
+        return {**payload, "seq": row["seq"], "kind": row["kind"], "state": row["state"],
+                "expires_at": (created + timedelta(seconds=int(payload.get("timeout_s") or 0))).isoformat(timespec="seconds"),
+                "image": f"/api/jobs/{job_id}/human/{row['seq']}/image" if payload.get("has_image") else None}
+
+    @app.get("/api/jobs/{job_id}/human", dependencies=[Depends(require_access)])
+    def open_question(job_id: str):
+        """The question the run is waiting on, or {"request": null}. Never carries anything a person typed."""
+        job_or_404(job_id)
+        row = db.get_human_request(job_id)
+        return {"request": question_view(job_id, row) if row else None}
+
+    @app.get("/api/jobs/{job_id}/human/{seq}/image", dependencies=[Depends(require_access)])
+    def question_image(job_id: str, seq: int):
+        run_dir = Path(job_or_404(job_id)["run_dir"])
+        image = run_dir / "human" / f"request-{seq}.png"
+        if db.get_human_request(job_id, seq, state=None) is None or not image.is_file():
+            raise HTTPException(404, "No such picture.")
+        return FileResponse(image, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/jobs/{job_id}/human", dependencies=[Depends(require_access)])
+    def answer_question(job_id: str, body: HumanAnswerIn):
+        run_dir = Path(job_or_404(job_id)["run_dir"])
+        row = db.get_human_request(job_id, body.seq, state=None) if body.seq is not None else db.get_human_request(job_id)
+        if row is None:
+            raise HTTPException(404, "Nothing is waiting for an answer.")
+        if row["state"] != "open":
+            raise HTTPException(409, "That question was already answered or has ended.")
+        payload, seq, folder = row["payload"], row["seq"], run_dir / "human"
+        if body.action == "refresh":
+            if not payload.get("can_reload"):
+                raise HTTPException(422, "This page has no way to show a different image.")
+            _atomic_write(folder / f"refresh-{seq}.flag", b"")
+            return {"ok": True}
+        allowed = {f.get("key") or f.get("selector") for f in payload.get("fields") or []}
+        if set(body.values) - allowed or any(len(v) > 1000 for v in body.values.values()):
+            raise HTTPException(422, "Those answers do not match the fields that were asked for.")
+        if body.action == "submit" and not (body.code.strip() if row["kind"] == "captcha" else any(body.values.values())):
+            raise HTTPException(422, "Type the code from the image, or skip." if row["kind"] == "captcha"
+                                else "Fill in the details, or skip.")
+        answer = {"action": body.action}
+        if body.action == "submit":
+            answer.update(code=body.code, values=body.values)
+        _atomic_write(folder / f"answer-{seq}.json", json.dumps(answer).encode("utf-8"), private=True)
+        db.set_human_state(job_id, seq, "answered", body.action)            # the action only - never what was typed
+        db.sync_waiting(job_id)
+        return {"ok": True}
+
+    @app.delete("/api/jobs/{job_id}/session", dependencies=[Depends(require_access)])
+    def forget_login(job_id: str):
+        """Delete the sign-in this site's run saved (runs/<site>/auth/), so the next run asks again."""
+        job = job_or_404(job_id)
+        if job["status"] in ACTIVE:
+            raise HTTPException(409, "Wait for the run to finish first.")
+        folder = Path(job["run_dir"]) / "auth"
+        existed = folder.is_dir()
+        shutil.rmtree(folder, ignore_errors=True)
+        return {"removed": existed}
 
     static = Path(__file__).resolve().parents[1] / "static"
     if static.is_dir():                                    # the built front-end, when there is one

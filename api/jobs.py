@@ -103,7 +103,36 @@ class JobRunner:
         })
         if options.get("probe_max") is not None:
             env["EXPLORE_PROBE_MAX"] = str(options["probe_max"])
+        if options.get("ask_human", True):       # a CAPTCHA or login wall is put to the person on the web page
+            env.update({"HUMAN_CHANNEL": "web", "WTP_HUMAN_DIR": str(Path(job["run_dir"]) / "human")})
+        else:                                    # unattended: such steps are skipped and reported as needing a person
+            env["HUMAN_CHANNEL"] = "off"
         return env
+
+    def sync_human(self, job_id: str, run_dir: Path) -> None:
+        """Mirror the run's questions (human/request-N.json) into the database, and the job status with them."""
+        folder = Path(run_dir) / "human"
+        for path in sorted(folder.glob("request-*.json")):
+            seq = path.stem.split("-", 1)[1]
+            if not seq.isdigit():
+                continue
+            if not self.db.get_human_request(job_id, int(seq), state=None):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                self.db.add_human_request(job_id, int(seq), payload.get("kind", "captcha"), payload)
+        for row in self.db.human_requests(job_id):
+            if (folder / f"closed-{row['seq']}.json").is_file():
+                self.db.set_human_state(job_id, row["seq"], "closed", "")
+        self.db.sync_waiting(job_id)
+
+    def _finish_human(self, job_id: str, run_dir: Path) -> None:
+        """The run is over: no question is open any more, and no typed answer may be left on disk."""
+        self.sync_human(job_id, run_dir)
+        self.db.close_human_requests(job_id)
+        for leftover in (Path(run_dir) / "human").glob("answer-*.json*"):
+            leftover.unlink(missing_ok=True)
 
     async def _loop(self) -> None:
         while True:
@@ -136,6 +165,7 @@ class JobRunner:
                     except asyncio.TimeoutError:
                         pass
                     shown = self._sync_progress(job["id"], run_dir, shown)
+                    self.sync_human(job["id"], run_dir)
                     if time.monotonic() - started > self.settings.job_timeout_s and proc.returncode is None:
                         timed_out = True
                         kill_tree(proc)
@@ -145,6 +175,7 @@ class JobRunner:
                 if proc.returncode is None:
                     kill_tree(proc)           # the worker itself was stopped
         self._sync_progress(job["id"], run_dir, shown)
+        self._finish_human(job["id"], run_dir)
         if timed_out:
             self.db.finish_job(job["id"], "failed", f"The run passed its time limit ({self.settings.job_timeout_s} seconds) and was stopped.")
         elif proc.returncode in _FINISHED_CODES:
