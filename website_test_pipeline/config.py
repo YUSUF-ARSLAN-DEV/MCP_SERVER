@@ -7,7 +7,10 @@ from dotenv import load_dotenv
 load_dotenv(override=True)  # .env is the source of truth, even over a stale shell env
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNS = ROOT / "runs"
+# Where per-site workspaces live. DATA_DIR lets a deployment (a Docker volume) keep them off the code folder;
+# unset, it is the repo itself, so a local checkout behaves exactly as before.
+DATA_DIR = Path(os.getenv("DATA_DIR", "").strip() or ROOT)
+RUNS = DATA_DIR / "runs"
 
 def _int(name: str, default: int, minimum: int, maximum: int) -> int:
     value = int(os.getenv(name, default))
