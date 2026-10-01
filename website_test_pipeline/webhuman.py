@@ -37,6 +37,11 @@ def active() -> bool:
     return os.environ.get("HUMAN_CHANNEL", "").strip().lower() == "web" and human_dir() is not None
 
 
+def disabled() -> bool:
+    """HUMAN_CHANNEL=off: nobody may be asked, not even through a desktop window (a hosted run that was told not to)."""
+    return os.environ.get("HUMAN_CHANNEL", "").strip().lower() == "off"
+
+
 def timeout_s() -> int:
     try:
         return max(10, int(os.environ.get("WTP_HUMAN_TIMEOUT_S", "") or DEFAULT_TIMEOUT_S))

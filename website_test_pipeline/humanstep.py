@@ -187,6 +187,8 @@ def can_ask() -> tuple[bool, str]:
     if _declined:
         return False, "it was skipped earlier in this run, so it is not asked again"
     from . import webhuman
+    if webhuman.disabled():
+        return False, "turned off for this run (HUMAN_CHANNEL=off)"
     if webhuman.active():
         return True, "a person can answer on the web page"
     from .authpopup import is_interactive

@@ -71,6 +71,8 @@ def should_ask(auth_mode: str, kind: str, has_session: bool, interactive: bool) 
 
 def is_interactive() -> bool:
     from . import webhuman
+    if webhuman.disabled():
+        return False
     if webhuman.active():                  # a person on the web page counts: it is the hosted version's window
         return True
     if not sys.stdin or not sys.stdin.isatty():

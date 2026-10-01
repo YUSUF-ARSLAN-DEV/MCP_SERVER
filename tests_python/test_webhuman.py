@@ -50,6 +50,13 @@ def test_a_person_on_the_web_page_counts_as_someone_there(folder):
     assert humanstep.can_ask() == (True, "a person can answer on the web page")
 
 
+def test_off_means_nobody_is_asked_even_where_a_desktop_window_could_open(monkeypatch):
+    monkeypatch.setenv("HUMAN_CHANNEL", "off")
+    monkeypatch.setattr(authpopup.sys, "stdin", type("Tty", (), {"isatty": lambda self: True})())
+    assert authpopup.is_interactive() is False
+    assert humanstep.can_ask()[0] is False
+
+
 def test_a_captcha_is_asked_with_the_prefilled_form_and_the_answer_comes_back(folder):
     fields = [{"selector": "#name", "label": "Name", "type": "text"},
               {"selector": "#country", "label": "Country", "type": "select", "options": ["Pick", "Egypt"], "placeholder": "Pick"}]
