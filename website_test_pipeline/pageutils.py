@@ -24,6 +24,37 @@ _CONTAINERS = (
 )
 
 
+def visible_among(page, loc, count: int):
+    """Among several matches, the one actually visible right now - not a frozen DOM position. Several
+    elements can share a selector or accessible name (one "Next" per step of a multi-step wizard, shown and
+    hidden by CSS as it advances); found live, a plain .first kept targeting a step's button even after a
+    prior step made it stop being the one on screen, and timed out instead of clicking the one actually
+    showing. loc.and_(page.locator(":visible")) stays lazy, so Playwright re-checks which match is visible
+    on every actionability retry - a frozen index (loc.nth(i)) was tried first and still failed
+    intermittently, because the page can re-render again between lookup and the click landing. The single
+    implementation shared by resolve_locator() below and the live-flow runner's control lookup."""
+    if count <= 1:
+        return loc.first
+    visible = loc.and_(page.locator(":visible"))
+    try:
+        return visible if visible.count() else loc.first
+    except Exception:
+        return loc.first
+
+
+def resolve_locator(page, selector: str):
+    """What a generated spec calls instead of page.locator(selector).first, so a step rendered into a test
+    file gets the same "prefer the visible match" behavior as the live flow runner (see visible_among)."""
+    loc = page.locator(selector)
+    return visible_among(page, loc, loc.count())
+
+
+def resolve_role(page, role: str, **kwargs):
+    """What a generated spec calls instead of page.get_by_role(role, ...).first - see resolve_locator."""
+    loc = page.get_by_role(role, **kwargs)
+    return visible_among(page, loc, loc.count())
+
+
 def settle_page(page, timeout: int = 8000) -> None:
     """Give a page a bounded chance to reach the 'load' state.
 

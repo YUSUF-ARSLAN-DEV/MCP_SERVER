@@ -48,9 +48,9 @@ def test_navigating_flow_becomes_a_valid_strict_spec():
     source, reason = emit_flow_spec(_flow(), [_inventory(controls=[SELECT, SEARCH])])
     assert reason == "" and source.startswith(MARKER)
     ast.parse(source)
-    assert "page.locator('#countrylist').first" in source
+    assert "resolve_locator(page, '#countrylist')" in source
     assert "select_option(label='Afghanistan')" in source
-    assert "page.get_by_role('button', name=re.compile(" in source and "Search" in source   # tolerant of icon-font glyphs
+    assert "resolve_role(page, 'button', name='Search', exact=True)" in source
     assert "/en/results" in source and "to_have_url" in source
     assert "get_by_role('heading', name='Results for your country', exact=True)" in source
     assert source.count("action_evidence(") == 2  # one per step

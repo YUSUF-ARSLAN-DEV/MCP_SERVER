@@ -23,7 +23,7 @@ from .autorepair import _ICON_GLYPHS as ICON_GLYPHS
 from .secretrefs import is_ref, needs_fresh_session, resolve
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
 from .humanstep import solve_before_submit
-from .pageutils import dismiss_overlays, pick_option, settle_page, wait_for_loaders
+from .pageutils import dismiss_overlays, pick_option, settle_page, visible_among, wait_for_loaders
 from .ratings import append_rating, derive_status, load_ratings, save_ratings
 
 # What the browser says when it could not reach the site at all (not when a flow broke): DNS failure, no
@@ -363,24 +363,6 @@ def _visible_controls(page) -> list[dict]:
         return []
 
 
-def _first_visible(page, loc, count: int):
-    """Among several matches, the one actually on screen - not a frozen DOM position. Several elements can
-    share a selector or an accessible name (one "Next" per step of a multi-step wizard, shown and hidden by
-    CSS as it advances). A first attempt here used loc.nth(i), picked once at lookup time - found live, that
-    still intermittently failed: the wizard can re-render again between lookup and the click actually
-    landing (Playwright retries a click for up to its timeout), so a position picked once can go stale
-    before the click fires. loc.and_(page.locator(":visible")) instead stays lazy: Playwright re-evaluates
-    it on every retry, so it keeps tracking whichever match is visible right now, not whichever was visible
-    when _locate ran."""
-    if count <= 1:
-        return loc.first
-    visible = loc.and_(page.locator(":visible"))
-    try:
-        return visible if visible.count() else loc.first
-    except Exception:
-        return loc.first
-
-
 def _by_role(page, role: str, name: str):
     """Find by role and accessible name exactly as the generated spec does: the whole name, or - for a name stored
     cut at 40 characters - its start. (Substring matching here would let a renamed control pass verify while the
@@ -395,9 +377,9 @@ def _by_role(page, role: str, name: str):
         tolerant = re.compile("^" + ICON_GLYPHS + re.escape(name) + ICON_GLYPHS + "$")
     count = strict.count()
     if count:
-        return _first_visible(page, strict, count)
+        return visible_among(page, strict, count)
     loc = page.get_by_role(role, name=tolerant)
-    return _first_visible(page, loc, loc.count())
+    return visible_among(page, loc, loc.count())
 
 
 def _locate(page, step: dict):
@@ -406,7 +388,7 @@ def _locate(page, step: dict):
         count = loc.count()
         if count == 0:
             return None
-        return _first_visible(page, loc, count)
+        return visible_among(page, loc, count)
     name = (step.get("name") or "").strip()
     if step.get("role") and name:                       # a role recorded by healing, or by whoever wrote the step
         loc = _by_role(page, step["role"], name)

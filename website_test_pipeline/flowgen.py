@@ -88,15 +88,19 @@ def _name_args(name: str) -> str:
 
 
 def _locator(step: dict, pool: list[dict]) -> tuple[str | None, str]:
+    # resolve_locator/resolve_role (pageutils) prefer whichever match is actually visible when more than one
+    # element shares this selector or accessible name (one "Next" per step of a multi-step wizard, shown and
+    # hidden by CSS as it advances) - a plain .first found live to keep targeting a step that stopped being
+    # the one on screen.
     if step.get("selector"):
-        return f"page.locator({_lit(step['selector'])}).first", ""
+        return f"resolve_locator(page, {_lit(step['selector'])})", ""
     name = (step.get("name") or "").strip()
     if not name:
         return None, "a step has neither a selector nor a name"
     role = step.get("role") or _resolve_role(name, pool)
     if role is None:
         return None, f'cannot tell the role of "{name}" from the explored pages'
-    return f"page.get_by_role({_lit(role)}, {_name_args(name)}).first", ""
+    return f"resolve_role(page, {_lit(role)}, {_name_args(name)})", ""
 
 
 def _target_slug(step: dict) -> str:
@@ -318,7 +322,7 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
         "from playwright.sync_api import Page, expect",
         "from website_test_pipeline.evidence import action_evidence, observation_evidence",
         "from website_test_pipeline.humanstep import human_step",
-        "from website_test_pipeline.pageutils import open_page, pick_option",
+        "from website_test_pipeline.pageutils import open_page, pick_option, resolve_locator, resolve_role",
         *(["from website_test_pipeline.secretrefs import secret"] if uses_env else []), "",
         f"URL = {_lit(flow['start_url'])}", "", "",
         "def _open(page: Page) -> None:", "    open_page(page, URL)", "", "",
