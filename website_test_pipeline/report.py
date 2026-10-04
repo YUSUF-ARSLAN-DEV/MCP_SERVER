@@ -924,8 +924,15 @@ def _defect_records(run: RunReport, report_dir: Path | None = None) -> list[dict
         finding = _finding_for(run, flow.title if flow else outcome.title, outcome.url, scope)
         test_id = key
         title = _plain_flow_title(flow.title) if flow else outcome.title.replace("_", " ")
+        # outcome.assertions is every expect()/assert in the spec's source, in source order - not an execution
+        # trace, so it does not know which one actually failed. For a multi-step test the earlier ones are the
+        # per-step checks that ran and passed (the test only gets this far if they did); the LAST one in source
+        # order is the closest available guess at the check "expected" should actually describe. Using [0]
+        # here produced a confirmed real mismatch: a test that selects a country then clicks Search showed
+        # "expected: It should not be left empty" (the select step's own check) against an "actual" describing
+        # the navigation failure that happened at the later, real point of failure.
         expected = (flow.expected if flow and flow.expected else
-                    (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "The check completes as specified."))
+                    (_plain_assertion(outcome.assertions[-1]) if outcome.assertions else "The check completes as specified."))
         actual = plain_error(outcome.error) if outcome.error else "The test failed without a captured reason."
         evidence = (outcome.evidence or outcome.screenshots or [None])[0]
         trace = next((a for a in outcome.attachments if a.lower().endswith(".zip")), None)
@@ -1298,10 +1305,13 @@ def _write_execution_chart(report_dir: Path, counts: dict[str, Any]) -> Path | N
 def _risks_section(document, run: RunReport, report_data: dict[str, Any], *, lean: bool = False) -> None:
     document.add_heading("Risks & Issues", 1)
     defects = report_data["defects"]
-    blockers = [d for d in defects if d.get("blocking") or d["severity"] in {"Critical", "High"}]
+    # Same "blocking" flag the Defect Report itself uses - found live: this used to also pull in every
+    # High/Critical-severity defect, so this count (17) never matched the "blocking" field readers could
+    # see on each defect record (15), with no explanation of why they differed. One flag, one count.
+    blockers = [d for d in defects if d.get("blocking")]
     document.add_heading("Blockers", 2)
     if lean:
-        document.add_paragraph(f"{len(blockers)} release blocker(s) are listed with their impact in the Defect Report above; they are not repeated here.")
+        document.add_paragraph(f"{len(blockers)} of the {len(defects)} recorded defects are release blockers; they are listed with their impact in the Defect Report above and not repeated here.")
     elif blockers:
         for defect in blockers:
             document.add_paragraph(f'{defect["id"]}: {defect["title"]} — {defect["business_impact"]}', style="List Bullet")
@@ -1322,8 +1332,12 @@ def _risks_section(document, run: RunReport, report_data: dict[str, Any], *, lea
     notes = [_plain_warning(w)[1] for w in run.warnings]
     if run.auth_lines:
         notes.extend(f"Authentication: {line}" for line in run.auth_lines)
-    if run.human_input_pages:
-        notes.append(f"Needs a human - {len(run.human_input_pages)} form step(s) require manual completion; those steps were not automated.")
+    human_input_defects = [d for d in defects if d.get("failure_class") == "human_input_required"]
+    if human_input_defects:
+        # Counts the same defect records the Defect Report lists (human_input_required), not run.human_input_pages
+        # directly - found live: that undercounted (2, one per page) against the Defect Report's real total (4,
+        # since a flow attempt blocked by the same CAPTCHA gets its own record alongside the page-level one).
+        notes.append(f"Needs a human - {len(human_input_defects)} form step(s) require manual completion; those steps were not automated.")
     if run.untested_auth:
         notes.append(f"Not tested - {len(run.untested_auth)} login or sign-up form(s) found; content behind them was not exercised.")
         for wall in run.untested_auth:
