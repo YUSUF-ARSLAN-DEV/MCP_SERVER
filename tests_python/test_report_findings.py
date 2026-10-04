@@ -98,8 +98,8 @@ def test_the_combined_report_leads_with_a_findings_section(tmp_path):
     headings = [p.text for p in doc.paragraphs if p.style.name.startswith("Heading")]
     assert headings.index("Defect Report (Bugs Found)") < headings.index("Test Coverage / Requirements Traceability")
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
-    for part in ("Defects and blockers", "Browser", "Operating system", "Python", "Medium",
-                             "1 recorded defect or blocker(s)", "Flow coverage", "Content controls a tested flow acts on",
+    for part in ("Tooling issues", "Browser", "Operating system", "Python", "Low",
+                 "1 test defect(s)", "Flow coverage", "Content controls a tested flow acts on",
                  "Tests run", "Journeys with no result", "Pass rate", "User journeys passed"):
         assert part in joined, part
     lines = _text(tmp_path / "report" / "full-report.docx")
@@ -134,14 +134,34 @@ def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verd
     assert flow_row[5] and flow_row[5] != "(never ran)"
 
 
-def test_the_failing_test_is_listed_before_the_passing_ones(tmp_path):
+def test_a_wrong_test_is_a_test_defect_and_not_in_the_failure_count(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
-    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Test ID", "Defect", "Scope", "Test name", "URL", "Expected", "Observed", "Result"])
-    verdicts = [r.cells[7].text for r in table.rows[1:]]
-    assert verdicts[0] == "FAILED" and verdicts.count("FAILED") == 1
-    assert all(v == "PASSED" for v in verdicts[1:])
+    # the fixture's failing page test asserts a role the page never had: the TEST is wrong, not the application
+    assert not [t for t in doc.tables if [c.text for c in t.rows[0].cells][:2] == ["Test ID", "Defect"]]
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "0 application defects found this run." in joined
+    assert "2 tests ran (0 page + 2 flow): 2 passed and 0 failed." in joined
+
+
+def test_a_real_failure_is_a_defect_a_high_one_means_no_go_and_it_is_in_the_attention_table(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    for row in results["tests"]:
+        if "test_flow_good" in row["nodeid"]:
+            row.update(status="failed", error="E   AssertionError: Page URL expected to be 'https://x.test/en/find'\nE   Actual value: https://x.test/en")
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert joined.count("1 application defect found this run.") >= 1
+    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells][:3] == ["ID", "Severity", "Priority"] and "Title" in [c.text for c in t.rows[0].cells])
+    row = table.rows[1]
+    assert row.cells[0].text == "DEF‑001" and row.cells[1].text == "High" and row.cells[2].text == "P1"
+    assert "Release decision: NO-GO" in joined
+    attention = next(t for t in doc.tables if [c.text for c in t.rows[0].cells][:2] == ["Test ID", "Defect"])
+    assert [r.cells[7].text for r in attention.rows[1:]] == ["FAILED"]
 
 
 def test_a_page_test_with_no_captured_assertion_says_so_plainly(tmp_path):
@@ -189,14 +209,14 @@ def test_a_login_wall_is_reported_as_not_tested(tmp_path):
             {"type": "email", "label": "Email"}, {"type": "password", "label": "Password"}]}]}), encoding="utf-8")
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
-    assert "Not tested - 1 login or sign-up form(s) found" in joined
+    assert "1 login or sign-up form(s) found" in joined and "Sign-in walls" in joined
     assert "https://x.test/en/account" in joined and "Email, Password" in joined
 
 
 def test_no_login_wall_means_no_not_tested_block(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
-    assert "Not tested -" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Sign-in walls" not in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
 
 
 def test_the_report_shows_the_authentication_line_and_a_finding_when_login_never_worked(tmp_path):
@@ -208,7 +228,7 @@ def test_the_report_shows_the_authentication_line_and_a_finding_when_login_never
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     assert "Authentication:" in joined and "Could not sign in to the site" in joined
-    assert "BUG-001" in joined and "Open" in joined and "Unassigned" in joined
+    assert "UNV‑001" in joined and "Open" in joined and "Test Owner" in joined and "Unassigned" not in joined
 
 
 def test_the_report_shows_a_first_attempt_line_when_the_login_worked(tmp_path):
@@ -354,24 +374,51 @@ def test_a_skipped_test_is_excluded_from_the_pass_rate_and_failed_count(tmp_path
     create_report(artifacts, tests, tmp_path / "report", flows_file=tmp_path / "flows.json",
                  ratings_file=tmp_path / "flow_ratings.json", combined=True)
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
-    assert "3 tests ran: 2 passed and 1 failed. 1 were skipped" in joined
+    assert "2 tests ran (0 page + 2 flow): 2 passed and 0 failed. 1 were skipped by the harness and 1 were invalid" in joined
 
 
 # ------------------------------------------------------------------ Defect Report: steps to reproduce, and a
 # working link from the bug's Title straight to its own evidence in the Appendix
 
-def test_the_defect_report_has_steps_to_reproduce_and_links_to_its_own_evidence(tmp_path):
-    from docx.oxml.ns import qn
+def test_the_defect_report_has_steps_to_reproduce_and_a_reason_when_evidence_is_missing(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     doc = Document(str(tmp_path / "report" / "full-report.docx"))
-    table = next(t for t in doc.tables
-                if [c.text for c in t.rows[0].cells] == ["ID", "Severity", "Priority", "Type", "Status", "Title"])
+    table = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["ID", "Kind", "Title", "URL", "What happened", "Evidence"])
     row = table.rows[1]
-    assert row.cells[0].text == "BUG-001" and row.cells[1].text == "Medium"
+    assert row.cells[0].text == "TST‑001" and row.cells[1].text == "Test defect"
+    assert row.cells[2].text == "wizard step"                       # the full title, never cut
     detail = next(t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Field", "Details"])
     fields = {r.cells[0].text: r.cells[1].text for r in detail.rows[1:]}
     assert "Open https://x.test/en." in fields["Steps to reproduce"]
     assert "Run test tests/https-x-test-en_test.py::test_wizard_step[chromium]." in fields["Steps to reproduce"]
+    assert fields["Severity (how bad)"] == "Low" and fields["Owner"] == "Test Owner"
+    assert fields["Evidence"].startswith("No screenshot")           # no link, so the literal reason
+    assert len(fields["Due"]) == 10 and fields["Due"][4] == "-"      # an ISO date
 
-    assert fields["Evidence"] == "NOT CAPTURED"
+
+def test_the_report_is_refused_when_nobody_is_named_as_owner(tmp_path, monkeypatch):
+    import pytest
+    from website_test_pipeline.report_policy import ReportConsistencyError
+    monkeypatch.delenv("REPORT_OWNER", raising=False)
+    artifacts, tests = _workspace(tmp_path)
+    with pytest.raises(ReportConsistencyError, match="no owner"):
+        create_report(artifacts, tests, tmp_path / "report", combined=True)
+    (tmp_path / "owners.json").write_text(json.dumps({"default": "Dana Reviewer"}), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    assert "Dana Reviewer" in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+def test_a_second_run_gets_a_delta_block_with_removed_tests_and_their_reason(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    first = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "this run is the baseline" in first
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    results["finished_at"] = "later"
+    results["tests"] = [r for r in results["tests"] if "test_flow_flap" not in r["nodeid"]]
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    second = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Change since the previous run" in second and "Compared with" in second
+    assert "Tests removed" in second and "test_flow_flap" in second

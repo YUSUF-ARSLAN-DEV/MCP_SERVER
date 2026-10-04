@@ -94,6 +94,16 @@ def _process_one_url(command: str, settings, client, guide, persona, url: str, i
     with _manifest_lock:
         manifest['urls'][url] = result
 
+def _guarded_report(build, log, *args, **kwargs):
+    """A report that breaks a consistency rule (count mismatch, dangling ID, no owner ...) is refused, not emitted."""
+    from .report_policy import ReportConsistencyError
+    try:
+        return build(*args, **kwargs)
+    except ReportConsistencyError as exc:
+        log.error('REPORT REFUSED: %s', exc)
+        raise SystemExit(1)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
     parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report','auth','all'], nargs='?', default='generate')
@@ -263,7 +273,7 @@ def main() -> int:
         if args.rerun or args.repair:
             from .flowresults import feed_results
             feed_results(settings, log)
-        run = report_mod.create_report(settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined, appendix='inline' if args.inline_appendix else 'separate', flows_file=settings.flows_file, ratings_file=settings.ratings_file)
+        run = _guarded_report(report_mod.create_report, log, settings.artifacts_dir, settings.tests_dir, settings.artifacts_dir/'report', model=settings.model, combined=args.combined, appendix='inline' if args.inline_appendix else 'separate', flows_file=settings.flows_file, ratings_file=settings.ratings_file)
         log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
         for warning in run.warnings:
             log.warning('REPORT WARNING %s', warning)
