@@ -1,5 +1,6 @@
 from __future__ import annotations
-import argparse, json, logging, os, re, subprocess, sys
+import argparse, json, logging, os, re, subprocess, sys, threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -29,6 +30,50 @@ def _commit_site(settings, log, verb: str) -> None:
         log.warning('COMMIT failed: %s', exc)
 
 PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--tracing=retain-on-failure']
+
+# flows.json (record_flow does a read-modify-write with no file locking of its own) is the one piece of
+# state every concurrent page-worker touches; one lock around that call is enough to stop one page's write
+# from silently clobbering another's, same for the manifest dict every worker updates.
+_flows_lock = threading.Lock()
+_manifest_lock = threading.Lock()
+
+
+def _process_one_url(command: str, settings, client, guide, persona, url: str, i: int, total: int, log, manifest: dict) -> None:
+    """One page's explore/generate work, run inside its own thread with its own Playwright driver and
+    browser - Playwright's sync API is not safe to share across threads, so this does NOT reuse a browser
+    opened by the caller; each call here is fully self-contained. Writes manifest['urls'][url] under
+    _manifest_lock and touches flows.json only under _flows_lock."""
+    from . import progress
+    from .authflow import context_kwargs
+    progress.report(settings, 'Exploring pages' if command == 'explore' else 'Generating tests', i, total, url)
+    log.info('Processing %s', url)
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=settings.headless)
+            try:
+                context = browser.new_context(**context_kwargs(settings)); page = context.new_page()
+                page.set_default_navigation_timeout(settings.navigation_timeout_ms)
+                page.goto(url, wait_until='domcontentloaded')
+                inventory = explore(page, url, settings.explore_probe_max, log)
+                (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
+                try:
+                    with _flows_lock:
+                        record_flow(settings.flows_file, url, inventory.primary_flow, log)
+                except Exception as exc:
+                    log.warning('flows: could not record flow for %s (%s)', url, exc)
+                if command == 'generate':
+                    output = settings.tests_dir/f'{name(url)}_test.py'; generate_spec(client, guide, persona, inventory, output, log=log)
+                    result = {'status': 'generated', 'spec': str(output)}
+                else:
+                    result = {'status': 'explored'}
+                context.close()
+            finally:
+                browser.close()
+    except Exception as exc:
+        diagnosis = diagnose_error(getattr(exc, 'status', None), getattr(exc, 'body', ''), str(exc)); log.error('ROOT CAUSE url=%s diagnosis=%s', url, diagnosis)
+        result = {'status': 'failed', 'error': str(exc), 'diagnosis': diagnosis}
+    with _manifest_lock:
+        manifest['urls'][url] = result
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
@@ -209,7 +254,7 @@ def main() -> int:
     persona = (settings.root/'persona.txt').read_text(encoding='utf-8') if (settings.root/'persona.txt').exists() else ''
     manifest = {'started_at': datetime.now(timezone.utc).isoformat(), 'urls': {}}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     client = ModelClient(settings, log)
-    with sync_playwright() as pw:
+    with sync_playwright() as pw:                             # a short-lived browser just for the session pre-check
         browser = pw.chromium.launch(headless=settings.headless)
         try:
             session = ensure_session(settings, browser, settings.seed_url or urls[0], log)
@@ -217,24 +262,18 @@ def main() -> int:
                 pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
         except Exception as exc:
             log.warning('auth: could not check for a login wall (%s)', str(exc).splitlines()[0][:150])
-        from . import progress
-        for i, url in enumerate(urls):
-            progress.report(settings, 'Exploring pages' if args.command == 'explore' else 'Generating tests', i, len(urls), url)
-            log.info('Processing %s', url)
-            try:
-                context = browser.new_context(**context_kwargs(settings)); page = context.new_page(); page.set_default_navigation_timeout(settings.navigation_timeout_ms); page.goto(url, wait_until='domcontentloaded'); inventory = explore(page, url, settings.explore_probe_max, log)
-                (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
-                try:
-                    record_flow(settings.flows_file, url, inventory.primary_flow, log)
-                except Exception as exc:
-                    log.warning('flows: could not record flow for %s (%s)', url, exc)
-                if args.command == 'generate':
-                    output = settings.tests_dir/f'{name(url)}_test.py'; generate_spec(client, guide, persona, inventory, output, log=log); manifest['urls'][url] = {'status':'generated','spec':str(output)}
-                else: manifest['urls'][url] = {'status':'explored'}
-                context.close()
-            except Exception as exc:
-                diagnosis = diagnose_error(getattr(exc, 'status', None), getattr(exc, 'body', ''), str(exc)); log.error('ROOT CAUSE url=%s diagnosis=%s', url, diagnosis); manifest['urls'][url] = {'status':'failed','error':str(exc),'diagnosis':diagnosis}
-        browser.close()
+        finally:
+            browser.close()
+    # Each page gets its own thread, its own Playwright driver and its own browser (Playwright's sync API
+    # is not safe to share across threads) - set GENERATE_CONCURRENCY=1 for the old one-page-at-a-time
+    # behavior. The session pre-check above already wrote a storage_state file to disk if one was needed,
+    # so every worker's context_kwargs() picks it up independently; no in-memory state is shared.
+    concurrency = max(1, min(len(urls), int(os.environ.get('GENERATE_CONCURRENCY', '4') or '4')))
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = [pool.submit(_process_one_url, args.command, settings, client, guide, persona, url, i, len(urls), log, manifest)
+                   for i, url in enumerate(urls)]
+        for future in as_completed(futures):
+            future.result()                                   # re-raise anything _process_one_url's own try/except missed
     manifest['finished_at'] = datetime.now(timezone.utc).isoformat(); manifest['summary'] = {'total':len(urls), 'generated':sum(x['status']=='generated' for x in manifest['urls'].values()), 'failed':sum(x['status']=='failed' for x in manifest['urls'].values())}; (settings.artifacts_dir/'run.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8'); summary = manifest['summary']; log.info('RUN SUMMARY total=%s generated=%s failed=%s', summary['total'], summary['generated'], summary['failed'])
     if args.commit and args.command == 'generate':
         _commit_site(settings, log, 'generate')

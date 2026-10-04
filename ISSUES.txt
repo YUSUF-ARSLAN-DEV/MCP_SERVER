@@ -1,0 +1,166 @@
+WEBSITE TEST PIPELINE - KNOWN ISSUES & ARCHITECTURE NOTES
+Compiled 2026-10-04 from direct investigation this session (every item below was traced against real
+code or a real live run - nothing here is speculative unless explicitly marked "UNVERIFIED").
+
+====================================================================
+1. OPEN BUGS / GAPS (code-level)
+====================================================================
+
+1.1 The tunereceiver wizard flow still fails, for a NEW reason, after two rounds of fixing.
+    Status: OPEN, actively being investigated.
+    - 1st failure: a plain `.first` always took the first DOM-order match, which goes stale once
+      a wizard click moves to the next step's "Next" button. Fixed by preferring the visible match
+      (website_test_pipeline/pageutils.py: visible_among/resolve_locator/resolve_role).
+    - 2nd failure (same fix, a frozen `.nth(i)` variant of it): still failed intermittently, because the
+      page can re-render again between lookup and the click actually landing.
+    - 3rd failure, just found: Playwright's `:visible` filter now matches TWO elements at once
+      ("strict mode violation ... resolved to 2 elements") - this site's wizard does not hide inactive
+      steps via display:none/visibility:hidden/opacity:0 (which :visible checks); it appears to stack or
+      transform them off-screen instead, so two "next" inputs in two different step containers are both
+      CSS-"visible" simultaneously. A real fix needs an actual viewport-intersection check (is the
+      element's bounding rect on screen right now), not a CSS visibility check. Not yet implemented.
+
+1.2 No concurrency protection on the shared mutable files.
+    Status: OPEN, CONFIRMED LIVE this session (not theoretical).
+    - flows.json (written by record_flow on every page during generate/explore) has no locking of its
+      own - a plain read-modify-write. heuristics.json and flow_ratings.json turned out NOT to be at risk
+      for this specific change (checked directly): heuristics are configured once at startup, not written
+      per page, and flow_ratings.json is only touched by the separate verify stage, not generate/explore.
+    - Separately, and more surprising: .env's SITE/SEED_URL is itself shared, global, mutable state.
+      While investigating 1.1, a second pipeline run (a different site, started independently) overwrote
+      the shared .env's SITE/SEED_URL, which silently redirected an unrelated command (meant for one site)
+      onto the other site's tiny flow set. Confirmed by direct inspection: Settings().site returned the
+      wrong site mid-session. This is a real hazard for ANY two concurrent invocations of this CLI
+      against different sites, independent of the in-process page-concurrency work below.
+    - This is the single most concrete argument for why "run pages concurrently" (section 3.1) needs a
+      real design, not just a thread pool: the current architecture assumes exactly one process touches
+      one site's files at a time, and nothing enforces that.
+
+1.3 A flow intent can be permanently wrong and the pipeline has no way to retire it.
+    Status: OPEN.
+    - Confirmed live: clicking "Setting"/"Tune"/"Install" on the aljazeera home page does nothing at all
+      (verified with a real before/after snapshot diff - zero change in URL, headings, controls). The
+      flow intents proposing these actions are just wrong guesses by the model about what the buttons do.
+    - There is no mechanism to notice "this intent has failed verification N times across N runs" and stop
+      re-attempting it. It will be re-probed/re-verified forever, costing real time every run.
+
+1.4 Primary-flow generation and intents/expand are two separate LLM-prompt code paths with no shared
+    validation for the same class of mistake.
+    Status: PARTIALLY FIXED, audit still open.
+    - Fixed this session: website_test_pipeline/generator.py's _compact_primary_flow did not explicitly
+      instruct the model to click the action it had just probed - only named it in a passive header line -
+      so the model sometimes wrote "select a country" then "assert the URL changed" with no click between
+      them. Now an explicit "step N: click ..." instruction is added.
+    - NOT audited: the intents -> expand path (a separate LLM prompt, building concrete flow steps from a
+      plain-English sentence) may have the exact same class of gap - a step description that does not
+      explicitly force the click/submit action before describing the expected result. Not checked this
+      session.
+
+1.5 No regeneration caching.
+    Status: OPEN (efficiency, not correctness).
+    - Every full `all` run regenerates every page's test from scratch via a fresh LLM call, even when the
+      page is byte-identical to the last run. There is no "skip regeneration if the page/controls haven't
+      changed" fast path. This directly inflates the dominant cost (model latency - see
+      PIPELINE_TIMING.md section 2).
+
+1.6 Report content redundancy (partially addressed, one known leftover).
+    Status: MOSTLY FIXED. One deliberate leftover.
+    - Fixed this session: removed the "User flows" section (duplicated the Defect Report + Appendix),
+      fixed severity/status conflating "confirmed bug" with "couldn't verify"/"needs a human", fixed
+      NO-GO firing on any open item instead of only a confirmed-broken one, moved the evidence section to
+      match the report_format.txt spec exactly (9/9 sections, correct order).
+    - Left in place on purpose: "Flows without a test result in this run" (a compact Stored-status/
+      Latest-result table) still overlaps with the Defect Report's BLOCK-* entries. Judged not pure fluff
+      (it carries the "stored status" nuance the Defect Report doesn't), but it is partially redundant and
+      could be cut if a stricter report is wanted.
+
+1.7 Windows console encoding keeps producing false "corruption" scares during debugging.
+    Status: OPEN (tooling friction, not a product bug).
+    - Twice this session, a real ellipsis (U+2026) or Arabic text printed to this Windows terminal appeared
+      as "ï¿½" and looked like data corruption. Both times, checking the actual Unicode code point in the
+      file showed the data was correct - only the terminal's rendering was wrong. This will keep happening
+      to anyone debugging on this machine unless PYTHONIOENCODING=utf-8 is set globally, or diagnostics are
+      always written to a file and read back instead of printed directly.
+
+1.8 Duplicate representation of the same user journey.
+    Status: OPEN (architecture smell).
+    - The same interaction (e.g. "select a country, click Search") can exist as BOTH a primary-flow
+      page-level test (explorer-probed, simpler) AND a full intents/expand/verify/flowgen flow. Both
+      existed side by side for the aljazeera country-search case this session. Two independent code paths
+      generating tests for the same behavior doubles the maintenance surface and is exactly how the two
+      independent click-step bugs (1.1's ancestor and the primary-flow one) ended up being two separate
+      bugs instead of one.
+
+====================================================================
+2. NOT BUGS, BUT WORTH KNOWING (verified, intentional/acceptable)
+====================================================================
+
+2.1 A clean "GO" recommendation always still carries a standing mobile/compatibility caveat sentence in
+    Conclusions, even when every other condition is empty. Checked the code: this does not block a GO
+    from being reached (the release-decision logic and the caveat sentence are separate mechanisms) - it
+    is an honest, intentional "mobile/cross-browser coverage was never run" disclosure, not a bug.
+
+2.2 "Inconclusive" vs "blocked_flow" vs a confirmed failure are now correctly separated in severity and in
+    the release-decision logic (fixed this session). A flow that only couldn't be confirmed no longer
+    reads the same as a flow that is actually broken.
+
+====================================================================
+3. USER-PROPOSED IMPROVEMENTS - VIABILITY ASSESSMENT
+====================================================================
+
+3.1 "Run pages/flows concurrently instead of one at a time"
+    VIABLE - IMPLEMENTED this session for the generate/explore stage.
+
+    Why it helps: per PIPELINE_TIMING.md, Generate is bound by model latency (~20s/call), not CPU - the
+    pipeline was spending most of its wall-clock time waiting on network calls it could make in parallel.
+
+    What was done (website_test_pipeline/cli.py):
+      - Each discovered URL's explore/probe/generate/autorepair work now runs in its own thread
+        (ThreadPoolExecutor, default 4 workers, tunable via GENERATE_CONCURRENCY, set to 1 for the old
+        one-page-at-a-time behavior).
+      - Each worker opens its OWN sync_playwright() instance and browser - Playwright's sync API is not
+        safe to share across threads, so nothing about the browser is shared.
+      - record_flow (the one actual shared-write risk for this stage - see 1.2) is now wrapped in a
+        threading.Lock so concurrent pages can't clobber each other's flows.json update; the manifest
+        dict every worker updates is behind its own lock for the same reason.
+      - The one-time session/login-wall pre-check still runs once, sequentially, before the concurrent
+        dispatch starts (it writes a storage_state file to disk that every worker's browser context then
+        loads independently - no in-memory state is shared between it and the workers).
+    Still open / not done: flows verify and the report's execute stage are not parallelized yet.
+    Execute is the easiest remaining win (pytest-xdist, `-n auto`, is a mature off-the-shelf tool for
+    exactly this and wasn't needed for this change). Also unverified: whether the model endpoint actually
+    serves concurrent requests faster or just queues them server-side - not load-tested.
+
+3.2 "Put secondary (per-page) reports in their own subfolder under artifacts/report/"
+    VIABLE - low effort, low risk, no architectural concerns.
+
+    Currently every per-page .docx sits flat in artifacts/report/ alongside full-report.docx,
+    full-report-appendix.docx, and report-data.json. Moving per-page docs into
+    artifacts/report/pages/ is a small, contained change (the output path construction in
+    create_report()/build_url_docx()), does not affect any cross-reference or evidence-relative-path
+    logic (those are computed relative to the report directory regardless of which subfolder a specific
+    docx lives in). No known downside.
+
+3.3 "Auto-download the main/combined report to the computer's Downloads folder after every run"
+    CONDITIONALLY VIABLE - technically trivial, but flagged as a real design conflict worth resolving
+    before building it.
+
+    Trivial half: copying full-report.docx to Path.home()/"Downloads" after create_report() finishes is a
+    few lines.
+
+    The real concern: this project is actively moving toward a deployed/API-driven architecture - a
+    separate agent is building a FastAPI job queue in api/ that already includes its own "safe downloads"
+    feature (seen directly in this repo's own commit history: "FastAPI job queue - subprocess runner, SSE
+    progress, cancel, timeout, restart recovery, safe downloads"). A local-filesystem auto-copy to a
+    desktop user's Downloads folder:
+      - only makes sense when the pipeline runs on someone's own machine - it has no meaning on a server
+        (there is no "the user's Downloads folder" in a deployed/API context);
+      - may duplicate or conflict with the download mechanism the other agent is already building for
+        exactly this purpose at the API layer;
+      - would silently write outside the project directory on every run, which is the kind of surprising
+        side effect worth making opt-in rather than automatic (e.g. a --download flag / env var), and
+        needs a naming scheme (timestamp or site name) so repeated runs don't just overwrite one file.
+    Recommendation: hold off on a pipeline-level auto-copy until it's confirmed whether the API layer's
+    "safe downloads" feature already covers this need; if a purely-local convenience is still wanted on
+    top of that, make it an explicit opt-in flag, not automatic, and never write to Downloads from a
+    server/API deployment path.

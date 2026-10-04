@@ -24,22 +24,43 @@ _CONTAINERS = (
 )
 
 
+_IN_VIEWPORT_JS = """el => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0
+        && r.top < (window.innerHeight || 0) && r.left < (window.innerWidth || 0);
+}"""
+
+
 def visible_among(page, loc, count: int):
-    """Among several matches, the one actually visible right now - not a frozen DOM position. Several
-    elements can share a selector or accessible name (one "Next" per step of a multi-step wizard, shown and
-    hidden by CSS as it advances); found live, a plain .first kept targeting a step's button even after a
-    prior step made it stop being the one on screen, and timed out instead of clicking the one actually
-    showing. loc.and_(page.locator(":visible")) stays lazy, so Playwright re-checks which match is visible
-    on every actionability retry - a frozen index (loc.nth(i)) was tried first and still failed
-    intermittently, because the page can re-render again between lookup and the click landing. The single
-    implementation shared by resolve_locator() below and the live-flow runner's control lookup."""
+    """Among several matches, the one actually on screen right now - not a frozen DOM position, and not
+    just whichever is CSS-"visible" (display/visibility/opacity), since more than one can be that at once.
+    Several elements can share a selector or accessible name (one "Next" per step of a multi-step wizard).
+    A first attempt used a frozen index (loc.nth(i)), which failed once the page re-rendered between lookup
+    and the click landing. A second attempt filtered to CSS :visible, which stayed lazy (so Playwright
+    re-checks it on every actionability retry) but still failed on a wizard that keeps every step's panel
+    CSS-visible at once and moves the inactive ones off-screen instead of hiding them - two "Next" inputs
+    were both :visible simultaneously ("strict mode violation ... resolved to 2 elements", found live).
+    This narrows further by actual viewport position when :visible alone still matches more than one."""
     if count <= 1:
         return loc.first
     visible = loc.and_(page.locator(":visible"))
     try:
-        return visible if visible.count() else loc.first
+        vcount = visible.count()
     except Exception:
         return loc.first
+    if vcount == 1:
+        return visible                                        # stays lazy: re-checked on every retry
+    if vcount > 1:
+        for i in range(vcount):
+            candidate = visible.nth(i)
+            try:
+                if candidate.evaluate(_IN_VIEWPORT_JS):
+                    return candidate                           # picked once - only several-at-once CSS
+                                                                 # matches reach here, which is rare enough
+                                                                 # that re-checking this on every retry isn't needed
+            except Exception:
+                continue
+    return loc.first
 
 
 def resolve_locator(page, selector: str):
