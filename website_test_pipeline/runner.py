@@ -370,8 +370,20 @@ def _by_role(page, role: str, name: str):
 
 def _locate(page, step: dict):
     if step.get("selector"):
-        loc = page.locator(step["selector"]).first
-        return loc if loc.count() else None
+        selector = step["selector"]
+        loc = page.locator(selector)
+        count = loc.count()
+        if count == 0:
+            return None
+        if count > 1:
+            # several elements share this selector - typically one "Next"/control per step of a multi-step
+            # wizard, shown and hidden by CSS as it advances. The one on screen now is almost always the one
+            # the step means, not whichever happens to be first in DOM order (found live: a wizard's 2nd
+            # "Next" click kept targeting the 1st step's now-hidden button and timed out).
+            visible = page.locator(f"{selector}:visible")
+            if visible.count():
+                loc = visible
+        return loc.first
     name = (step.get("name") or "").strip()
     if step.get("role") and name:                       # a role recorded by healing, or by whoever wrote the step
         loc = _by_role(page, step["role"], name)

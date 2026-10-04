@@ -1104,10 +1104,18 @@ def _condition_for(d: dict[str, Any]) -> str:
     return f"Resolve {d['id']} ({d['title']}) and rerun the affected check."
 
 
+# These failure classes mean "we could not confirm this one way or the other" (no result, blocked, waiting on a
+# person) or "this is a defect in the test itself, not the application" - never evidence that something is
+# actually broken. NO-GO must be reserved for a defect outside this set: a check that was actually attempted and
+# actually failed. Everything in this set is a coverage gap, which belongs in CONDITIONAL GO, not a hard block.
+_NOT_CONFIRMED_BROKEN = {"inconclusive", "blocked_flow", "human_input_required", "authentication_required", "test_defect"}
+
+
 def _release_decision(run: RunReport, defects: list[dict[str, Any]], gaps: list[dict[str, str]]) -> tuple[str, list[str]]:
-    if run.failed or any(d["status"] == "Open" for d in defects):
-        return "NO-GO", [_condition_for(d) for d in defects if d["status"] == "Open"]
-    conditions = [_condition_for(d) for d in defects if d.get("blocking")]
+    confirmed_broken = [d for d in defects if d["status"] == "Open" and d.get("failure_class") not in _NOT_CONFIRMED_BROKEN]
+    if confirmed_broken:
+        return "NO-GO", [_condition_for(d) for d in confirmed_broken]
+    conditions = [_condition_for(d) for d in defects if d.get("blocking") or d["status"] == "Open"]
     conditions.extend(f"Review {gap['id']} ({gap['page']}) before release." for gap in gaps[:5])
     if conditions:
         return "CONDITIONAL GO", conditions

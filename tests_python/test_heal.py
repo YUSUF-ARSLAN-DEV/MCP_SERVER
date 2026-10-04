@@ -243,6 +243,25 @@ def test_a_step_with_a_role_is_found_by_that_role_first():
     assert runner._locate(page, {"kind": "click", "name": "Details", "role": "tab"}) is not None and page.roles == ["tab"]
 
 
+def test_locate_prefers_the_visible_match_when_a_selector_matches_several(real_page):
+    # a wizard where each step's "Next" shares the same name, shown/hidden by CSS as it advances - found live:
+    # _locate used to always grab the first DOM match, which after the first click is the now-hidden step-1
+    # button, so the second click kept targeting it and timed out instead of clicking the one on screen.
+    pages = {"/en": (b"<html><body>"
+                      b"<input type=\"button\" name=\"next\" value=\"n1\" onclick=\""
+                      b"document.getElementsByName('next')[0].style.display='none';"
+                      b"document.getElementsByName('next')[1].style.display='';\">"
+                      b"<input type=\"button\" name=\"next\" value=\"n2\" style=\"display:none\" "
+                      b"onclick=\"document.body.setAttribute('data-done','1')\">"
+                      b"</body></html>")}
+    with _serve(pages) as base:
+        real_page.goto(base + "/en")
+        step = {"kind": "click", "selector": 'input[name="next"]'}
+        runner._do_step(real_page, step)          # only one visible match so far - nothing to choose between
+        runner._do_step(real_page, step)          # now two DOM matches; only the 2nd is visible
+        assert real_page.get_attribute("body", "data-done") == "1"
+
+
 # ------------------------------------------------------------------ showing it to a person
 
 def test_flows_show_and_history_lines_tell_the_story_of_a_heal():
