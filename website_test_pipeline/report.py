@@ -2019,8 +2019,13 @@ def create_report(
     report_data = _report_data(run, out_dir)
     validate_report_data(report_data)
     write_report_data(out_dir / "report-data.json", report_data)
+    # Secondary (per-page) reports go in their own subfolder so out_dir's top level stays just the
+    # deliverables that matter for a release decision: full-report.docx, its appendix, and report-data.json.
+    pages_dir = out_dir / "pages"
+    if run.url_reports:
+        pages_dir.mkdir(parents=True, exist_ok=True)
     for report in run.url_reports:
-        build_url_docx(run, report, out_dir / f"{name_for(report.url)}.docx")
+        build_url_docx(run, report, pages_dir / f"{name_for(report.url)}.docx")
     if combined:
         build_combined_docx(run, out_dir / "full-report.docx", report_data, appendix=appendix)
     return run

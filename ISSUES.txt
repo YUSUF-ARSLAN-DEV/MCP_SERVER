@@ -6,19 +6,24 @@ code or a real live run - nothing here is speculative unless explicitly marked "
 1. OPEN BUGS / GAPS (code-level)
 ====================================================================
 
-1.1 The tunereceiver wizard flow still fails, for a NEW reason, after two rounds of fixing.
-    Status: OPEN, actively being investigated.
+1.1 The tunereceiver wizard flow. FIXED (verified live, 8/8 consecutive passes).
+    Took four rounds to find the actual cause:
     - 1st failure: a plain `.first` always took the first DOM-order match, which goes stale once
       a wizard click moves to the next step's "Next" button. Fixed by preferring the visible match
       (website_test_pipeline/pageutils.py: visible_among/resolve_locator/resolve_role).
     - 2nd failure (same fix, a frozen `.nth(i)` variant of it): still failed intermittently, because the
       page can re-render again between lookup and the click actually landing.
-    - 3rd failure, just found: Playwright's `:visible` filter now matches TWO elements at once
-      ("strict mode violation ... resolved to 2 elements") - this site's wizard does not hide inactive
-      steps via display:none/visibility:hidden/opacity:0 (which :visible checks); it appears to stack or
-      transform them off-screen instead, so two "next" inputs in two different step containers are both
-      CSS-"visible" simultaneously. A real fix needs an actual viewport-intersection check (is the
-      element's bounding rect on screen right now), not a CSS visibility check. Not yet implemented.
+    - 3rd failure: Playwright's `:visible` filter matched TWO elements at once ("strict mode violation ...
+      resolved to 2 elements") - this wizard does not hide inactive steps via display:none/
+      visibility:hidden/opacity:0 (which :visible checks); it stacks/transforms them off-screen instead,
+      so two "next" inputs were both CSS-"visible" simultaneously. Fixed with a viewport-position check
+      (actual bounding rect vs window dimensions) plus a short settle wait for when the check runs mid-
+      transition.
+    - 4th (real) cause: even with the visible match correctly chosen, the generated test resolved
+      `control` once, then ran human_step's CAPTCHA pre-check (several page.evaluate() round trips)
+      *before* the click - on this fast-transitioning wizard, that gap alone was enough for the element to
+      go stale. Fixed in flowgen.py: click/submit steps now re-resolve inside the action lambda itself,
+      right before the click, instead of reusing the earlier lookup.
 
 1.2 No concurrency protection on the shared mutable files.
     Status: OPEN, CONFIRMED LIVE this session (not theoretical).
@@ -132,35 +137,29 @@ code or a real live run - nothing here is speculative unless explicitly marked "
     serves concurrent requests faster or just queues them server-side - not load-tested.
 
 3.2 "Put secondary (per-page) reports in their own subfolder under artifacts/report/"
-    VIABLE - low effort, low risk, no architectural concerns.
+    VIABLE - IMPLEMENTED this session.
 
-    Currently every per-page .docx sits flat in artifacts/report/ alongside full-report.docx,
-    full-report-appendix.docx, and report-data.json. Moving per-page docs into
-    artifacts/report/pages/ is a small, contained change (the output path construction in
-    create_report()/build_url_docx()), does not affect any cross-reference or evidence-relative-path
-    logic (those are computed relative to the report directory regardless of which subfolder a specific
-    docx lives in). No known downside.
+    Per-page .docx files now go into artifacts/report/pages/ instead of sitting flat alongside
+    full-report.docx, full-report-appendix.docx, and report-data.json (website_test_pipeline/report.py:
+    create_report()). Confirmed no cross-reference or evidence-relative-path logic depended on their
+    location (both embed evidence inline rather than linking to it). All tests updated and passing.
 
 3.3 "Auto-download the main/combined report to the computer's Downloads folder after every run"
-    CONDITIONALLY VIABLE - technically trivial, but flagged as a real design conflict worth resolving
-    before building it.
+    CONDITIONALLY VIABLE - IMPLEMENTED this session as an explicit opt-in, per the recommendation below.
 
-    Trivial half: copying full-report.docx to Path.home()/"Downloads" after create_report() finishes is a
-    few lines.
+    Added a `--download` flag to `report --combined` (website_test_pipeline/cli.py: _download_report).
+    When passed, it copies full-report.docx (or full-report-new.docx, the fallback _save_document writes
+    when the original is locked/open in Word) to Path.home()/"Downloads", named
+    "<site>-report-<timestamp>.docx" so repeated runs never overwrite each other. Never runs unless the
+    flag is passed - not automatic, exactly to avoid the conflict below.
 
-    The real concern: this project is actively moving toward a deployed/API-driven architecture - a
-    separate agent is building a FastAPI job queue in api/ that already includes its own "safe downloads"
-    feature (seen directly in this repo's own commit history: "FastAPI job queue - subprocess runner, SSE
-    progress, cancel, timeout, restart recovery, safe downloads"). A local-filesystem auto-copy to a
-    desktop user's Downloads folder:
-      - only makes sense when the pipeline runs on someone's own machine - it has no meaning on a server
-        (there is no "the user's Downloads folder" in a deployed/API context);
-      - may duplicate or conflict with the download mechanism the other agent is already building for
-        exactly this purpose at the API layer;
-      - would silently write outside the project directory on every run, which is the kind of surprising
-        side effect worth making opt-in rather than automatic (e.g. a --download flag / env var), and
-        needs a naming scheme (timestamp or site name) so repeated runs don't just overwrite one file.
-    Recommendation: hold off on a pipeline-level auto-copy until it's confirmed whether the API layer's
-    "safe downloads" feature already covers this need; if a purely-local convenience is still wanted on
-    top of that, make it an explicit opt-in flag, not automatic, and never write to Downloads from a
-    server/API deployment path.
+    The real concern, unchanged: this project is actively moving toward a deployed/API-driven
+    architecture - a separate agent is building a FastAPI job queue in api/ that already includes its own
+    "safe downloads" feature (seen directly in this repo's own commit history: "FastAPI job queue -
+    subprocess runner, SSE progress, cancel, timeout, restart recovery, safe downloads"). A
+    local-filesystem copy to a desktop user's Downloads folder has no meaning in that deployed/API
+    context (there is no "the user's Downloads folder" on a server) and may overlap with what that
+    feature already does. Making this opt-in (rather than automatic) is what keeps it from ever running
+    on that path by accident - the deployed/API code simply never passes --download. Still worth
+    confirming with the other agent whether their "safe downloads" feature already covers this need
+    end-to-end, in which case this flag may only ever be useful for local, non-deployed runs.

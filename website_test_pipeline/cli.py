@@ -29,6 +29,25 @@ def _commit_site(settings, log, verb: str) -> None:
     except Exception as exc:
         log.warning('COMMIT failed: %s', exc)
 
+def _download_report(settings, log) -> None:
+    """Copy the combined report to this machine's Downloads folder (opt-in via --download). Local
+    convenience only: there is no "Downloads folder" in a server/API deployment of this pipeline, so this
+    never runs unless explicitly asked for, and never touches anything outside the user's home directory."""
+    import shutil
+    report_dir = settings.artifacts_dir/'report'
+    source = next((p for p in (report_dir/'full-report.docx', report_dir/'full-report-new.docx') if p.is_file()), None)
+    if source is None:
+        log.warning('DOWNLOAD full-report.docx not found in %s; nothing to copy', report_dir); return
+    downloads = Path.home()/'Downloads'
+    try:
+        downloads.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        destination = downloads/f'{settings.site}-report-{stamp}.docx'
+        shutil.copy2(source, destination)
+        log.info('DOWNLOAD copied %s -> %s', source.name, destination)
+    except Exception as exc:
+        log.warning('DOWNLOAD failed: %s', exc)
+
 PYTEST_ARTIFACT_ARGS = ['--screenshot=on', '--video=retain-on-failure', '--tracing=retain-on-failure']
 
 # flows.json (record_flow does a read-modify-write with no file locking of its own) is the one piece of
@@ -86,6 +105,7 @@ def main() -> int:
     parser.add_argument('--failed-only', action='store_true', help='verify: only flows that are candidate or stale (re-check after a site change)')
     parser.add_argument('--combined', action='store_true', help='report: also write a single full-run document')
     parser.add_argument('--inline-appendix', action='store_true', help='report --combined: keep the evidence appendix inside full-report.docx (hundreds of pages) instead of the separate full-report-appendix.docx')
+    parser.add_argument('--download', action='store_true', help='report --combined: also copy full-report.docx to this machine\'s Downloads folder, timestamped - a local convenience only, not meant for a server/API deployment of this pipeline')
     parser.add_argument('--rerun', action='store_true', help='report: rerun the generated tests before rendering; default uses the existing test_results.json')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
@@ -247,6 +267,8 @@ def main() -> int:
         log.info('REPORT total=%s passed=%s failed=%s warnings=%s docs=%s', run.total, run.passed, run.failed, len(run.warnings), settings.artifacts_dir/'report')
         for warning in run.warnings:
             log.warning('REPORT WARNING %s', warning)
+        if args.download and args.combined:
+            _download_report(settings, log)
         if args.commit:
             _commit_site(settings, log, 'report')
         return result.returncode

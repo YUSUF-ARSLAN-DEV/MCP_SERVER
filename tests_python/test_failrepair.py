@@ -38,3 +38,38 @@ def test_inv_slug_matches_cli_name():
     from website_test_pipeline.cli import name
     for u in ["https://sat.aljazeera.net/ar/frequency-search", "https://x.test/"]:
         assert _inv_slug(u) == name(u)
+
+
+def test_download_report_copies_the_combined_docx_to_downloads(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import logging
+    from website_test_pipeline.cli import _download_report
+    monkeypatch.setattr("website_test_pipeline.cli.Path.home", lambda: tmp_path)   # never touch the real Downloads
+    report_dir = tmp_path / "artifacts" / "report"
+    report_dir.mkdir(parents=True)
+    (report_dir / "full-report.docx").write_bytes(b"not a real docx, just bytes to copy")
+    settings = SimpleNamespace(artifacts_dir=tmp_path / "artifacts", site="x.test")
+    _download_report(settings, logging.getLogger("test"))
+    copies = list((tmp_path / "Downloads").glob("x.test-report-*.docx"))
+    assert len(copies) == 1 and copies[0].read_bytes() == b"not a real docx, just bytes to copy"
+
+
+def test_download_report_falls_back_to_the_locked_file_alternative(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    import logging
+    from website_test_pipeline.cli import _download_report
+    monkeypatch.setattr("website_test_pipeline.cli.Path.home", lambda: tmp_path)
+    report_dir = tmp_path / "artifacts" / "report"
+    report_dir.mkdir(parents=True)
+    (report_dir / "full-report-new.docx").write_bytes(b"the -new fallback _save_document writes when locked")
+    settings = SimpleNamespace(artifacts_dir=tmp_path / "artifacts", site="x.test")
+    _download_report(settings, logging.getLogger("test"))
+    assert list((tmp_path / "Downloads").glob("x.test-report-*.docx"))
+
+
+def test_download_report_warns_and_does_not_raise_when_nothing_was_built(tmp_path):
+    from types import SimpleNamespace
+    import logging
+    from website_test_pipeline.cli import _download_report
+    settings = SimpleNamespace(artifacts_dir=tmp_path / "artifacts", site="x.test")
+    _download_report(settings, logging.getLogger("test"))     # no report/ dir at all - must not raise

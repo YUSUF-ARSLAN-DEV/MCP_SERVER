@@ -163,7 +163,7 @@ def test_the_combined_report_shows_flow_detail_in_plain_language(tmp_path):
 def test_the_page_document_of_the_start_url_carries_its_flows(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report")
-    joined = chr(10).join(_text(tmp_path / "report" / (name_for(START) + ".docx")))
+    joined = chr(10).join(_text(tmp_path / "report" / "pages" / (name_for(START) + ".docx")))
     assert GOAL in joined and "home heading" in joined.replace("_", " ")
     assert "still verified" in joined                 # the tolerated-failure warning reaches the page document
 
@@ -196,7 +196,7 @@ def test_a_flow_that_starts_on_a_page_with_no_page_tests_still_gets_a_document(t
     rows["tests"] = rows["tests"][1:]                            # drop the page test: only the flow ran
     (artifacts / "test_results.json").write_text(json.dumps(rows), encoding="utf-8")
     create_report(artifacts, tests, tmp_path / "report")
-    assert (tmp_path / "report" / (name_for(START) + ".docx")).exists()
+    assert (tmp_path / "report" / "pages" / (name_for(START) + ".docx")).exists()
 
 
 def test_a_locked_document_is_saved_under_a_new_name_instead_of_aborting_the_report(tmp_path):
@@ -282,7 +282,7 @@ def test_a_page_document_says_how_much_of_that_page_the_flows_act_on(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     _with_inventories(artifacts)
     create_report(artifacts, tests, tmp_path / "report")
-    joined = chr(10).join(_text(tmp_path / "report" / (name_for("https://x.test/") + ".docx")))
+    joined = chr(10).join(_text(tmp_path / "report" / "pages" / (name_for("https://x.test/") + ".docx")))
     assert "Flow coverage of this page" not in joined                        # "/" is an alias: it has no numbers of its own
 
 
