@@ -46,6 +46,21 @@ def test_compact_primary_flow_navigates():
                                  "effect": "navigates", "to": "https://x.test/search?q=test"})
     assert "navigated to /search?q=test" in out
 
+
+def test_compact_primary_flow_tells_the_model_to_click_the_action_before_asserting_the_result():
+    # found live: a select-only step list with no explicit click instruction led the model to write a spec
+    # that selected a country then asserted the URL already changed, with no click in between - it never passed.
+    out = _compact_primary_flow({"action": "Search", "action_selector": "#go", "steps": [
+        {"kind": "select", "selector": "#countrylist", "name": "Country", "value": "Aland Islands"}],
+        "effect": "navigates", "to": "https://x.test/find?country=Aland"})
+    assert 'step 2: click selector=#go - this click is what causes the result below' in out
+    # a step list that already ends in a submit already covers the click - no duplicate instruction
+    submit_out = _compact_primary_flow({"action": 'search for "acme"', "steps": [
+        {"kind": "fill", "selector": 'input[name="s"]', "name": "search field", "value": "acme"},
+        {"kind": "submit", "selector": 'input[name="s"]', "name": "search field", "value": "press Enter"}],
+        "effect": "navigates", "to": "https://acme.io/?s=acme"})
+    assert "this click is what causes the result" not in submit_out
+
 def test_compact_primary_flow_none():
     assert _compact_primary_flow(None) == ""
 

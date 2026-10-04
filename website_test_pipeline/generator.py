@@ -275,7 +275,8 @@ def _compact_primary_flow(flow: dict | None) -> str:
     if not flow:
         return ""
     lines = [f'flow: {flow.get("action")}']
-    for i, step in enumerate(flow.get("steps") or [], 1):
+    steps = flow.get("steps") or []
+    for i, step in enumerate(steps, 1):
         loc = f'selector={step["selector"]}' if step.get("selector") else f'"{step.get("name")}"'
         kind = step.get("kind")
         if kind == "submit":
@@ -285,6 +286,14 @@ def _compact_primary_flow(flow: dict | None) -> str:
             lines.append(f'  step {i}: {kind} {loc} -> "{step.get("value")}"')
     from urllib.parse import urlsplit
     effect = flow.get("effect")
+    # The fill/select steps above never include the click that actually produced the result below - that
+    # click is a separate action (flow["action"]), unless the last step already IS a submit. Without this
+    # line the model only sees "select a country" then "assert the URL changed" with nothing in between,
+    # and (found live) sometimes writes exactly that: a select with no click, which can never pass.
+    if effect in {"results", "navigates"} and not (steps and steps[-1].get("kind") == "submit"):
+        action_loc = f'selector={flow["action_selector"]}' if flow.get("action_selector") else f'"{flow.get("action")}"'
+        lines.append(f'  step {len(steps) + 1}: click {action_loc} - this click is what causes the result below; '
+                     "never assert the result without first performing this click")
     dest = urlsplit(str(flow.get("to") or ""))
     dest_str = (dest.path + (("?" + dest.query) if dest.query else "")) or ""
     if effect == "results":

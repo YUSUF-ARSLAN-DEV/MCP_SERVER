@@ -363,19 +363,22 @@ def _visible_controls(page) -> list[dict]:
         return []
 
 
-def _first_visible(loc, count: int):
-    """Among several matches, the one actually on screen - not just whichever is first in DOM order. Several
-    elements can share a selector or an accessible name (one "Next" per step of a multi-step wizard, shown and
-    hidden by CSS as it advances); found live, this is why a wizard's 2nd "Next" click kept targeting the 1st
-    step's now-hidden button and timed out instead of clicking the one actually showing."""
-    for i in range(count):
-        candidate = loc.nth(i)
-        try:
-            if candidate.is_visible():
-                return candidate
-        except Exception:
-            continue
-    return loc.first
+def _first_visible(page, loc, count: int):
+    """Among several matches, the one actually on screen - not a frozen DOM position. Several elements can
+    share a selector or an accessible name (one "Next" per step of a multi-step wizard, shown and hidden by
+    CSS as it advances). A first attempt here used loc.nth(i), picked once at lookup time - found live, that
+    still intermittently failed: the wizard can re-render again between lookup and the click actually
+    landing (Playwright retries a click for up to its timeout), so a position picked once can go stale
+    before the click fires. loc.and_(page.locator(":visible")) instead stays lazy: Playwright re-evaluates
+    it on every retry, so it keeps tracking whichever match is visible right now, not whichever was visible
+    when _locate ran."""
+    if count <= 1:
+        return loc.first
+    visible = loc.and_(page.locator(":visible"))
+    try:
+        return visible if visible.count() else loc.first
+    except Exception:
+        return loc.first
 
 
 def _by_role(page, role: str, name: str):
@@ -392,9 +395,9 @@ def _by_role(page, role: str, name: str):
         tolerant = re.compile("^" + ICON_GLYPHS + re.escape(name) + ICON_GLYPHS + "$")
     count = strict.count()
     if count:
-        return _first_visible(strict, count) if count > 1 else strict.first
+        return _first_visible(page, strict, count)
     loc = page.get_by_role(role, name=tolerant)
-    return _first_visible(loc, loc.count())
+    return _first_visible(page, loc, loc.count())
 
 
 def _locate(page, step: dict):
@@ -403,7 +406,7 @@ def _locate(page, step: dict):
         count = loc.count()
         if count == 0:
             return None
-        return _first_visible(loc, count) if count > 1 else loc.first
+        return _first_visible(page, loc, count)
     name = (step.get("name") or "").strip()
     if step.get("role") and name:                       # a role recorded by healing, or by whoever wrote the step
         loc = _by_role(page, step["role"], name)
