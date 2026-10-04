@@ -1,8 +1,9 @@
 from website_test_pipeline.runner import apply_result, classify, diff_snapshots, hop_hint, outcome_matches
 
 
-def _snap(url="https://x.test/en", headings=(), controls=(), results=()):
-    return {"url": url, "headings": list(headings), "controls": list(controls), "results": list(results)}
+def _snap(url="https://x.test/en", headings=(), controls=(), results=(), chrome_hidden=()):
+    return {"url": url, "headings": list(headings), "controls": list(controls), "results": list(results),
+            "chrome_hidden": list(chrome_hidden)}
 
 
 def _rows(key, rows, in_main=True):
@@ -15,6 +16,19 @@ def test_diff_finds_only_what_is_new():
     diff = diff_snapshots(before, after)
     assert diff["new_headings"] == ["Results"] and diff["new_controls"] == ["input:Menu item"]
     assert diff["url_changed"] is False and diff["results"] == []
+
+
+def test_diff_counts_a_revealed_chrome_control_as_new_but_not_a_still_hidden_one():
+    # found live: clicking a nav "Settings" button opens a dropdown link to another page, but the link lives in
+    # <nav> ("chrome"), which the ordinary controls diff excludes entirely to avoid noise from a site's repeated
+    # header/footer - so the reveal was invisible and the flow was wrongly judged "no-visible-change".
+    before = _snap(chrome_hidden=["a:Tune Your Receiver", "a:Install"])
+    after_revealed = _snap(chrome_hidden=["a:Install"])          # the Tune link is no longer hidden
+    diff = diff_snapshots(before, after_revealed)
+    assert diff["new_controls"] == ["a:Tune Your Receiver"]
+    assert classify(diff)["effect"] == "reveals"
+    still_hidden = diff_snapshots(before, _snap(chrome_hidden=["a:Tune Your Receiver", "a:Install"]))
+    assert still_hidden["new_controls"] == []                    # nothing changed - not a false reveal
 
 
 def test_diff_ignores_fragment_and_trailing_slash_in_url():

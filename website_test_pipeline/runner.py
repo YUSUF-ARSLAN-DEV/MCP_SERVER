@@ -63,11 +63,15 @@ def _same_heading_key(text: str) -> str:
 def diff_snapshots(before: dict, after: dict) -> dict:
     seen_h, seen_c = {_same_heading_key(h) for h in before["headings"]}, set(before["controls"])
     seen_r = {(r["key"], r["rows"]) for r in before["results"]}
+    seen_chrome_hidden = set(before.get("chrome_hidden") or [])
+    # a chrome control (nav/header/footer) that was hidden and is not hidden by that same signature any more -
+    # a settings/hamburger menu just opened - is a real reveal the ordinary chrome-excluded diff would miss.
+    revealed_chrome = [sig for sig in seen_chrome_hidden if sig not in (after.get("chrome_hidden") or [])]
     return {
         "url_changed": not _same_url(before["url"], after["url"]),
         "url": after["url"],
         "new_headings": [h for h in after["headings"] if _same_heading_key(h) not in seen_h][:_MAX_LIST],
-        "new_controls": [c for c in after["controls"] if c not in seen_c][:_MAX_LIST],
+        "new_controls": ([c for c in after["controls"] if c not in seen_c] + revealed_chrome)[:_MAX_LIST],
         "results": [{"key": r["key"], "rows": r["rows"]} for r in after["results"]
                     if r["in_main"] and r["rows"] >= 3 and (r["key"], r["rows"]) not in seen_r],
     }
@@ -230,6 +234,10 @@ def apply_result(flow: dict, result: dict, now: str) -> dict:
 
 # ------------------------------------------------------------------ browser side
 
+def _control_sig(c: dict) -> str:
+    return f'{c.get("tag")}:{(c.get("name") or c.get("selector") or "")[:40]}'
+
+
 def take_snapshot(page) -> dict:
     def grab(selector: str, js: str) -> list:
         try:
@@ -242,8 +250,12 @@ def take_snapshot(page) -> dict:
     return {
         "url": page.url,
         "headings": sorted({h["text"][:80] for h in headings if h.get("text") and not h.get("hidden")}),
-        "controls": sorted({f'{c.get("tag")}:{(c.get("name") or c.get("selector") or "")[:40]}'
-                            for c in controls if not c.get("hidden") and c.get("region") != "chrome"}),
+        "controls": sorted({_control_sig(c) for c in controls if not c.get("hidden") and c.get("region") != "chrome"}),
+        # A header/nav dropdown (settings menu, hamburger) lives in "chrome", which is otherwise excluded from
+        # the comparison on purpose (chrome repeats on every page and would make diffs noisy). But chrome going
+        # from hidden to visible is a real reveal - a click opening a settings menu - not noise, so it is
+        # tracked separately and only counts when its hidden state actually changes (see diff_snapshots).
+        "chrome_hidden": sorted({_control_sig(c) for c in controls if c.get("region") == "chrome" and c.get("hidden")}),
         "results": [{"key": p.get("selector") or p.get("klass") or "?", "rows": p.get("rows") or 0,
                      "in_main": bool(p.get("in_main"))} for p in results],
     }
@@ -351,6 +363,21 @@ def _visible_controls(page) -> list[dict]:
         return []
 
 
+def _first_visible(loc, count: int):
+    """Among several matches, the one actually on screen - not just whichever is first in DOM order. Several
+    elements can share a selector or an accessible name (one "Next" per step of a multi-step wizard, shown and
+    hidden by CSS as it advances); found live, this is why a wizard's 2nd "Next" click kept targeting the 1st
+    step's now-hidden button and timed out instead of clicking the one actually showing."""
+    for i in range(count):
+        candidate = loc.nth(i)
+        try:
+            if candidate.is_visible():
+                return candidate
+        except Exception:
+            continue
+    return loc.first
+
+
 def _by_role(page, role: str, name: str):
     """Find by role and accessible name exactly as the generated spec does: the whole name, or - for a name stored
     cut at 40 characters - its start. (Substring matching here would let a renamed control pass verify while the
@@ -358,32 +385,25 @@ def _by_role(page, role: str, name: str):
     # An icon font's glyph (Font Awesome ...) is part of the accessible name, so "Login" is really "<glyph> Login":
     # the whole name is still required, with any glyphs / spaces around it allowed (same rule as the spec).
     if len(name) >= 40:
-        strict = page.get_by_role(role, name=re.compile(re.escape(name))).first
+        strict = page.get_by_role(role, name=re.compile(re.escape(name)))
         tolerant = re.compile("^" + ICON_GLYPHS + re.escape(name))
     else:
-        strict = page.get_by_role(role, name=name, exact=True).first
+        strict = page.get_by_role(role, name=name, exact=True)
         tolerant = re.compile("^" + ICON_GLYPHS + re.escape(name) + ICON_GLYPHS + "$")
-    if strict.count():
-        return strict
-    return page.get_by_role(role, name=tolerant).first
+    count = strict.count()
+    if count:
+        return _first_visible(strict, count) if count > 1 else strict.first
+    loc = page.get_by_role(role, name=tolerant)
+    return _first_visible(loc, loc.count())
 
 
 def _locate(page, step: dict):
     if step.get("selector"):
-        selector = step["selector"]
-        loc = page.locator(selector)
+        loc = page.locator(step["selector"])
         count = loc.count()
         if count == 0:
             return None
-        if count > 1:
-            # several elements share this selector - typically one "Next"/control per step of a multi-step
-            # wizard, shown and hidden by CSS as it advances. The one on screen now is almost always the one
-            # the step means, not whichever happens to be first in DOM order (found live: a wizard's 2nd
-            # "Next" click kept targeting the 1st step's now-hidden button and timed out).
-            visible = page.locator(f"{selector}:visible")
-            if visible.count():
-                loc = visible
-        return loc.first
+        return _first_visible(loc, count) if count > 1 else loc.first
     name = (step.get("name") or "").strip()
     if step.get("role") and name:                       # a role recorded by healing, or by whoever wrote the step
         loc = _by_role(page, step["role"], name)
