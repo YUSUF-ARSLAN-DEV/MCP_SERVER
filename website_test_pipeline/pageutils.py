@@ -51,6 +51,17 @@ def visible_among(page, loc, count: int):
     if vcount == 1:
         return visible                                        # stays lazy: re-checked on every retry
     if vcount > 1:
+        # found live: right after the previous step's click, the wizard's CSS transition to the next
+        # panel is still in flight - checking viewport position mid-transition picks whichever panel
+        # happens to be crossing the frame at that instant, which then keeps moving and goes stale by
+        # the time the click lands. A short settle wait lets the transition finish first.
+        try:
+            page.wait_for_timeout(300)
+            vcount = visible.count()                          # the settled set may differ from before the wait
+        except Exception:
+            pass
+        if vcount == 1:
+            return visible
         for i in range(vcount):
             candidate = visible.nth(i)
             try:

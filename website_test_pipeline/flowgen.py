@@ -284,7 +284,13 @@ def emit_flow_spec(flow: dict, inventories: list[dict]) -> tuple[str | None, str
     body: list[str] = []
     for i, step in enumerate(steps):
         locator, reason = _locator(step, pool)
-        action, why = _step_action(step, "control")
+        # click/submit re-resolve right in the action lambda instead of reusing the `control` variable -
+        # found live: human_step's CAPTCHA pre-check (a few page.evaluate() round trips) sits between
+        # `control`'s resolution and the click, and on a fast-transitioning page (a wizard step that
+        # animates in right after the previous click) that gap was enough for the resolved element to go
+        # stale before the click landed, even though resolve_locator/resolve_role already prefer the
+        # visible match. Re-resolving at the last possible moment keeps the gap to zero.
+        action, why = _step_action(step, locator if step.get("kind") in {"click", "submit"} else "control")
         if locator is None or action is None:
             return None, reason or why
         effect = effects[i] if i < len(effects) else None
