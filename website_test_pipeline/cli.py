@@ -243,10 +243,10 @@ def main() -> int:
             if has_session(settings):
                 pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
             from .envinfo import capture_browser
-            from .pipeline import test_run_args
+            from .pipeline import test_run_args, xdist_args
             capture_browser(settings.artifacts_dir, os.environ.get('WTP_BROWSER') or 'chromium', os.environ.get('WTP_DEVICE', ''))   # record the browser build these results come from
             pw_out = settings.artifacts_dir/'pw'
-            pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}', *test_run_args()]
+            pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}', *test_run_args(), *xdist_args()]
             result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
         elif not (settings.artifacts_dir/'test_results.json').exists():
             log.error('REPORT no existing test_results.json; run execute first or use --rerun')

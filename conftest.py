@@ -63,6 +63,9 @@ def pytest_configure(config) -> None:
             pass
 
 
+_controller_merged_results: list[dict] = []   # xdist only - see pytest_testnodedown / pytest_sessionfinish
+
+
 def pytest_sessionstart(session) -> None:
     session._collected_results = []
     if ACTIVE:
@@ -96,10 +99,28 @@ def pytest_runtest_makereport(item, call):
         results.append(record)
 
 
+def pytest_testnodedown(node, error) -> None:
+    """xdist controller only: one worker process just finished. Fold the results it collected (handed over
+    via workeroutput, since that worker's own pytest_sessionfinish does not write the shared file - see
+    below) into the controller's merged list, before the controller's own pytest_sessionfinish runs."""
+    if not ACTIVE:
+        return
+    results = (getattr(node, "workeroutput", None) or {}).get("results")
+    if results:
+        _controller_merged_results.extend(results)
+
+
 def pytest_sessionfinish(session, exitstatus) -> None:
     if not ACTIVE:
         return
-    results = getattr(session, "_collected_results", [])
+    if hasattr(session.config, "workerinput"):
+        # An xdist worker: hand results to the controller instead of writing the shared file directly -
+        # every worker process writing test_results.json would race, and whichever finished last would
+        # silently discard every other worker's results. See pytest_testnodedown.
+        session.config.workeroutput["results"] = getattr(session, "_collected_results", [])
+        return
+    # A plain (non-xdist) run, or the xdist controller after every worker has reported in above.
+    results = getattr(session, "_collected_results", []) + _controller_merged_results
     payload = {
         "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "exit_status": int(exitstatus),

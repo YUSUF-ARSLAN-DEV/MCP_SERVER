@@ -61,13 +61,23 @@ def test_run_args() -> list[str]:
     return args
 
 
+def xdist_args() -> list[str]:
+    """-n <workers> for pytest-xdist, so independent generated test files execute in parallel worker
+    processes instead of one at a time. Each worker gets its own Playwright browser via the existing `page`
+    fixture, so this is safe without further changes; conftest.py's result collection is xdist-aware (each
+    worker hands its results to the controller instead of writing test_results.json directly - see
+    pytest_testnodedown there for why). EXECUTE_CONCURRENCY=1 (or 0) runs pytest the old single-process way."""
+    n = os.environ.get("EXECUTE_CONCURRENCY", "4").strip()
+    return ["-n", n] if n not in {"", "0", "1"} else []
+
+
 def run_execute(settings, log) -> int:
     """Run every generated spec under pytest and feed the flow results back into flow_ratings.json."""
     env = {**os.environ, "WTP_ARTIFACTS": str(settings.artifacts_dir)}
     if has_session(settings):
         env["WTP_STORAGE_STATE"] = str(session_path(settings))
     capture_browser(settings.artifacts_dir, os.environ.get("WTP_BROWSER") or "chromium", os.environ.get("WTP_DEVICE", ""))   # the build these results come from
-    result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q", *test_run_args()], cwd=settings.root, env=env)
+    result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q", *test_run_args(), *xdist_args()], cwd=settings.root, env=env)
     feed_results(settings, log)
     return result.returncode
 

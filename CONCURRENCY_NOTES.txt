@@ -1,0 +1,82 @@
+CONCURRENCY: WHY ONE STAGE SPEEDS UP CLEANLY AND ANOTHER DOESN'T (sat-stg.aljazeera.tv)
+Written 2026-10-04 from direct, repeated live testing against the real site - every number below is
+measured, not estimated.
+
+====================================================================
+THE SHORT VERSION
+====================================================================
+
+Two stages got parallelized this session. One is a clean, free win. The other is correctly built but
+actively rejected by this specific site's server under concurrent load - not a bug in the pipeline, not
+a local machine limitation, a real 403 Forbidden from the staging server itself.
+
+| Stage | Concurrency toggle | Result on sat-stg.aljazeera.tv |
+|---|---|---|
+| generate/explore | GENERATE_CONCURRENCY | 2.60x faster, zero failures, safe to raise |
+| report --rerun / execute | EXECUTE_CONCURRENCY | Server returns 403 under concurrent sessions - keep at 1 |
+
+====================================================================
+WHY GENERATE PARALLELIZES CLEANLY
+====================================================================
+
+generate's time is dominated by waiting on the model API (~20s/call) - see PIPELINE_TIMING.md. Each
+page's work is a few quick page loads plus a long wait on a response from a completely different server
+(the model endpoint, not the site under test). Running 4 pages at once means 4 independent waits
+overlapping, not 4x the load on any one server. Measured: 901s sequential -> 347s at 4 workers (2.60x),
+zero new failures, confirmed clean on a 24-logical-core machine running headless.
+
+====================================================================
+WHY EXECUTE DOES NOT, ON THIS SITE
+====================================================================
+
+execute's time is dominated by real browser interaction with the live site itself - every worker opens
+its own browser and hits sat-stg.aljazeera.tv directly. Three real runs, same 80 tests each time:
+
+| Workers | Result | Notes |
+|---|---|---|
+| 1 (sequential) | 78 passed, 2 skipped, 252s | baseline |
+| 2 | 72 passed, 6 failed, 2 skipped, 177s | failures appear even at just 2 workers |
+| 4 | 70 passed, 8 failed, 2 skipped, 130s | more failures, more speed |
+
+In every case passed+failed+skipped = 80 - the xdist result-aggregation fix (conftest.py) is confirmed
+correct; nothing is ever lost, tests just start failing for real as concurrency goes up.
+
+The smoking gun, found directly in one failure's captured page content:
+
+    Aria snapshot:
+    - text: 403 Forbidden
+
+That is the staging server itself refusing the request - not a timeout from an overloaded local machine,
+not a flaky test. Re-running the exact same 8 (and 6) failing tests one at a time, individually, passes
+every single one cleanly:
+
+    11 passed in 42.59s   (the failing tests from the -n 4 run, retried alone)
+
+So: not broken tests, not a local resource problem (headless, 24 cores - plenty of headroom), a server-side
+protection (rate limiting or a WAF) that does not like multiple concurrent automated sessions hitting the
+staging environment from the same source at once.
+
+====================================================================
+WHAT WOULD ACTUALLY FIX THIS
+====================================================================
+
+This is not fixable from the pipeline's side. The options are:
+1. Ask whoever manages the sat-stg.aljazeera.tv staging environment to whitelist the test runner's IP, or
+   raise its concurrent-session limit.
+2. Leave EXECUTE_CONCURRENCY=1 for this site specifically (the current default in .env) and only raise it
+   for sites that do not rate-limit concurrent sessions.
+3. If raising it anyway, watch for the specific symptom that flags this problem: tests that fail under
+   concurrency but pass individually when rerun alone. That pattern means the site is pushing back, not
+   that the pipeline or the test is wrong.
+
+====================================================================
+THE GENERAL LESSON
+====================================================================
+
+"Can we parallelize this" and "will parallelizing this help" are different questions. generate's work is
+bound by a cost outside the site under test (the model API), so running it concurrently costs the site
+nothing extra. execute's work IS load on the site under test, so running it concurrently is, literally,
+a small load test against whatever you're trying to QA - and some servers (staging environments
+especially, which are often sized smaller than production) will not tolerate that. Before raising
+EXECUTE_CONCURRENCY for a new site, run it once at a low worker count first and check for exactly this
+failure pattern before assuming higher is free.
