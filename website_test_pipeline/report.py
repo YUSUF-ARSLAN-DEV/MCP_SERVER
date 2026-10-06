@@ -256,7 +256,7 @@ def _flow_reports(results: dict, tests_dir: Path, artifacts_dir: Path, flows_fil
         ratings = load_ratings(ratings_file)["ratings"] if ratings_file and ratings_file.exists() else {}
     except (FlowsFileError, RatingsFileError):
         return [], set()
-    flows = [f for f in flows if f.get("status") != "rejected"]      # a person's decision to drop a flow is not a gap in the run
+    flows = [f for f in flows if f.get("status") not in {"rejected", "auto_rejected"}]      # a dropped flow (human or auto) is not a gap in the run
     by_file = {flow_spec_name(f): f for f in flows}
     rows_by_flow: dict[str, list[dict]] = {}
     for row in results.get("tests", []):

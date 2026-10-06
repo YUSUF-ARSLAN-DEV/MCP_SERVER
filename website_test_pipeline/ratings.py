@@ -11,7 +11,14 @@ from .flows import HUMAN_STATUSES
 
 RATINGS_VERSION = 1
 STALE_AFTER = 2                        # consecutive failed executions before a flow is called stale
+REJECT_AFTER = 6                       # consecutive failed executions, having NEVER passed, before auto-retirement
 _EXECUTIONS = {"runner", "pytest"}     # evidence that comes from really running the flow
+
+
+def attempt_count(ratings: dict, flow_id: str) -> int:
+    """How many real executions a flow has on record - used to prioritize flows that have had
+    few or no attempts over ones already re-confirmed many times (see runner.select_flows)."""
+    return sum(1 for e in ratings.get(flow_id, []) if e.get("source") in _EXECUTIONS)
 
 
 class RatingsFileError(Exception):
@@ -46,7 +53,14 @@ def derive_status(current: str | None, entries: list[dict]) -> str | None:
     """A flow's status from its recorded executions (the runner and its generated test).
     Latest evidence wins; one failure is tolerated (a flaky network is not a broken flow),
     STALE_AFTER in a row is not. Human decisions are never changed, and model ratings
-    are opinions, not executions, so they are ignored here."""
+    are opinions, not executions, so they are ignored here.
+
+    A flow that has NEVER passed and keeps failing is usually a wrong guess (e.g. clicking a
+    control that does nothing), not a flaky one - re-attempting it forever wastes every future
+    run's time on something that was never going to pass. After REJECT_AFTER straight failures
+    with zero passes on record, it is auto-retired ("auto_rejected") instead of staying
+    "candidate" indefinitely. Unlike a human "rejected", this is reversible by just editing
+    flows.json - it is a judgment the tool made, not a person."""
     if current in HUMAN_STATUSES:
         return current
     runs = [e for e in entries if e.get("source") in _EXECUTIONS]
@@ -61,6 +75,9 @@ def derive_status(current: str | None, entries: list[dict]) -> str | None:
         if entry.get("passed"):
             break
         failing += 1
+    ever_passed = any(e.get("passed") for e in runs)
+    if not ever_passed and failing >= REJECT_AFTER:
+        return "auto_rejected"
     if failing >= STALE_AFTER:
-        return "stale" if any(e.get("passed") for e in runs) else "candidate"
+        return "stale" if ever_passed else "candidate"
     return current if current in {"verified", "stale"} else "candidate"

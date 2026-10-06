@@ -114,7 +114,7 @@ def _workspace(tmp_path, with_flows=True, flow_status="failed"):
     page_node = "tests/https-x-test_test.py::test_home_heading[chromium]"
     (tests / file_name(flow)).write_text(
         "from playwright.sync_api import expect" + chr(10) + "def test_flow_x_search(page):" + chr(10)
-        + "    expect(page).to_have_url('x')" + chr(10), encoding="utf-8")
+        + "    expect(page).to_have_url('/en/find')" + chr(10), encoding="utf-8")
     rows = [{"nodeid": page_node, "title": "home heading", "url": START, "status": "passed", "duration": 0.5, "error": None},
             {"nodeid": flow_node, "title": "", "url": START, "status": flow_status, "duration": 2.0,
              "error": None if flow_status == "passed" else "E   AssertionError: Page URL expected" + chr(10) + "E   Actual value: https://x.test/en/other"}]
@@ -129,6 +129,18 @@ def _workspace(tmp_path, with_flows=True, flow_status="failed"):
         (tmp_path / "flow_ratings.json").write_text(json.dumps({"version": 1, "ratings": {"x--search": [
             {"source": "human", "at": "2026-09-20T10:00:00", "by": "sam", "decision": "approved", "reason": "core"}]}}), encoding="utf-8")
     return artifacts, tests
+
+
+def _lower_map_business_value(tmp_path: Path) -> None:
+    """x--map's goal has no business-value signal word, so report_policy.business_value defaults it to
+    the same severity as a real defect on x--search - give it a secondary-journey word (report_policy's
+    _LOW_VALUE) so the two naturally differ, as a map link genuinely would next to a core search flow."""
+    path = tmp_path / "flows.json"
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    for flow in doc["flows"]:
+        if flow["id"] == "x--map":
+            flow["goal"] = "A visitor opens the map from the settings menu."
+    path.write_text(json.dumps(doc), encoding="utf-8")
 
 
 def _text(path: Path) -> list[str]:
@@ -248,15 +260,16 @@ def _with_inventories(artifacts):
 
 def test_the_combined_report_says_how_much_of_the_site_the_flows_cover(tmp_path):
     artifacts, tests = _workspace(tmp_path)
+    _lower_map_business_value(tmp_path)
     _with_inventories(artifacts)
     run = load_run(artifacts, tests)
     assert run.coverage is not None and run.coverage.aliases == {"/": "/en"}
     create_report(artifacts, tests, tmp_path / "report", combined=True)
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     for part in ("Flow coverage", "Pages visited by a tested flow", "Content controls a tested flow acts on",
-                 "Not touched by any flow", "Counted once: / redirects to /en", "/en/map", "Layers", "Subscribe"):
+                 "look like a page's main action", "Counted once: / redirects to /en", "/en/map", "Layers", "Subscribe"):
         assert part in joined, part
-    assert "Header, navigation and footer links are left out" in joined
+    assert "repeated header, navigation, and footer controls are excluded" in joined
 
 
 def test_the_combined_report_puts_full_evidence_in_an_appendix(tmp_path):
@@ -303,6 +316,9 @@ def test_coverage_never_breaks_the_report_when_there_are_no_explored_pages(tmp_p
 
 def test_the_untested_flows_section_shows_the_most_recent_attempts_reason(tmp_path):
     artifacts, tests = _workspace(tmp_path)
+    _lower_map_business_value(tmp_path)   # x--search is now a real (non-test-defect) High-severity defect;
+                                           # without this, x--map's default severity ties it, which the
+                                           # severity-must-vary policy check (correctly) rejects
     ratings = json.loads((tmp_path / "flow_ratings.json").read_text(encoding="utf-8"))
     ratings["ratings"]["x--map"] = [
         {"source": "runner", "at": "2026-09-27T15:01:24", "passed": False,

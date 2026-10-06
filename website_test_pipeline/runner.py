@@ -24,7 +24,7 @@ from .secretrefs import is_ref, needs_fresh_session, resolve
 from .flows import HUMAN_STATUSES, describe_step, is_blocked, load_flows, save_flows
 from .humanstep import solve_before_submit
 from .pageutils import dismiss_overlays, pick_option, settle_page, visible_among, wait_for_loaders
-from .ratings import append_rating, derive_status, load_ratings, save_ratings
+from .ratings import append_rating, attempt_count, derive_status, load_ratings, save_ratings
 
 # What the browser says when it could not reach the site at all (not when a flow broke): DNS failure, no
 # connection, a refused or timed-out connection. A run that ends this way says nothing about the flow.
@@ -593,10 +593,11 @@ def try_other_options(flow: dict, result: dict, run_once, tries: int = MAX_OPTIO
 
 def select_flows(flows: list[dict], only: list[str] | None = None, failed_only: bool = False) -> tuple[list[dict], list[str]]:
     """Which flows `verify` should run, and any reference that matched nothing.
-    Never a rejected flow, and never one waiting for its sentence to be rebuilt (see flows.is_blocked).
-    `only` limits it to flows whose id equals or contains one of the given fragments; `failed_only` to
-    flows that are not verified yet or went stale, i.e. the ones worth re-running after a site change."""
-    todo = [f for f in flows if f.get("status") != "rejected" and not is_blocked(f)]
+    Never a rejected flow (human or auto - see ratings.derive_status), and never one waiting for
+    its sentence to be rebuilt (see flows.is_blocked). `only` limits it to flows whose id equals or
+    contains one of the given fragments; `failed_only` to flows that are not verified yet or went
+    stale, i.e. the ones worth re-running after a site change."""
+    todo = [f for f in flows if f.get("status") not in {"rejected", "auto_rejected"} and not is_blocked(f)]
     if failed_only:
         todo = [f for f in todo if f.get("status") in {"candidate", "stale"}]
     unmatched: list[str] = []
@@ -618,6 +619,9 @@ def run_verify(settings, log, only: list[str] | None = None, failed_only: bool =
     doc = load_flows(settings.flows_file)
     ratings = load_ratings(settings.ratings_file)
     todo, unmatched = select_flows(doc["flows"], only, failed_only)
+    # Fewer prior attempts first, so a time-limited run spends its budget giving every candidate a
+    # real try before it spends more time re-confirming ones that have already been tried a lot.
+    todo.sort(key=lambda f: attempt_count(ratings["ratings"], f["id"]))
     for ref in unmatched:
         log.error("verify: no runnable flow matches '%s' (see `flows list`; rejected flows and flows waiting for a "
                   "rebuilt sentence are skipped)", ref)
