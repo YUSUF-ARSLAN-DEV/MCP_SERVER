@@ -1,0 +1,148 @@
+SESSION HANDOFF - website_test_pipeline work
+Written 2026-10-04, for starting a fresh Claude session. Everything below is either a verified fact
+(git commit, direct file/test check) or explicitly marked as UNVERIFIED/OPEN QUESTION. Nothing here is
+restated from memory without a check - if a fresh session needs to trust something, verify it again
+against the live file/code rather than trust this document blindly, same discipline this session used
+throughout.
+
+====================================================================
+1. COMMITTED, VERIFIED FIXES (all pushed to origin/master, in order)
+====================================================================
+
+6d841cf feat(execute): pytest-xdist for the execute/report-rerun stage, with a real result-aggregation
+        bug fixed first (xdist workers used to overwrite each other's test_results.json - verified fixed:
+        passed+failed+skipped totals matched the sequential baseline exactly at -n 2 and -n 4 against the
+        real site).
+b68e46c fix(report): blocker count and human-input count now match the Defect Report's own records
+        (verified: real file showed 15 vs 17, 2 vs 4 before the fix; confirmed reconciled after).
+0ad4762 feat(report): per-page reports moved to artifacts/report/pages/.
+9a5cb70 fix(flowgen): click/submit steps re-resolve immediately before clicking instead of reusing an
+        earlier lookup (the 4th and final fix needed for one specific wizard flow - verified live, 8/8
+        consecutive passes after this fix).
+3ffecb5 fix(pageutils): viewport-position check added to visible_among for when :visible alone still
+        matches more than one element (found live: "strict mode violation ... resolved to 2 elements").
+f3dfcd6 fix(flowgen): generated test files now call resolve_locator/resolve_role (shared with the live
+        runner) instead of their own separate .first logic - this was the real fix; the runner-only fix
+        below did not touch what generated test FILES actually run.
+eb37136 fix(generator): _compact_primary_flow now explicitly tells the model to click the probed action
+        before asserting a result, instead of only naming it in a passive header line. Fixed a confirmed
+        bug: a generated test selected a country then asserted the URL already changed, with no click in
+        between.
+5769d3d fix(runner): chrome/nav dropdown reveal detection + generalized the visible-match fix to _by_role.
+5a4b349 fix(report): NO-GO now only fires for a confirmed-broken defect (failure_class outside
+        {inconclusive, blocked_flow, human_input_required, authentication_required, test_defect}), not
+        any open item. Before this, a single CAPTCHA-blocked form could force NO-GO on a site with zero
+        real defects.
+
+Earlier in the session (before these, same day): report.py was also changed so its section structure is
+an exact 1:1 match to report_format.txt's 9 sections (verified directly against the real rendered docx -
+headings checked in order), fluff removed ("User flows" section cut as redundant with the Defect Report),
+and the validator.py dead-conditional check was added (catches `action if False else None`-style dead
+code in a generated spec).
+
+====================================================================
+2. MEASURED PERFORMANCE DATA (real runs, same 13-page sat-stg.aljazeera.tv site each time)
+====================================================================
+
+generate/explore concurrency (GENERATE_CONCURRENCY, default 4 in .env):
+  Sequential: 901.0s | Concurrent (4 workers): 346.8s | 2.60x faster, no new failures.
+  Safe to raise - this stage is bound by model-API latency (~20s/call), not local or remote load.
+
+execute concurrency (EXECUTE_CONCURRENCY, default 1 in .env - see CONCURRENCY_NOTES.txt):
+  Sequential: 252.31s (78 passed, 2 skipped) | -n 2: 177.40s (72 passed, 6 failed) | -n 4: 130.58s
+  (70 passed, 8 failed). In every case passed+failed+skipped = 80 - no results are ever lost, but real
+  failures appear under concurrency. Root cause found directly in a failure's captured page content:
+  literal "403 Forbidden" text - the staging server itself rejects concurrent sessions. Confirmed not a
+  local machine issue (headless, 24 logical cores) and not broken tests (the same failing tests all pass
+  individually when rerun alone, one at a time: "11 passed in 42.59s"). This is a server-side limitation,
+  not fixable from the pipeline. Full writeup: CONCURRENCY_NOTES.txt.
+
+====================================================================
+3. OPEN / UNRESOLVED - DO NOT ASSUME, VERIFY FIRST
+====================================================================
+
+3.1 AN ACTIVE INVESTIGATION WAS INTERRUPTED MID-WAY (this is the most important one to re-check):
+
+    A run finished with the log claiming several tests on https-sat-stg-aljazeera-tv_test.py (the root
+    "/" page) "PASSED with no detectable assertion (trivial test)" - e.g. test_go_to_map_navigates_to_map,
+    test_subscribe_now_navigates_to_subscribe. Reading the ACTUAL CURRENT test file directly, these tests
+    clearly DO have real assertions (expect(page).to_have_url(...) etc.) - confirmed via `grep` directly
+    on the file, not just a tool-cached read. Calling website_test_pipeline.report.assertions_for()
+    directly, by hand, against that exact file with the exact current function name, correctly found the
+    assertion - so the parsing function itself is not obviously broken.
+
+    The specific thing not yet resolved: test_results.json's recorded title for this test was the OLD,
+    SHORTER function name ("test_go_to_map_navigates_to_map"), while the CURRENT file on disk (confirmed
+    via direct grep, mtime 2026-10-04 15:34) has a DIFFERENT, LONGER function name
+    ("test_go_to_map_button_navigates_to_map_page") for what is clearly the same test. Since
+    assertions_for() matches by exact function name, a stale/mismatched title means it finds nothing,
+    producing the false "no detectable assertion" warning - the WARNING is wrong, not the test.
+
+    WHY the recorded title doesn't match the current file's function name was NOT established before this
+    document was written. Candidate explanations not yet checked: a stale __pycache__/.pyc bytecode file
+    pytest used instead of re-reading changed source (an __pycache__ directory DOES exist for this file -
+    confirmed present, not confirmed to be the cause); a second concurrent process (the user was running
+    multiple pipeline invocations against different sites in parallel this session, including at least
+    one that also touched sat-stg.aljazeera.tv's shared .env SITE/SEED_URL) overwriting the same test file
+    mid-run; or something else entirely. NEXT STEP for a fresh session: clear
+    runs/sat-stg.aljazeera.tv/tests/__pycache__/ and rerun `report --rerun` once, isolated (confirm no
+    other process is touching this site's files at the same time first), and see if the mismatch recurs.
+    If it does not recur, it was likely stale bytecode or a concurrent-process collision, not a pipeline
+    logic bug.
+
+3.2 Untouched items from ISSUES.txt (full detail there, this is just the list):
+    - No intent retirement: a flow intent that's simply a wrong guess (e.g. clicking "Setting" on the
+      aljazeera home page does nothing - confirmed live earlier this session) gets re-attempted every run
+      forever. No mechanism exists to notice "this has failed N runs in a row, stop retrying it."
+    - intents/expand's own LLM prompt path was never audited for the same "doesn't explicitly instruct a
+      click before describing the result" class of bug that was found and fixed in generator.py's
+      _compact_primary_flow (commit eb37136). It may or may not have the same gap - not checked.
+    - No regeneration caching - `generate` rewrites every page's test via a fresh model call every run,
+      even for an unchanged page.
+    - flows-verify stage is still single-threaded. Deliberately not parallelized this session: it shares
+      one Playwright browser object across a mid-loop session-refresh (ensure_session, called when a
+      flow's session expires mid-verify) and a nested try_other_options closure that also reuses that same
+      browser - parallelizing this safely needs that session-refresh path to be made thread-safe first
+      (a lock around the refresh + re-read of the resulting storage_state file), not a blind copy of the
+      generate-stage ThreadPoolExecutor pattern.
+    - Duplicate representation: the same user journey can exist as both an explorer-probed "primary flow"
+      page-level test AND a separate intents/expand/verify/flowgen flow. Both existed side by side for the
+      aljazeera country-search case earlier this session.
+    - The .env SITE/SEED_URL shared-mutable-state hazard itself was never actually fixed at the
+      architecture level - this session worked around it repeatedly (by constructing Settings(site=...,
+      seed_url=...) explicitly in one-off scripts instead of relying on .env) rather than fixing it, since
+      .env is actively shared with the user's own concurrent terminal usage and editing it directly during
+      this session would have risked disrupting runs the user had going at the time.
+
+====================================================================
+4. KEY FILE LOCATIONS
+====================================================================
+
+Report (combined, matches report_format.txt exactly - verified):
+  runs\sat-stg.aljazeera.tv\artifacts\report\full-report.docx
+Per-page reports: runs\sat-stg.aljazeera.tv\artifacts\report\pages\
+Appendix: runs\sat-stg.aljazeera.tv\artifacts\report\full-report-appendix.docx
+Canonical JSON data: runs\sat-stg.aljazeera.tv\artifacts\report\report-data.json
+Known-issues list (comprehensive, with viability analysis of 3 proposed features): ISSUES.txt
+Pipeline architecture + timing model walkthrough: PIPELINE_TIMING.md
+Concurrency findings (what parallelizes cleanly vs what backfires, and why): CONCURRENCY_NOTES.txt
+A scratch copy of an earlier report (safe to delete, was for quick viewing only): TEMP_full-report.docx
+
+====================================================================
+5. THINGS TO KNOW ABOUT THE ENVIRONMENT
+====================================================================
+
+- .env's SITE/SEED_URL changes frequently - the user runs multiple pipeline invocations against different
+  sites (sat-stg.aljazeera.tv, www.saucedemo.com, the-internet.herokuapp.com) concurrently in their own
+  terminals. ALWAYS check current .env state (or bypass it via explicit Settings(site=..., seed_url=...)
+  construction) before assuming which site a bare CLI command will target.
+- This repo is split across two agents by explicit user instruction: this work is scoped to
+  website_test_pipeline/ and tests_python/ only. A separate agent owns api/ (FastAPI job queue, frontend,
+  backend, deployment). Never touch, stage, or commit files under api/.
+- pytest-xdist was added as a dependency this session (pyproject.toml) and is installed in the current
+  environment.
+- Windows console (this Bash/PowerShell setup) frequently mis-renders Unicode (Arabic text, the "…"
+  ellipsis character) as "�" when printed directly - this looked like real data corruption twice this
+  session and was NOT (confirmed both times by checking the actual Unicode code point, not the printed
+  text). Always verify a "corruption" claim against the real code point or by writing to a file and
+  reading it back, never trust what prints to this terminal directly for non-ASCII content.

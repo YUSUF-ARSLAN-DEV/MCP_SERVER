@@ -99,6 +99,7 @@ def pytest_runtest_makereport(item, call):
         results.append(record)
 
 
+@pytest.hookimpl(optionalhook=True)   # xdist-only hook: without optionalhook, a run where xdist is not loaded fails plugin validation
 def pytest_testnodedown(node, error) -> None:
     """xdist controller only: one worker process just finished. Fold the results it collected (handed over
     via workeroutput, since that worker's own pytest_sessionfinish does not write the shared file - see
