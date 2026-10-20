@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 import urllib.error
 import urllib.request
 import uuid
@@ -24,7 +25,7 @@ from website_test_pipeline.providers import get_provider
 from .jobs import JobRunner, forget_model_secret, site_name
 from .secretbox import SecretBoxError, load_secretbox
 from .models import (HumanAnswerIn, JobCreate, JobOut, Login, ModelChoice, PasswordChange, ProfileIn, ProfileOut, ProfilePatch,
-                     SetupIn, UserCreate, UserOut, UserPatch)
+                     SetupIn, SignupIn, UserCreate, UserOut, UserPatch)
 from .security import UrlRejected
 from .settings import AppSettings
 
@@ -67,6 +68,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     runner = JobRunner(db, settings)
     box = load_secretbox(settings.data_dir, settings.secrets_key)      # encrypts the keys people save
     logins = security.SlidingWindow(limit=8, window_s=60)           # per client address: sign-ins and first-account setup
+    signups = security.SlidingWindow(limit=3, window_s=3600)        # accounts created per address per hour
     user_logins = security.SlidingWindow(limit=10, window_s=60)     # per username: slows guessing spread across addresses
 
     @asynccontextmanager
@@ -155,7 +157,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     def session(request: Request):
         me = identity(request)
         accounts = db.count_users() > 0
-        return {"authenticated": me is not None, "open": settings.allow_open, "accounts": accounts,
+        return {"authenticated": me is not None, "open": settings.allow_open, "accounts": accounts, "signup": settings.signup,
                 "setup_needed": not accounts and not settings.allow_open, "needs_code": bool(settings.access_code),
                 "user": {"id": me["id"], "username": me["username"], "role": me["role"]} if me and not me["legacy"] else None}
 
@@ -179,6 +181,34 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         user = db.create_first_user(uuid.uuid4().hex[:12], name, security.hash_password(body.password))
         if user is None:
             raise HTTPException(409, "An account already exists. Sign in.")
+        start_session(response, user)
+        return {"authenticated": True, "user": {"id": user["id"], "username": user["username"], "role": user["role"]}}
+
+    @app.post("/api/signup")
+    def signup(body: SignupIn, request: Request, response: Response):
+        """Create your own account (always a member). Open to anyone who can reach the server unless SIGNUP=closed - the
+        protection is not a password but limits: a few accounts per address per hour and a daily cap."""
+        if not db.count_users():
+            raise HTTPException(409, "No one has set this server up yet: create the first account instead.")
+        if settings.signup != "open":
+            raise HTTPException(403, "Sign-ups are closed on this server. Ask an administrator for an account.")
+        address = client_id(request)
+        if signups.blocked(address):
+            raise HTTPException(429, "Too many accounts were created from your address. Try again later.")
+        if db.users_created_since(24) >= settings.max_signups_per_day:
+            raise HTTPException(429, "This server has reached its sign-up limit for today. Try again tomorrow.")
+        try:
+            name = security.clean_username(body.username)
+            security.check_password(body.password, name)
+        except security.WeakCredentials as exc:
+            raise weak(exc) from exc
+        if db.get_user_by_name(name):
+            raise HTTPException(409, "That username is taken.")
+        try:
+            user = db.create_user(uuid.uuid4().hex[:12], name, security.hash_password(body.password), "member")
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "That username is taken.") from None
+        signups.record(address)
         start_session(response, user)
         return {"authenticated": True, "user": {"id": user["id"], "username": user["username"], "role": user["role"]}}
 

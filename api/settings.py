@@ -28,6 +28,10 @@ class AppSettings:
     session_secret: str = field(default_factory=lambda: os.getenv("SESSION_SECRET", ""))
     cookie_secure: bool = field(default_factory=lambda: _flag("COOKIE_SECURE"))
     trust_proxy: bool = field(default_factory=lambda: _flag("TRUST_PROXY"))
+    # who may create an account once the first (administrator) exists: "open" = anyone who can reach the server, with a
+    # throttle and a daily cap; "closed" = only administrators add people. The access code is only ever for the first account.
+    signup: str = field(default_factory=lambda: (os.getenv("SIGNUP", "open").strip().lower() if os.getenv("SIGNUP", "open").strip().lower() in {"open", "closed"} else "open"))
+    max_signups_per_day: int = field(default_factory=lambda: _int("MAX_SIGNUPS_PER_DAY", 100))
     # master key for saved API keys (see secretbox.py); empty = a key file is created next to the database
     secrets_key: str = field(default_factory=lambda: os.getenv("SECRETS_KEY", ""))
     # every run must name its own model (and key). Off = a run with no model falls back to the server's own .env

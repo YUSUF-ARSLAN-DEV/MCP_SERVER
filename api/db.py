@@ -184,6 +184,11 @@ class Database:
                 (user_id, username, password_hash, now()))
         return self.get_user(user_id) if cur.rowcount else None
 
+    def users_created_since(self, hours: int = 24) -> int:
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+        with self._conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM users WHERE created_at >= ?", (since,)).fetchone()[0]
+
     def get_user(self, user_id: str) -> dict | None:
         with self._conn() as conn:
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()

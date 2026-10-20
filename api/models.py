@@ -75,6 +75,12 @@ class SetupIn(BaseModel):
     code: str = Field(default="", max_length=200)
 
 
+class SignupIn(BaseModel):
+    """Anyone may create their own account (a member) when the server allows it."""
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=400, repr=False)
+
+
 class UserCreate(BaseModel):
     username: str = Field(max_length=64)
     password: str = Field(max_length=400, repr=False)
