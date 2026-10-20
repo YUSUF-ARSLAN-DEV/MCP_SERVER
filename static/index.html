@@ -180,6 +180,7 @@ nav{display:flex;flex-direction:column}
   <div class="grid g2" style="margin-top:16px">
     <div class="card"><h3>Log <small>(end of job.log)</small></h3><pre class="log" id="runLog">Nothing yet.</pre></div>
     <div class="card" id="humanCard"><h3>Waiting on a person</h3><div id="humanBody" class="empty">Nothing is waiting for you.</div>
+      <div id="humanHistory" style="margin-top:14px"></div>
       <p class="sub" style="margin:12px 0 0"><button class="btn sec sm" id="cancelBtn" disabled>Cancel run</button></p></div>
   </div>
 </section>
@@ -629,7 +630,7 @@ function watch(id){
   const job=S.jobs.find(j=>j.id===id);if(job)paintRun(job);
   S.es=new EventSource(`/api/jobs/${id}/events`);
   S.es.addEventListener('job',ev=>{const j=JSON.parse(ev.data);const i=S.jobs.findIndex(x=>x.id===j.id);if(i>=0)S.jobs[i]=j;paintRun(j);
-    if(TERMINAL.includes(j.status)){stopWatching();paintRun(j);pollLog(id);refreshJobs();}});
+    if(TERMINAL.includes(j.status)){stopWatching();paintRun(j);pollLog(id);loadHumanHistory(id);refreshJobs();}});
   S.es.onerror=()=>{if(S.es&&S.es.readyState===2)stopWatching();};
   pollLog(id);S.logTimer=setInterval(()=>pollLog(id),3000);
   pollHuman(id);S.humanTimer=setInterval(()=>pollHuman(id),2000);
@@ -656,6 +657,7 @@ $('cancelBtn').onclick=async()=>{
 
 /* ---------- a person is needed (CAPTCHA / sign-in) ---------- */
 async function pollHuman(id){
+  loadHumanHistory(id);
   let r;try{r=(await api(`/api/jobs/${id}/human`)).request;}catch(e){return;}
   const body=$('humanBody');
   if(!r||r.state!=='open'){body.className='empty';body.textContent='Nothing is waiting for you.';
@@ -689,9 +691,48 @@ function askHuman(id,r){
     const values={};$('md').querySelectorAll('input[data-key]').forEach(i=>{if(i.value!=='')values[i.dataset.key]=i.value;});
     try{await api(`/api/jobs/${id}/human`,{method:'POST',body:{seq:r.seq,action,code:isCap?($('hCode').value||''):'',values}});
       if(action==='refresh'){toast('Asked for a new image.');return;}
-      closeModal();toast(action==='skip'?'Skipped: reported as Needs a person.':'Sent. The run is resuming...');}
+      showAnswerProgress(id,r,action);}
     catch(e){$('hErr').textContent=e.message;}};
   $('hOk').onclick=()=>send('submit');$('hSkip').onclick=()=>send('skip');if($('hRef'))$('hRef').onclick=()=>send('refresh');
+}
+
+/* ---------- what became of each answer ---------- */
+/* The run can tell us two honest things: it RECEIVED your answer, or you skipped / it timed out. It does not check whether the
+   website accepted a CAPTCHA code - that shows up later in the test result for that step - so the page never claims it. */
+function humanStatus(h){
+  if(h.state==='open')return {tone:'cond',icon:'!',text:'Waiting for you.'};
+  if(h.state==='answered'||!h.outcome)return {tone:'info',icon:'…',text:'Sent. Waiting for the run to pick it up.'};
+  const kind=h.kind==='captcha'?'code':'details';
+  if(h.outcome==='submitted')return {tone:'go',icon:'✓',text:`The run received your ${kind} and is entering it.`,note:h.kind==='captcha'?"Whether the website accepts the code shows up in that step's test result. The run does not check it here.":''};
+  if(h.outcome==='skipped')return {tone:'idle',icon:'–',text:"Skipped. That step is reported as 'Needs a person'."};
+  if(h.outcome==='timeout')return {tone:'nogo',icon:'×',text:'Timed out before an answer arrived. That step is reported as \'Needs a person\'.'};
+  return {tone:'idle',icon:'–',text:'The run ended before it needed this.'};
+}
+function shortUrl(u){try{const x=new URL(u);return x.pathname+(x.search||'');}catch(e){return u||'';}}
+async function loadHumanHistory(id){
+  let rows;try{rows=await api(`/api/jobs/${id}/human/history`);}catch(e){return;}
+  if(S.watching!==id&&S.liveId!==id)return;
+  $('humanHistory').innerHTML=rows.length?`<h3 style="margin:0 0 6px;font-size:13px">Your answers</h3>${rows.slice().reverse().map(h=>{const st=humanStatus(h);
+    return `<div style="display:flex;gap:8px;padding:6px 0;border-top:1px solid var(--line)"><span class="pill ${st.tone}" style="height:20px">${st.icon}</span>
+      <div><div style="font-size:13px">${esc(st.text)}</div><small style="color:var(--mute)">${when(h.answered_at||h.asked_at)} &middot; ${esc(h.kind==='captcha'?'CAPTCHA':'Sign-in')} on ${esc(shortUrl(h.url))}</small></div></div>`;}).join('')}`:'';
+}
+function showAnswerProgress(id,r,action){
+  clearInterval(S.imgTimer);clearInterval(S.countdown);
+  $('md').dataset.seq='';                                           /* the poller must not close this dialog */
+  openModal(`<h3>${action==='skip'?'Skipped':'Answer sent'}</h3>
+    <div id="apBody" style="display:flex;gap:10px;align-items:flex-start;margin:12px 0"><span class="pill info" id="apIcon">…</span><div><div id="apText">Sent. Waiting for the run to pick it up.</div><small id="apNote" style="color:var(--mute)"></small></div></div>
+    <div class="actions"><button class="btn" onclick="closeModal()">Close</button></div>`,()=>{clearInterval(S.ansTimer);});
+  let tries=0,done=false;
+  const tick=async()=>{
+    tries++;let rows=[];try{rows=await api(`/api/jobs/${id}/human/history`);}catch(e){return;}
+    const h=rows.find(x=>x.seq===r.seq);if(!h||!$('apText'))return;
+    const st=humanStatus(h);
+    $('apIcon').className='pill '+st.tone;$('apIcon').textContent=st.icon;$('apText').textContent=st.text;$('apNote').textContent=st.note||'';
+    loadHumanHistory(id);
+    if(h.state==='closed'&&!done){done=true;clearInterval(S.ansTimer);setTimeout(()=>{if($('apText')&&$('ov').classList.contains('on'))closeModal();},st.note?9000:3500);}
+    if(tries>40&&!done){clearInterval(S.ansTimer);$('apNote').textContent='The run is taking a while to pick this up. You can close this; its status is kept under "Your answers".';}
+  };
+  tick();S.ansTimer=setInterval(tick,700);
 }
 
 /* ---------- report ---------- */

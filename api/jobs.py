@@ -164,8 +164,13 @@ class JobRunner:
                     continue
                 self.db.add_human_request(job_id, int(seq), payload.get("kind", "captcha"), payload)
         for row in self.db.human_requests(job_id):
-            if (folder / f"closed-{row['seq']}.json").is_file():
-                self.db.set_human_state(job_id, row["seq"], "closed", "")
+            closed = folder / f"closed-{row['seq']}.json"
+            if closed.is_file():                                  # the run is finished with it: remember how it ended
+                try:
+                    outcome = str(json.loads(closed.read_text(encoding="utf-8")).get("outcome") or "")
+                except (OSError, ValueError):
+                    outcome = ""
+                self.db.set_human_state(job_id, row["seq"], "closed", outcome=outcome or "ended")
         self.db.sync_waiting(job_id)
 
     def _finish_human(self, job_id: str, run_dir: Path) -> None:

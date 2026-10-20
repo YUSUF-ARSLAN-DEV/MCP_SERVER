@@ -491,6 +491,15 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         row = db.get_human_request(job_id)
         return {"request": question_view(job_id, row) if row else None}
 
+    @app.get("/api/jobs/{job_id}/human/history", dependencies=[Depends(require_access)])
+    def human_history(request: Request, job_id: str):
+        """What became of every question this run asked a person: waiting, sent, and how the run ended up using it.
+        Never carries what was typed. (The run does not check whether a SITE accepted a code; that shows in the test result.)"""
+        job_or_404(job_id, request)
+        return [{"seq": r["seq"], "kind": r["kind"], "state": r["state"], "action": r["answer"] or "", "outcome": r["outcome"] or "",
+                 "url": r["payload"].get("url", ""), "label": r["payload"].get("label", ""), "asked_at": r["created_at"],
+                 "answered_at": r["answered_at"]} for r in db.human_history(job_id)]
+
     @app.get("/api/jobs/{job_id}/human/{seq}/image", dependencies=[Depends(require_access)])
     def question_image(request: Request, job_id: str, seq: int):
         run_dir = Path(job_or_404(job_id, request)["run_dir"])

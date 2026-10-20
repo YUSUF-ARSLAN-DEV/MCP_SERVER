@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS human_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}', answer TEXT, state TEXT NOT NULL DEFAULT 'open',
-    created_at TEXT NOT NULL, answered_at TEXT, UNIQUE (job_id, seq)
+    outcome TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, answered_at TEXT, UNIQUE (job_id, seq)
 );
 """
 
@@ -46,6 +46,8 @@ class Database:
         with self._conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            if "outcome" not in {r[1] for r in conn.execute("PRAGMA table_info(human_requests)")}:      # a database from before outcomes were kept
+                conn.execute("ALTER TABLE human_requests ADD COLUMN outcome TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def _conn(self):
@@ -146,15 +148,34 @@ class Database:
                                 (job_id, *states)).fetchall()
         return [dict(r) for r in rows]
 
-    def set_human_state(self, job_id: str, seq: int, state: str, answer: str = "") -> None:
-        """`answer` is only ever the action taken (submit / skip), never what the person typed."""
+    def set_human_state(self, job_id: str, seq: int, state: str, answer: str | None = None, outcome: str | None = None) -> None:
+        """`answer` is only ever the action taken (submit / skip), never what the person typed. `outcome` is what the run
+        did about the request (submitted / skipped / timeout / ended). Whatever is left out is left as it was."""
+        sets, args = ["state = ?"], [state]
+        if answer is not None:
+            sets += ["answer = ?", "answered_at = ?"]
+            args += [answer, now()]
+        if outcome is not None:
+            sets.append("outcome = ?")
+            args.append(outcome)
         with self._conn() as conn:
-            conn.execute("UPDATE human_requests SET state = ?, answer = ?, answered_at = ? WHERE job_id = ? AND seq = ?",
-                         (state, answer, now(), job_id, seq))
+            conn.execute(f"UPDATE human_requests SET {', '.join(sets)} WHERE job_id = ? AND seq = ?", (*args, job_id, seq))
+
+    def human_history(self, job_id: str) -> list[dict]:
+        """Every question this run put to a person, oldest first, with what became of each."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM human_requests WHERE job_id = ? ORDER BY seq", (job_id,)).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = json.loads(item["payload"])
+            out.append(item)
+        return out
 
     def close_human_requests(self, job_id: str) -> None:
         with self._conn() as conn:
-            conn.execute("UPDATE human_requests SET state = 'closed' WHERE job_id = ? AND state != 'closed'", (job_id,))
+            conn.execute("UPDATE human_requests SET state = 'closed', outcome = CASE WHEN outcome = '' THEN 'ended' ELSE outcome END "
+                         "WHERE job_id = ? AND state != 'closed'", (job_id,))
 
     def sync_waiting(self, job_id: str) -> None:
         """The job is `needs_human` exactly while a question is open, and `running` otherwise."""
