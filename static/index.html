@@ -119,9 +119,64 @@ nav{display:flex;flex-direction:column}
 .userbox b{display:block;color:var(--ink);font-size:13px}.userbox a{color:var(--info);text-decoration:none}.userbox a:hover{text-decoration:underline}
 .linkbtn{background:none;border:0;color:var(--info);cursor:pointer;font:inherit;padding:0}.linkbtn:hover{text-decoration:underline}
 @media (max-width:760px){.runlist{display:none}.userbox{display:none}nav a.navi{width:auto}}
+.authpage{position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;
+  background:radial-gradient(1200px 600px at 50% -10%,var(--info-bg),transparent 70%),var(--bg)}
+.authpage[hidden],.app[hidden]{display:none}
+.authwrap{width:100%;max-width:400px}
+.authbrand{text-align:center;margin-bottom:22px}
+.authbrand .mark{width:46px;height:46px;border-radius:12px;background:var(--accent);color:var(--accent-ink);display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:20px;margin-bottom:10px}
+.authbrand h1{margin:0;font-size:22px}.authbrand p{margin:4px 0 0;color:var(--mute)}
+.authcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;box-shadow:0 10px 30px rgba(0,0,0,.12)}
+.authtabs{display:flex;background:var(--idle-bg);border-radius:9px;padding:3px;margin-bottom:16px}
+.authtabs button{flex:1;border:0;background:none;color:var(--mute);padding:8px;border-radius:7px;font:inherit;font-weight:600;cursor:pointer}
+.authtabs button.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.authcard form[hidden]{display:none}
+.authcard label{margin-top:14px}.authcard label:first-of-type{margin-top:0}
+.pwrow{position:relative}.pwrow input{padding-right:64px}
+.pwrow button{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:none;color:var(--info);font:inherit;font-size:12px;font-weight:600;cursor:pointer;padding:6px}
+.authcard .go{width:100%;margin-top:18px;padding:11px;font-size:15px}
+.authcard .go:disabled{opacity:.6;cursor:wait}
+.authcard .switch{text-align:center;margin:14px 0 0;color:var(--mute);font-size:13px}
+.checks{margin:8px 0 0;padding:0;list-style:none;font-size:12px;color:var(--mute)}
+.checks li::before{content:"\25CB  ";}.checks li.ok{color:var(--go)}.checks li.ok::before{content:"\2713  ";}
+.autherr{color:var(--nogo);font-size:13px;min-height:18px;margin-top:10px}
+.authfoot{text-align:center;color:var(--mute);font-size:12px;margin:16px 0 0}
 </style>
 </head>
 <body>
+<div class="authpage" id="auth" hidden>
+  <div class="authwrap">
+    <div class="authbrand"><div class="mark" aria-hidden="true">ST</div><h1>Smoke Tester</h1><p>AI-assisted web smoke testing</p></div>
+    <div class="authcard">
+      <div class="authtabs" role="tablist">
+        <button type="button" id="tabIn" role="tab" class="on">Sign in</button>
+        <button type="button" id="tabUp" role="tab">Create account</button>
+      </div>
+
+      <form id="formIn" novalidate>
+        <label for="siU">Username</label><input id="siU" autocomplete="username" autocapitalize="none" spellcheck="false">
+        <label for="siP">Password</label>
+        <div class="pwrow"><input id="siP" type="password" autocomplete="current-password"><button type="button" data-show="siP">Show</button></div>
+        <div class="autherr" id="siE" role="alert" aria-live="polite"></div>
+        <button class="btn go" id="siGo" type="submit">Sign in</button>
+        <p class="switch">New here? <button type="button" class="linkbtn" id="toUp">Create an account</button></p>
+      </form>
+
+      <form id="formUp" novalidate hidden>
+        <label for="suU">Choose a username <small>(letters, digits, . _ -)</small></label><input id="suU" autocomplete="username" autocapitalize="none" spellcheck="false">
+        <label for="suP">Password</label>
+        <div class="pwrow"><input id="suP" type="password" autocomplete="new-password"><button type="button" data-show="suP">Show</button></div>
+        <label for="suP2">Repeat the password</label>
+        <div class="pwrow"><input id="suP2" type="password" autocomplete="new-password"><button type="button" data-show="suP2">Show</button></div>
+        <ul class="checks"><li id="hLen">At least 10 characters</li><li id="hMatch">Both passwords match</li></ul>
+        <div class="autherr" id="suE" role="alert" aria-live="polite"></div>
+        <button class="btn go" id="suGo" type="submit">Create account</button>
+        <p class="switch">Already have an account? <button type="button" class="linkbtn" id="toIn">Sign in</button></p>
+      </form>
+    </div>
+    <p class="authfoot">Your runs and saved models are private to your account.</p>
+  </div>
+</div>
 <div class="app">
 <nav>
   <h1>Smoke Tester<small>AI-assisted web smoke testing</small></h1>
@@ -129,7 +184,6 @@ nav{display:flex;flex-direction:column}
   <a class="navi" href="#/live" data-r="live">Live run <span class="dot running pulse" id="liveDot" style="display:none;margin-left:6px"></span></a>
   <a class="navi" href="#/compare" data-r="compare" id="navCompare">Compare</a>
   <a class="navi" href="#/models" data-r="models" id="navModels" style="display:none">Models</a>
-  <a class="navi" href="#/users" data-r="users" id="navUsers" style="display:none">Users</a>
   <div class="site"><a href="#/" style="color:inherit;text-decoration:none">Runs</a></div>
   <div class="runlist" id="runList"></div>
   <div class="userbox" id="userBox"></div>
@@ -215,23 +269,6 @@ nav{display:flex;flex-direction:column}
     <p><button class="btn" id="mfSave">Save model</button> <button class="btn sec" id="mfCancel" style="display:none">Cancel edit</button></p>
   </div>
   <p class="honest">Anyone who can run the server's computer could read the encryption key file next to the database; set <code>SECRETS_KEY</code> in the server's environment to keep them apart.</p>
-</section>
-
-<section class="view" id="users">
-  <h2>Users</h2>
-  <p class="sub">Everyone who can sign in. Each person only sees and controls their own runs; administrators see every run.</p>
-  <div class="card" id="usersBody"><div class="empty">Loading...</div></div>
-  <div class="card">
-    <h3>Add a person</h3>
-    <div class="row">
-      <div style="flex:1;min-width:160px"><label for="uName">Username</label><input id="uName" autocomplete="off" placeholder="e.g. alice"></div>
-      <div style="flex:1;min-width:160px"><label for="uPass">Temporary password</label><input id="uPass" type="password" autocomplete="new-password" placeholder="at least 10 characters"></div>
-      <div style="width:140px"><label for="uRole">Role</label><select id="uRole"><option value="member">Member</option><option value="admin">Administrator</option></select></div>
-    </div>
-    <div class="err" id="uErr"></div>
-    <p><button class="btn" id="uAdd">Add person</button></p>
-  </div>
-  <p class="honest">Disabling someone, or resetting their password, signs them out everywhere straight away. The last active administrator cannot be removed.</p>
 </section>
 
 <section class="view" id="runpage">
@@ -320,7 +357,7 @@ const sevClass=s=>s==='High'||s==='Critical'?'nogo':s==='Medium'?'cond':'idle';
 const TABS=['overview','report','journeys','defects'];
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===view));
-  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')||(a.dataset.r==='users'&&view==='users')||(a.dataset.r==='models'&&view==='models')||(a.dataset.r==='compare'&&view==='compare')));
+  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')||(a.dataset.r==='models'&&view==='models')||(a.dataset.r==='compare'&&view==='compare')));
   scrollTo(0,0);
 }
 function route(){
@@ -329,7 +366,6 @@ function route(){
   if(parts[0]==='models'){S.shown=null;show('models');paintRunList();loadModels();return;}
   if(parts[0]==='live'){S.shown=null;show('run');paintRunList();openLive();return;}
   if(parts[0]==='compare'){S.shown=null;show('compare');paintRunList();renderCompare(parts[1],parts[2]);return;}
-  if(parts[0]==='users'){S.shown=null;show('users');paintRunList();loadUsers();return;}
   if(parts[0]==='runs'&&parts[1]){S.shown=decodeURIComponent(parts[1]);show('runpage');renderRunPage(TABS.includes(parts[2])?parts[2]:'overview');return;}
   S.shown=null;show('home');paintRunList();paintHome();
 }
@@ -338,80 +374,54 @@ document.querySelectorAll('#rtabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#rtabs button').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('.rt').forEach(c=>c.style.display=c.id===b.dataset.t?'block':'none');});
 
-/* ---------- who is using this: first account, sign in, sign out ---------- */
-function lockModal(html,focus){$('ov').dataset.lock='1';openModal(html);if(focus){const f=$(focus);if(f)f.focus();}}
-function unlockModal(){delete $('ov').dataset.lock;closeModal();}
+/* ---------- signing in and creating an account: a page of its own ---------- */
 async function postJson(path,body){
   const r=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).catch(()=>null);
   if(r&&r.ok)return {ok:true};
-  let d='Cannot reach the server.';if(r){d='Not accepted.';try{const j=await r.json();d=typeof j.detail==='string'?j.detail:d;}catch(e){}}
+  let d='Cannot reach the server.';if(r){d='Something went wrong. Try again.';try{const j=await r.json();d=typeof j.detail==='string'?j.detail:d;}catch(e){}}
   return {ok:false,error:d};
 }
-async function showAuth(){
-  if($('ov').dataset.lock)return;
-  let st={};try{st=await (await fetch('/api/session',{credentials:'same-origin'})).json();}catch(e){}
-  if(st.authenticated)return;
-  if(st.setup_needed)return setupForm(st);
-  if(st.accounts)return signInForm(st);
-  return codeForm(false);
+const lastUser={get(){try{return localStorage.getItem('wtp_user')||'';}catch(e){return '';}},set(v){try{localStorage.setItem('wtp_user',v);}catch(e){/* private window */}}};
+function authTab(which){
+  const up=which==='up';
+  $('formIn').hidden=up;$('formUp').hidden=!up;
+  $('tabIn').classList.toggle('on',!up);$('tabUp').classList.toggle('on',up);
+  $('tabIn').setAttribute('aria-selected',String(!up));$('tabUp').setAttribute('aria-selected',String(up));
+  $('siE').textContent='';$('suE').textContent='';
+  if(up)$('suU').focus();else{const u=lastUser.get();if(u&&!$('siU').value)$('siU').value=u;($('siU').value?$('siP'):$('siU')).focus();}
 }
-function signInForm(st,msg){
-  lockModal(`<h3>Sign in</h3><p class="sub" style="margin:0">Use your account to see and start your runs.</p>
-  <label for="siU">Username</label><input id="siU" autocomplete="username">
-  <label for="siP">Password</label><input id="siP" type="password" autocomplete="current-password">
-  <div class="err" id="siE">${esc(msg||'')}</div>
-  <div class="actions">${st&&st.signup==='open'?'<button class="btn sec" id="siNew">Create an account</button>':''}<button class="btn" id="siGo">Sign in</button></div>`,'siU');
-  const go=async()=>{const r=await postJson('/api/login',{username:$('siU').value,password:$('siP').value});
-    if(r.ok){unlockModal();resetState();init();}else $('siE').textContent=r.error;};
-  $('siGo').onclick=go;$('siP').onkeydown=e=>{if(e.key==='Enter')go();};
-  if($('siNew'))$('siNew').onclick=()=>{unlockModal();signupForm(st);};
+function showAuth(which){document.querySelector('.app').hidden=true;$('auth').hidden=false;authTab(which||'in');}
+function hideAuth(){$('auth').hidden=true;document.querySelector('.app').hidden=false;}
+$('tabIn').onclick=$('toIn').onclick=()=>authTab('in');
+$('tabUp').onclick=$('toUp').onclick=()=>authTab('up');
+document.querySelectorAll('[data-show]').forEach(b=>b.onclick=()=>{const i=$(b.dataset.show),show=i.type==='password';i.type=show?'text':'password';b.textContent=show?'Hide':'Show';});
+const hints=()=>{const p=$('suP').value,q=$('suP2').value;$('hLen').className=p.length>=10?'ok':'';$('hMatch').className=(q&&p===q)?'ok':'';};
+$('suP').oninput=$('suP2').oninput=hints;
+document.querySelectorAll('#auth input').forEach(i=>i.addEventListener('input',()=>{$('siE').textContent='';$('suE').textContent='';}));
+async function submitAuth(form,button,idle,errBox,path,body){
+  errBox.textContent='';button.disabled=true;button.textContent=idle==='Sign in'?'Signing in...':'Creating your account...';
+  const r=await postJson(path,body);
+  button.disabled=false;button.textContent=idle;
+  if(!r.ok){errBox.textContent=r.error;return;}
+  lastUser.set(body.username.trim().toLowerCase());form.reset();hints();resetState();init();
 }
-function signupForm(st){
-  lockModal(`<h3>Create an account</h3><p class="sub" style="margin:0">Your runs and saved models are yours alone. You will bring your own model and API key.</p>
-  <label for="nuU">Username</label><input id="nuU" autocomplete="username">
-  <label for="nuP">Password <small>(at least 10 characters)</small></label><input id="nuP" type="password" autocomplete="new-password">
-  <label for="nuP2">Repeat the password</label><input id="nuP2" type="password" autocomplete="new-password">
-  <div class="err" id="nuE"></div>
-  <div class="actions"><button class="btn sec" id="nuBack">I already have an account</button><button class="btn" id="nuGo">Create account</button></div>`,'nuU');
-  $('nuGo').onclick=async()=>{
-    if($('nuP').value!==$('nuP2').value){$('nuE').textContent='The two passwords are not the same.';return;}
-    const r=await postJson('/api/signup',{username:$('nuU').value,password:$('nuP').value});
-    if(r.ok){unlockModal();resetState();init();}else $('nuE').textContent=r.error;};
-  $('nuBack').onclick=()=>{unlockModal();signInForm(st);};
-}
-function setupForm(st){
-  lockModal(`<h3>Create the first account</h3><p class="sub" style="margin:0">This becomes the administrator. You can add everyone else afterwards.</p>
-  <label for="suU">Username</label><input id="suU" autocomplete="username">
-  <label for="suP">Password <small>(at least 10 characters)</small></label><input id="suP" type="password" autocomplete="new-password">
-  <label for="suP2">Repeat the password</label><input id="suP2" type="password" autocomplete="new-password">
-  ${st.needs_code?'<label for="suC">Server access code <small>(proves you may set this server up)</small></label><input id="suC" type="password" autocomplete="off">':''}
-  <div class="err" id="suE"></div>
-  <div class="actions">${st.needs_code?'<button class="btn sec" id="suCode">Use the shared access code instead</button>':''}<button class="btn" id="suGo">Create account</button></div>`,'suU');
-  $('suGo').onclick=async()=>{
-    if($('suP').value!==$('suP2').value){$('suE').textContent='The two passwords are not the same.';return;}
-    const r=await postJson('/api/setup',{username:$('suU').value,password:$('suP').value,code:st.needs_code?$('suC').value:''});
-    if(r.ok){unlockModal();resetState();init();}else $('suE').textContent=r.error;};
-  if($('suCode'))$('suCode').onclick=()=>{unlockModal();codeForm(true,st);};
-}
-function codeForm(canGoBack,st){
-  lockModal(`<h3>Access code</h3><p class="sub" style="margin:0">This server has no accounts yet, so it asks for its shared code.</p>
-  <label for="gc">Code</label><input id="gc" type="password" autocomplete="current-password">
-  <div class="err" id="ge"></div>
-  <div class="actions">${canGoBack?'<button class="btn sec" id="gBack">Create an account instead</button>':''}<button class="btn" id="gok">Enter</button></div>`,'gc');
-  const go=async()=>{const r=await postJson('/api/login',{code:$('gc').value});
-    if(r.ok){unlockModal();resetState();init();}else $('ge').textContent=r.error;};
-  $('gok').onclick=go;$('gc').onkeydown=e=>{if(e.key==='Enter')go();};
-  if($('gBack'))$('gBack').onclick=()=>{unlockModal();setupForm(st);};
-}
+$('formIn').onsubmit=e=>{e.preventDefault();
+  if(!$('siU').value.trim()||!$('siP').value){$('siE').textContent='Enter your username and password.';return;}
+  submitAuth($('formIn'),$('siGo'),'Sign in',$('siE'),'/api/login',{username:$('siU').value,password:$('siP').value});};
+$('formUp').onsubmit=e=>{e.preventDefault();
+  const u=$('suU').value.trim(),p=$('suP').value;
+  if(!/^[A-Za-z0-9][A-Za-z0-9._-]{2,31}$/.test(u)){$('suE').textContent='A username is 3 to 32 letters, digits, dots, dashes or underscores, starting with a letter or digit.';return;}
+  if(p.length<10){$('suE').textContent='The password needs at least 10 characters.';return;}
+  if(p!==$('suP2').value){$('suE').textContent='The two passwords are not the same.';return;}
+  submitAuth($('formUp'),$('suGo'),'Create account',$('suE'),'/api/signup',{username:u,password:p});};
 function resetState(){stopWatching();Object.assign(S,{jobs:[],shown:null,painted:null,liveId:null,report:{},me:null,asked:null,models:[]});}
 function paintUser(){
   const me=S.me;
-  $('navUsers').style.display=(me&&me.role==='admin')?'block':'none';
   $('navModels').style.display=me?'block':'none';
-  $('userBox').innerHTML=`<b>${esc(me?me.username:'Shared access')}</b>${me?esc(me.role==='admin'?'administrator':'member'):'one shared code, no accounts'}
-    <div style="margin-top:6px">${me?'<div><button class="linkbtn" id="chgPw">Change password</button></div>':''}<div><button class="linkbtn" id="signOut">Sign out</button></div></div>`;
-  if($('chgPw'))$('chgPw').onclick=changePasswordForm;
-  $('signOut').onclick=async()=>{await postJson('/api/logout',{});location.hash='#/';resetState();paintUser();paintRunList();paintHome();showAuth();};
+  $('userBox').innerHTML=`<b>${esc(me?me.username:'')}</b>
+    <div style="margin-top:6px"><div><button class="linkbtn" id="chgPw">Change password</button></div><div><button class="linkbtn" id="signOut">Sign out</button></div></div>`;
+  $('chgPw').onclick=changePasswordForm;
+  $('signOut').onclick=async()=>{await postJson('/api/logout',{});location.hash='#/';resetState();showAuth('in');};
 }
 function changePasswordForm(){
   openModal(`<h3>Change your password</h3><p class="sub" style="margin:0">Every other place you are signed in will be signed out.</p>
@@ -425,33 +435,6 @@ function changePasswordForm(){
     try{await api('/api/password',{method:'POST',body:{current:$('cpC').value,new:$('cpN').value}});closeModal();toast('Password changed.');}
     catch(e){$('cpE').textContent=e.message;}};
 }
-
-/* ---------- users (administrators) ---------- */
-async function loadUsers(){
-  const box=$('usersBody');
-  let list;try{list=await api('/api/users');}catch(e){box.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
-  box.innerHTML=`<table><tr><th>Username</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr>${list.map(u=>`<tr>
-    <td><b>${esc(u.username)}</b>${S.me&&S.me.id===u.id?' <small>(you)</small>':''}</td>
-    <td><select data-role="${esc(u.id)}" style="width:auto"><option value="member"${u.role==='member'?' selected':''}>Member</option><option value="admin"${u.role==='admin'?' selected':''}>Administrator</option></select></td>
-    <td><span class="pill ${u.disabled?'idle':'go'}">${u.disabled?'disabled':'active'}</span></td><td>${when(u.last_login_at)}</td>
-    <td><button class="btn sm sec" data-toggle="${esc(u.id)}" data-disabled="${u.disabled?1:0}">${u.disabled?'Enable':'Disable'}</button>
-        <button class="btn sm sec" data-reset="${esc(u.id)}" data-name="${esc(u.username)}">Reset password</button></td></tr>`).join('')}</table>`;
-  const patch=async(id,body,ok)=>{try{await api('/api/users/'+encodeURIComponent(id),{method:'PATCH',body});toast(ok);}catch(e){toast(e.message);}loadUsers();};
-  box.querySelectorAll('[data-role]').forEach(el=>el.onchange=()=>patch(el.dataset.role,{role:el.value},'Role changed.'));
-  box.querySelectorAll('[data-toggle]').forEach(el=>el.onclick=()=>patch(el.dataset.toggle,{disabled:el.dataset.disabled!=='1'},el.dataset.disabled==='1'?'Account enabled.':'Account disabled and signed out.'));
-  box.querySelectorAll('[data-reset]').forEach(el=>el.onclick=()=>{
-    openModal(`<h3>Reset password for ${esc(el.dataset.name)}</h3><p class="sub" style="margin:0">They are signed out everywhere and must use this one next.</p>
-    <label for="rpN">New password <small>(at least 10 characters)</small></label><input id="rpN" type="password" autocomplete="new-password">
-    <div class="err" id="rpE"></div><div class="actions"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" id="rpGo">Reset</button></div>`);
-    $('rpGo').onclick=async()=>{try{await api('/api/users/'+encodeURIComponent(el.dataset.reset),{method:'PATCH',body:{password:$('rpN').value}});closeModal();toast('Password reset.');}
-      catch(e){$('rpE').textContent=e.message;}};});
-}
-$('uAdd').onclick=async()=>{
-  $('uErr').textContent='';
-  try{await api('/api/users',{method:'POST',body:{username:$('uName').value,password:$('uPass').value,role:$('uRole').value}});
-    $('uName').value='';$('uPass').value='';toast('Person added.');loadUsers();}
-  catch(e){$('uErr').textContent=e.message;}
-};
 
 /* ---------- runs list, home, run page ---------- */
 async function refreshJobs(){
@@ -913,11 +896,12 @@ async function renderCompare(a,b){
 async function init(){
   let st;try{st=await api('/api/session');}catch(e){$('homeSub').textContent=e.message;return;}
   if(!st.authenticated){showAuth();return;}
-  S.me=st.user||null;S.serverModel=!!st.server_model;S.signup=st.signup;paintUser();
+  hideAuth();
+  S.me=st.user||null;S.serverModel=!!st.server_model;paintUser();
   await reloadModels();paintModelChoices();
   try{await refreshJobs();}catch(e){$('homeSub').textContent=e.message;return;}
   route();
-  if(!S.poll)S.poll=setInterval(()=>{if(!document.hidden&&S.me!==undefined&&!$('ov').dataset.lock)refreshJobs().catch(()=>{});},15000);
+  if(!S.poll)S.poll=setInterval(()=>{if(!document.hidden&&$('auth').hidden)refreshJobs().catch(()=>{});      /* only while signed in */},15000);
 }
 init();
 </script>
