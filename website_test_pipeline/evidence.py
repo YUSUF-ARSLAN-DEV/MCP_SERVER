@@ -2,7 +2,17 @@ from pathlib import Path
 import re
 
 def action_evidence(page, test_name: str, action, verify, directory: Path) -> Path:
-    action(); verify()
+    # P7: "found but not interactable" (element exists, but a click lands before it settles - a transition,
+    # a re-render, a moment where it is briefly covered) is a readiness problem, not a real failure - one
+    # retry after a short pause resolves it far more often than it masks a genuine defect. Confirmed live on
+    # a wizard's "Next" input failing intermittently on one executor and not the other for exactly this reason.
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    try:
+        action()
+    except PlaywrightTimeoutError:
+        page.wait_for_timeout(500)
+        action()
+    verify()
     try:
         from .pageutils import wait_for_content, wait_for_loaders
         wait_for_loaders(page, 3000)   # a spinner in the screenshot means the content had not arrived

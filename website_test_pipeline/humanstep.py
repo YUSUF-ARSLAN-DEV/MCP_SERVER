@@ -279,6 +279,12 @@ class CodePopup:
         self.root.quit()
 
     def new_code(self) -> None:
+        # reload() is a real, blocking Playwright click on the live page - Tkinter is single-threaded, so
+        # the whole window is unresponsive for as long as that call takes. Paint the "loading" state and
+        # force it on screen with update_idletasks() *before* that block starts, so the pause reads as
+        # "working" rather than "frozen/crashed".
+        self.image_label.config(image="", text="(loading a new code...)")
+        self.root.update_idletasks()
         try:
             self.reload()
         except Exception:
@@ -363,13 +369,19 @@ def solve_before_submit(page, control, log=None, asker=None) -> str:
         global _declined
         _declined = True
         return "skipped"
-    _fill_form(page, fields, answer.values)
+    failed_fields = _fill_form(page, fields, answer.values)
+    if failed_fields and log:
+        log.warning("human step: %d of %d field(s) could not be filled (selector mismatch or not interactable): %s",
+                    len(failed_fields), len(fields), ", ".join(failed_fields))
     page.locator(info["input"]).first.fill(answer.code, timeout=3000)       # the code is never logged or stored
     return "filled"
 
 
-def _fill_form(page, fields: list[dict], values: dict[str, str]) -> None:
-    """Put what the person confirmed into every field of the form (a field that will not take it is left as it was)."""
+def _fill_form(page, fields: list[dict], values: dict[str, str]) -> list[str]:
+    """Put what the person confirmed into every field of the form (a field that will not take it is left as it
+    was). Returns the selectors that failed to fill - the popup closes the instant Continue is clicked, before
+    this runs, so this is the only record of whether what was typed actually landed on the page."""
+    failed: list[str] = []
     for fld in fields:
         wanted = values.get(fld["selector"])
         if wanted is None:
@@ -384,7 +396,8 @@ def _fill_form(page, fields: list[dict], values: dict[str, str]) -> None:
             elif wanted != (fld.get("current") or ""):
                 control.fill(wanted, timeout=3000)
         except Exception:
-            continue
+            failed.append(fld["selector"])
+    return failed
 
 
 def human_step(page, control, log=None) -> None:

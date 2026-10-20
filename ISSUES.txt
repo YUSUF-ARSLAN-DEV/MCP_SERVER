@@ -41,13 +41,15 @@ code or a real live run - nothing here is speculative unless explicitly marked "
       real design, not just a thread pool: the current architecture assumes exactly one process touches
       one site's files at a time, and nothing enforces that.
 
-1.3 A flow intent can be permanently wrong and the pipeline has no way to retire it.
-    Status: OPEN.
-    - Confirmed live: clicking "Setting"/"Tune"/"Install" on the aljazeera home page does nothing at all
-      (verified with a real before/after snapshot diff - zero change in URL, headings, controls). The
-      flow intents proposing these actions are just wrong guesses by the model about what the buttons do.
-    - There is no mechanism to notice "this intent has failed verification N times across N runs" and stop
-      re-attempting it. It will be re-probed/re-verified forever, costing real time every run.
+1.3 A flow intent can be permanently wrong and the pipeline has no way to retire it. FIXED 2026-10-06.
+    - ratings.py: derive_status now auto-retires a flow to a new "auto_rejected" status after
+      REJECT_AFTER=6 straight failed executions with zero passes on record (distinct from human
+      "rejected" - reversible by editing flows.json). runner.select_flows excludes it from every future
+      run, same as a human rejection. report.py excludes it from gap/coverage counting the same way.
+      Verified live against sat-stg.aljazeera.tv: 6 flows that had failed 11-28 times in a row (confirmed
+      via flow_ratings.json before the fix) were correctly auto-retired on the next real run.
+    - Also added: run_verify now sorts its to-do list by fewest-prior-attempts-first, so a time-limited
+      run gives every untried candidate a real attempt before re-confirming ones already tried a lot.
 
 1.4 Primary-flow generation and intents/expand are two separate LLM-prompt code paths with no shared
     validation for the same class of mistake.
@@ -87,7 +89,24 @@ code or a real live run - nothing here is speculative unless explicitly marked "
       to anyone debugging on this machine unless PYTHONIOENCODING=utf-8 is set globally, or diagnostics are
       always written to a file and read back instead of printed directly.
 
-1.8 Duplicate representation of the same user journey.
+1.9 validator.py does not catch a wrong positional-argument count on action_evidence/observation_evidence
+    calls. Status: OPEN, CONFIRMED LIVE 2026-10-06.
+    - A real generated test crashed with "TypeError: action_evidence() missing 1 required positional
+      argument: 'directory'" - the model wrote a 4-argument call (label, one lambda, evidence_dir) where
+      action_evidence needs 5 (label, action lambda, verify lambda, evidence_dir). This should have been
+      observation_evidence (which takes only one lambda, for a check with no real action) instead. The
+      validator's AST checks (e.g. _dead_conditional) do not check call-site argument counts against
+      either function's real signature, so this ships and only fails at pytest-execution time.
+
+1.10 test_results.json's recorded test title can diverge from the test file's current function name,
+    causing report.py's assertions_for() to silently find nothing ("no detectable assertion (trivial
+    test)" warnings on tests that actually do have real assertions). Status: OPEN, UNRESOLVED
+    investigation from 2026-10-04 (see SESSION_HANDOFF.txt for the original trace) - never resumed.
+    Candidate causes noted but not confirmed: stale __pycache__ bytecode, or a concurrent process
+    overwriting the same test file mid-run (this project has repeatedly seen .env/test-file collisions
+    from the user's own concurrent terminal usage - see 1.2).
+
+1.11 Duplicate representation of the same user journey.
     Status: OPEN (architecture smell).
     - The same interaction (e.g. "select a country, click Search") can exist as BOTH a primary-flow
       page-level test (explorer-probed, simpler) AND a full intents/expand/verify/flowgen flow. Both

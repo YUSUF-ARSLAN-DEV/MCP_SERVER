@@ -73,7 +73,8 @@ def test_flow_report_carries_the_journey_and_the_history():
     fr = build_flow_report(_flow(), entries, _outcome())
     assert fr.title == GOAL and fr.intent_id == "i-001" and fr.tested and fr.passed
     assert fr.steps[0] == 'select "Egypt" in #country' and fr.lands == ["/en", "/en/find", "/en/find"]
-    assert fr.pages == ["/en", "/en/find"] and fr.expected == "navigates -> /en/find" and fr.observed == "navigates at /en/find"
+    assert (fr.pages == ["/en", "/en/find"] and fr.expected == "The page navigates to a new address, landing on /en/find."
+           and fr.observed == "The page navigates to a new address; the page ended up at /en/find.")
     assert fr.new_headings == ["Find frequencies"] and "[human sam] approved - ok" in fr.history[1]
     assert fr.failure == ""
 
@@ -160,6 +161,22 @@ def test_the_flow_test_leaves_the_page_tests_and_is_counted_once(tmp_path):
     assert run.flows_at(START)[0].failure.startswith("Step 2 of 3 did not complete")
 
 
+def test_a_failing_flow_shows_its_own_failure_not_a_stale_observed_from_an_earlier_pass(tmp_path):
+    """apply_result (runner.py) only overwrites flow.observed on an actual PASS, by design, so a flow that
+    passed before and is failing THIS run still carries old "observed" data describing what it looked like
+    when it worked. The report's Observed column must show THIS run's actual failure, never that stale text -
+    confirmed against a real deliberately-broken fixture (flow_status="failed", with observed prefilled)."""
+    artifacts, tests = _workspace(tmp_path)   # default flow_status="failed"; x--search's observed is prefilled
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    doc = Document(str(tmp_path / "report" / "full-report.docx"))
+    table = [t for t in doc.tables if [c.text for c in t.rows[0].cells] == ["Test ID", "Scope", "Test name", "URL", "Expected", "Observed", "Result"]][-1]
+    rows = [[c.text for c in r.cells] for r in table.rows[1:]]
+    flow_row = next(r for r in rows if r[2] == GOAL)
+    assert flow_row[6] == "FAILED"
+    assert "navigates" not in flow_row[5] and "/en/find" not in flow_row[5]   # the stale pre-pass "observed" text
+    assert flow_row[5] and flow_row[5] not in ("As expected.", "(never ran)")
+
+
 def test_the_combined_report_shows_flow_detail_in_plain_language(tmp_path):
     artifacts, tests = _workspace(tmp_path)
     create_report(artifacts, tests, tmp_path / "report", combined=True)
@@ -167,9 +184,12 @@ def test_the_combined_report_shows_flow_detail_in_plain_language(tmp_path):
     joined = chr(10).join(text)
     for part in (GOAL, "Journey", "Expected vs observed", "Where it broke", "Review history",
                  "Step 2 of 3 did not complete", "[human sam] approved - core", "Flows without a test result in this run",
-                 "A visitor opens the map.", "/en → /en/find"):
+                 "A visitor opens the map.", "/en → /en/find", "Last successful observation"):
         assert part in joined, part
     assert 'select "Egypt" in #country' in joined
+    # Part 8: this must never read as THIS run's result - "Observed in a real run:" (no timestamp, ambiguous
+    # about which run) was the old, confirmed-misleading wording.
+    assert "Observed in a real run:" not in joined
 
 
 def test_the_page_document_of_the_start_url_carries_its_flows(tmp_path):

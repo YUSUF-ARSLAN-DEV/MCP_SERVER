@@ -139,12 +139,18 @@ def business_value(title: str) -> str:
     return "Medium"
 
 
-def impact_severity(category: str, *, scope: str, title: str, failure_text: str = "", assertion_text: str = "") -> str:
+def impact_severity(category: str, *, scope: str, title: str, failure_text: str = "", assertion_text: str = "",
+                    historically_reliable: bool = False) -> str:
     """Severity from what a visitor loses, not from how the failure was classified.
 
     Defect: a core page element that does not render is Critical; landing on the wrong address is High; a broken
     journey is High unless it only concerns a secondary control; a cosmetic or secondary control is Medium.
-    Unverified: the business value of the journey (default Medium). Limitation, test defect, tooling: Low."""
+    Unverified: the business value of the journey (default Medium). Limitation, test defect, tooling: Low.
+
+    historically_reliable caps the result at Medium: a flow that has passed enough runs to still be considered
+    verified, and whose current failure is a timing/visibility race rather than a confirmed wrong outcome, has
+    demonstrably lower real-world impact than a newly-discovered Critical/High defect - this is still impact-based
+    (reliability IS part of impact), not a reclassification that hides the failure from the Defects table."""
     if category in {"limitation", "test_defect", "tooling"}:
         return "Low"
     if category == "unverified":
@@ -152,12 +158,16 @@ def impact_severity(category: str, *, scope: str, title: str, failure_text: str 
     text = f"{failure_text}\n{assertion_text}"
     secondary = bool(_LOW_VALUE.search(title or "")) and not _HIGH_VALUE.search(title or "")
     if _URL_SIGNAL.search(text):
-        return "Medium" if secondary else "High"
-    if _RENDER_SIGNAL.search(text):
-        return "Critical" if _CORE_ELEMENT.search(f"{title}\n{assertion_text}") else "Medium"
-    if scope == "flow":
-        return "Medium" if secondary else "High"
-    return "Medium"
+        severity = "Medium" if secondary else "High"
+    elif _RENDER_SIGNAL.search(text):
+        severity = "Critical" if _CORE_ELEMENT.search(f"{title}\n{assertion_text}") else "Medium"
+    elif scope == "flow":
+        severity = "Medium" if secondary else "High"
+    else:
+        severity = "Medium"
+    if historically_reliable and severity in {"Critical", "High"}:
+        return "Medium"
+    return severity
 
 
 def priority_for(category: str, severity: str) -> str:
@@ -182,16 +192,64 @@ def assert_priorities_vary(records: list[dict[str, Any]]) -> None:
 
 # -------------------------------------------------------------------------------------- release decision
 
-def release_decision(records: list[dict[str, Any]]) -> str:
+REQUIREMENTS_BACKED_THRESHOLD = 60.0
+
+
+def release_decision(records: list[dict[str, Any]], requirements_backed_percent: float | None = None,
+                     threshold: float = REQUIREMENTS_BACKED_THRESHOLD) -> str:
     """Derived from the Defects table first. Any open High/Critical Defect is NO-GO; with none, any other open
     Defect or any open Unverified journey is CONDITIONAL GO. Limitations, test defects and tooling issues never
-    change the verdict, and none of them is ever a release blocker."""
+    change the verdict, and none of them is ever a release blocker.
+
+    C4: requirements coverage is a second, independent verdict input - a report may show zero open defects and
+    still have most of its written requirements unbacked by any passing result, which an inert coverage number
+    does not stop from reading as GO. Below the threshold, a would-be GO is capped at CONDITIONAL GO; it never
+    overrides a verdict a Defect already made worse (NO-GO stays NO-GO)."""
     open_defects = [r for r in records if r["category"] == "defect" and r["status"] == "Open"]
     if any(r["severity"] in {"Critical", "High"} for r in open_defects):
         return "NO-GO"
     if open_defects or any(r["category"] == "unverified" and r["status"] == "Open" for r in records):
         return "CONDITIONAL GO"
+    if requirements_backed_percent is not None and requirements_backed_percent < threshold:
+        return "CONDITIONAL GO"
     return "GO"
+
+
+def release_rule_text() -> str:
+    """P5: the ONE statement of the release rule - S5 and S8 both render this, never their own restatement,
+    so the two can never drift apart from each other."""
+    return (
+        "Any open High or Critical Defect is NO-GO. A defect's severity reflects user impact and is fixed when the "
+        "defect is confirmed; a run that does not reproduce it changes neither its severity nor its open status. An open "
+        "defect keeps its blocking status until a person closes it, which requires 3 consecutive clean runs or a "
+        "deliberate close. With no open High or Critical Defect, any other open Defect or any open Unverified journey "
+        "is CONDITIONAL GO. Limitations, test defects and tooling issues never change the verdict, and none of them is "
+        f"ever a release blocker. With none of the above, a would-be GO is capped at CONDITIONAL GO if fewer than "
+        f"{REQUIREMENTS_BACKED_THRESHOLD:.0f}% of written requirements are backed by a passing result (section 6) - "
+        "zero open defects does not mean most requirements are confirmed working."
+    )
+
+
+def verdict_trigger(records: list[dict[str, Any]], requirements_backed_percent: float | None = None,
+                    threshold: float = REQUIREMENTS_BACKED_THRESHOLD) -> str:
+    """C2/C4: name what actually triggered a non-GO verdict, so nobody has to reverse-engineer it from a
+    severity field or an inert coverage number - "NO-GO: 1 open defect not confirmed fixed (DEF-001)",
+    not a bare "NO-GO"."""
+    open_defects = [r for r in records if r["category"] == "defect" and r["status"] == "Open"]
+    blocking = [r for r in open_defects if r["severity"] in {"Critical", "High"}]
+    if blocking:
+        ids = id_range([r["id"] for r in blocking])
+        return f"{len(blocking)} open defect(s) not confirmed fixed ({ids})"
+    if open_defects:
+        ids = id_range([r["id"] for r in open_defects])
+        return f"{len(open_defects)} open defect(s) not confirmed fixed ({ids})"
+    unverified = [r for r in records if r["category"] == "unverified" and r["status"] == "Open"]
+    if unverified:
+        ids = id_range([r["id"] for r in unverified])
+        return f"{len(unverified)} unverified journey(s) ({ids})"
+    if requirements_backed_percent is not None and requirements_backed_percent < threshold:
+        return f"only {requirements_backed_percent:.0f}% of requirements backed by a passing result, below the {threshold:.0f}% threshold"
+    return ""
 
 
 def taxonomy_counts(records: list[dict[str, Any]]) -> dict[str, int]:
@@ -204,11 +262,14 @@ def taxonomy_sentence(tax: dict[str, int]) -> str:
             f"{tax['tooling']} tooling issue(s) were recorded.")
 
 
-def defect_headline(tax: dict[str, int]) -> str:
-    n = tax["defect"]
-    if n == 0:
+def defect_headline(found: int, carried: int = 0) -> str:
+    """C3: "found this run" and "carried from a previous run" are different claims - a ledger item that did
+    not reproduce this run was not found this run, it failed to reproduce and remains open."""
+    if found == 0 and carried == 0:
         return "0 application defects found this run. No application defect was confirmed by any test that ran."
-    return f"{n} application defect{'s' if n != 1 else ''} found this run."
+    found_clause = f"{found} application defect{'s' if found != 1 else ''} found this run" if found else "0 application defects found this run"
+    carried_clause = f"; {carried} open defect{'s' if carried != 1 else ''} carried from previous runs (not reproduced this run)." if carried else "."
+    return found_clause + carried_clause
 
 
 def build_conditions(records: list[dict[str, Any]], cov_ids: list[str], verdict: str) -> list[str]:
@@ -255,7 +316,9 @@ def build_conditions(records: list[dict[str, Any]], cov_ids: list[str], verdict:
     return bullets
 
 
-def exit_criteria(records: list[dict[str, Any]], cov_ids: list[str], verdict: str) -> list[str]:
+def exit_criteria(records: list[dict[str, Any]], cov_ids: list[str], verdict: str, *,
+                  requirements_backed_percent: float | None = None,
+                  threshold: float = REQUIREMENTS_BACKED_THRESHOLD) -> list[str]:
     """What flips the CURRENT verdict to GO - conditions, not a restatement of the executive summary."""
     def ids(cat: str) -> list[str]:
         return [plain_id(r["id"]) for r in records if r["category"] == cat]
@@ -271,6 +334,12 @@ def exit_criteria(records: list[dict[str, Any]], cov_ids: list[str], verdict: st
         out.append(f"The tooling issues ({id_range(ids('tooling') + ids('test_defect'))}) are repaired and the affected pages and journeys rerun with a real result.")
     if cov_ids:
         out.append(f"The coverage gaps ({id_range(cov_ids)}) are reviewed by a person or covered by a new journey.")
+    # P4: every clause capable of CAPPING the verdict must appear here, not just the ones that produced an
+    # open record - all four other criteria above could be satisfied and GO would still be unreachable if
+    # requirements coverage stays below the threshold, with nothing here saying so.
+    if requirements_backed_percent is not None and requirements_backed_percent < threshold:
+        out.append(f"At least {threshold:.0f}% of written requirements are backed by a passing result "
+                  f"(currently {requirements_backed_percent:.0f}%).")
     if not out:
         out.append("No further condition applies; rerun on the next build to keep this verdict.")
     return out
@@ -303,12 +372,29 @@ def _real_name(value: Any) -> str | None:
     return None if text.lower() in _PLACEHOLDER_OWNER else text
 
 
+CATEGORY_ALIASES = {"defect": "application_defect", "tooling": "test_harness", "limitation": "site_owner_agreement",
+                    "unverified": "unverified_journey", "test_defect": "test_defect"}
+
+
 def resolve_owner(cfg: dict[str, Any], record: dict[str, Any]) -> str | None:
-    for source in ((cfg.get("by_url") or {}).get(record.get("url") or ""),
-                   (cfg.get("by_category") or {}).get(record["category"]), cfg.get("default")):
-        if name := _real_name(source):
-            return name
-    return None
+    name, _source = resolve_owner_with_source(cfg, record)
+    return name
+
+
+def resolve_owner_with_source(cfg: dict[str, Any], record: dict[str, Any]) -> tuple[str | None, str]:
+    """Same resolution as resolve_owner, but also says WHICH config key actually produced the name
+    ("by_url"/"by_category"/"default") - without this, "everyone has the same owner" is indistinguishable
+    from "by_category is fully configured but one person does all of it today", and a disclosure that
+    assumes the former is simply wrong once the latter is true (confirmed live across repeated revisions)."""
+    by_category = cfg.get("by_category") or {}
+    # owners.json may use the internal category name ("tooling") or the human-readable alias
+    # ("test_harness") the report shows people - whichever a person actually wrote.
+    category_owner = by_category.get(record["category"]) or by_category.get(CATEGORY_ALIASES.get(record["category"], ""))
+    for source, value in (("by_url", (cfg.get("by_url") or {}).get(record.get("url") or "")),
+                         ("by_category", category_owner), ("default", cfg.get("default"))):
+        if name := _real_name(value):
+            return name, source
+    return None, "unset"
 
 
 def due_date(priority: str, run_date: date, cfg: dict[str, Any]) -> str:
@@ -327,11 +413,12 @@ def due_date(priority: str, run_date: date, cfg: dict[str, Any]) -> str:
 def assign_owners(records: list[dict[str, Any]], cfg: dict[str, Any], run_date: date) -> None:
     missing = []
     for r in records:
-        owner = resolve_owner(cfg, r)
+        owner, source = resolve_owner_with_source(cfg, r)
         if owner is None:
             missing.append(plain_id(r["id"]))
             continue
         r["owner"] = owner
+        r["owner_source"] = source
         r["due"] = due_date(r["priority"], run_date, cfg)
     if missing:
         raise ReportConsistencyError(
@@ -422,10 +509,13 @@ def stable_test_key(nodeid: str) -> str:
 
 
 def snapshot(*, run_id: str, finished_at: str, counts: dict[str, Any], tests: dict[str, dict[str, str]], pages: list[str],
-             tooling_urls: list[str], untested_files: list[str], env: dict[str, str]) -> dict[str, Any]:
+             tooling_urls: list[str], untested_files: list[str], env: dict[str, str], journeys_total: int = 0,
+             requirements_total: int = 0, taxonomy: dict[str, int] | None = None) -> dict[str, Any]:
     return {"run_id": run_id, "finished_at": finished_at, "pass_rate_percent": counts.get("pass_rate_percent", 0),
-            "tests_ran": counts.get("executed_tests", 0), "tests": tests, "pages": sorted(set(pages)),
-            "tooling_urls": sorted(set(tooling_urls)), "untested_files": sorted(set(untested_files)), "env": env}
+            "tests_ran": counts.get("executed_tests", 0), "journeys_total": journeys_total,
+            "requirements_total": requirements_total, "tests": tests, "pages": sorted(set(pages)),
+            "tooling_urls": sorted(set(tooling_urls)), "untested_files": sorted(set(untested_files)), "env": env,
+            "taxonomy": taxonomy or {}}
 
 
 def load_history(path: Path) -> list[dict[str, Any]]:
@@ -448,6 +538,110 @@ def previous_run(history: list[dict[str, Any]], run_id: str) -> dict[str, Any] |
     return earlier[-1] if earlier else None
 
 
+# ------------------------------------------------------------------------------------- defect ledger
+
+LEDGER_FILE = "defect_ledger.json"
+AUTO_CLOSE_AFTER_CLEAN_RUNS = 3
+
+
+def load_ledger(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        if isinstance(data, dict) and isinstance(data.get("defects"), dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {"version": 1, "defects": {}}
+
+
+def save_ledger(path: Path, ledger: dict[str, Any]) -> None:
+    ledger["version"] = 1
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    tmp = Path(path).with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(ledger, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def _audit(entry: dict[str, Any], *, at: str, event: str, actor: str, reason: str) -> dict[str, Any]:
+    """P1.2: every close or reopen - automatic or manual - gets ONE entry with the fields a reader needs to
+    tell the two apart and verify the threshold was actually met: date, actor, reason, and the clean-run
+    count at the moment of the event. Appended to the ledger entry's own audit_log (never erased) and
+    returned so the caller (report.py) can also surface it in the review history and category-changes table."""
+    record = {"at": at, "event": event, "actor": actor, "reason": reason,
+             "clean_run_count": entry.get("consecutive_not_reproduced", 0)}
+    entry.setdefault("audit_log", []).append(record)
+    return record
+
+
+def update_ledger(ledger: dict[str, Any], current: dict[str, dict[str, str]], run_id: str,
+                  run_at: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Upsert this run's fresh defects into the ledger, then return "ghost" entries for every OPEN defect that
+    did not reproduce this run - a defect is never silently dropped from the report just because one run
+    didn't reproduce it; only an explicit close_defect() does that. A closed defect that reproduces again
+    reopens automatically (its closure moves into closure_history, never erased) rather than staying silently
+    closed while the underlying problem is back.
+
+    Returns (ghosts, closed_this_run) - closed_this_run maps key -> the audit entry for a defect whose status
+    changed to "closed" in THIS call (auto-close only; a manual close goes through close_defect), so the
+    caller can render it in the same run it happened, not just leave it to be discovered on the next read."""
+    entries = ledger.setdefault("defects", {})
+    for key, rec in current.items():
+        entry = entries.get(key)
+        if entry is None:
+            entry = {"first_seen_run": run_id, "first_seen_at": run_at, "total_failures": 0, "closure_history": []}
+            entries[key] = entry
+        if entry.get("status") == "closed":
+            entry.setdefault("closure_history", []).append({
+                "closed_by": entry.get("closed_by"), "closed_at": entry.get("closed_at"),
+                "closed_reason": entry.get("closed_reason"), "reopened_at": run_at, "reopened_run": run_id})
+            _audit(entry, at=run_at, event="reopened",
+                  actor="[auto]" if str(entry.get("closed_by", "")).startswith("system") else f'[human {entry.get("closed_by")}, reopened automatically]',
+                  reason="reproduced again")
+        entry.update(title=rec["title"], url=rec["url"], scope=rec["scope"], flow_id=rec.get("flow_id", "NOT CAPTURED"),
+                    last_failed_run=run_id, last_failed_at=run_at, consecutive_not_reproduced=0, status="open",
+                    closed_by=None, closed_at=None, closed_reason=None)
+        if not entry.get("severity"):
+            # C2: severity is set ONCE, when a defect is first confirmed, from user impact - a run that
+            # reproduces it again (or fails to) is never a reason to change it. Already-set severity (even
+            # on a reopened, previously-closed entry) is left untouched here.
+            entry["severity"] = rec.get("severity", "Medium")
+            entry["severity_set_at"] = rec.get("severity_set_at") or run_at
+            entry["severity_reason"] = rec.get("severity_reason") or rec.get("title", "")
+        entry["total_failures"] = entry.get("total_failures", 0) + 1
+    ghosts = []
+    closed_this_run: dict[str, dict[str, Any]] = {}
+    for key, entry in entries.items():
+        if entry.get("status") != "open" or key in current:
+            continue
+        entry["consecutive_not_reproduced"] = entry.get("consecutive_not_reproduced", 0) + 1
+        if entry["consecutive_not_reproduced"] >= AUTO_CLOSE_AFTER_CLEAN_RUNS:
+            # The other half of "an open defect keeps its blocking status until a person closes it, which
+            # requires 3 consecutive clean runs OR a deliberate close" - the deliberate path was the only one
+            # implemented; without this, that sentence would describe a mechanism that doesn't exist.
+            reason = f"not reproduced for {entry['consecutive_not_reproduced']} consecutive runs"
+            entry.update(status="closed", closed_by="system (auto)", closed_at=run_at, closed_reason=reason)
+            closed_this_run[key] = _audit(entry, at=run_at, event="closed", actor="[auto]", reason=reason)
+            continue
+        if not entry.get("severity"):
+            # Migration fallback: a ledger entry written before severity tracking existed. Recorded now,
+            # not backdated to when it was actually first confirmed - the report says so.
+            entry["severity"] = impact_severity("defect", scope=entry.get("scope", "page"), title=entry.get("title", ""),
+                                                failure_text=entry.get("title", ""), assertion_text="")
+            entry["severity_set_at"] = run_at
+            entry["severity_reason"] = f'{entry.get("title", "")} (recorded on migration to tracked severity; not necessarily when first confirmed)'
+        ghosts.append({"key": key, **entry})
+    return ghosts, closed_this_run
+
+
+def close_defect(ledger: dict[str, Any], key: str, by: str, reason: str, at: str) -> bool:
+    entry = ledger.get("defects", {}).get(key)
+    if not entry or entry.get("status") == "closed":
+        return False
+    entry.update(status="closed", closed_by=by, closed_at=at, closed_reason=reason)
+    _audit(entry, at=at, event="closed", actor=f"[human {by}]", reason=reason)
+    return True
+
+
 def _failing(status: str | None) -> bool:
     return status in {"failed", "error"}
 
@@ -468,7 +662,8 @@ def environment_changes(prev_env: dict[str, str], cur_env: dict[str, str]) -> li
     return out
 
 
-def compute_delta(prev: dict[str, Any] | None, cur: dict[str, Any]) -> dict[str, Any]:
+def compute_delta(prev: dict[str, Any] | None, cur: dict[str, Any], *, ledger_open_keys: frozenset[str] = frozenset(),
+                  closed_this_run: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     if prev is None:
         return {"baseline": False, "note": "No previous run is recorded for this site, so this run is the baseline for the next comparison."}
     pt, ct = prev.get("tests", {}), cur.get("tests", {})
@@ -503,23 +698,81 @@ def compute_delta(prev: dict[str, Any] | None, cur: dict[str, Any]) -> dict[str,
             reason = "deleted (the current spec for that page has no matching test)"
         removed.append({"id": key, "title": info.get("title", key), "reason": reason})
     common = [k for k in ct if k in pt]
+    # A test that stays in both snapshots but changes quarantine status shrinks or grows tests_ran without
+    # being "added" or "removed" - the reconciliation equation (report.py) needs this as its own term, or
+    # prev_total - removed + added silently stops balancing the moment anything gets quarantined.
+    newly_quarantined = sum(1 for k in common if ct[k].get("quarantined") and not pt[k].get("quarantined"))
+    newly_unquarantined = sum(1 for k in common if pt[k].get("quarantined") and not ct[k].get("quarantined"))
+    # Category drift (Unverified/Limitation/Tooling/Defect counts moving) with no stated cause reads as
+    # arbitrary - record WHICH test moved and why, not just that the totals changed.
+    category_changes = []
+    for k in common:
+        before, after = pt[k].get("category"), ct[k].get("category")
+        if before == after:
+            continue
+        title = ct[k].get("title", k)
+        # C1: the ledger is the single authority on whether a defect is still open - a test that passes
+        # clean this run but whose ledger entry is still "open" (a ghost) did NOT resolve; it did not
+        # reproduce. Nothing may call the same item both ledger-open and resolved in the same render.
+        audit = (closed_this_run or {}).get(k)
+        if before and not after and audit:
+            # P1.2: a defect that closed THIS run - render the audit trail here, not a generic "resolved",
+            # so the event that ended its ledger life is never silent.
+            reason = (f'closed {audit["actor"]} on {audit["at"][:10]} - {audit["reason"]} '
+                     f'(clean run count at close: {audit["clean_run_count"]})')
+            after = None
+        elif before and not after and k in ledger_open_keys:
+            reason = "not reproduced this run - still open per the defect ledger, not resolved"
+            after = before
+        elif before and after:
+            reason = f"reclassified from {before} to {after}"
+        elif after:
+            reason = f"newly classified as {after}"
+        else:
+            reason = f"resolved (was {before}, now passes clean)"
+        category_changes.append({"id": k, "title": title, "from": before, "to": after, "reason": reason})
     return {
         "baseline": True,
         "previous_run_id": prev["run_id"], "previous_finished_at": prev.get("finished_at", ""),
         "previous_pass_rate_percent": prev.get("pass_rate_percent", 0), "previous_tests_ran": prev.get("tests_ran", 0),
+        "previous_journeys_total": prev.get("journeys_total"), "previous_requirements_total": prev.get("requirements_total"),
         "added": [{"id": k, "title": ct[k].get("title", k)} for k in added_raw],
         "removed": removed,
-        "fixed": [{"id": k, "title": ct[k].get("title", k)} for k in common if _failing(pt[k].get("status")) and ct[k].get("status") == "passed"],
+        "quarantined_delta": newly_quarantined - newly_unquarantined,
+        "quarantined_now": sum(1 for k in ct if ct[k].get("quarantined")),
+        # tests whose failure is the test's own fault leave tests_ran without being added or removed, exactly
+        # like quarantine; counted over both snapshots whole so renames, additions and removals all balance
+        "test_defect_delta": sum(1 for k in ct if ct[k].get("invalid")) - sum(1 for k in pt if pt[k].get("invalid")),
+        "category_changes": category_changes,
+        # C1: a test the ledger still calls open did not pass for good - it is a ghost (category_changes already
+        # says "not reproduced"), never counted here as "now passing" alongside an Executive Summary that
+        # simultaneously says the same defect is still open.
+        "fixed": [{"id": k, "title": ct[k].get("title", k)} for k in common
+                 if _failing(pt[k].get("status")) and ct[k].get("status") == "passed" and k not in ledger_open_keys],
         "still_failing": [{"id": k, "title": ct[k].get("title", k)} for k in common if _failing(pt[k].get("status")) and _failing(ct[k].get("status"))],
-        "new_failures": [{"id": k, "title": ct[k].get("title", k)} for k in ct if _failing(ct[k].get("status")) and not _failing(pt.get(k, {}).get("status"))],
+        # common, not ct: a brand-new test (no counterpart in the previous run) failing on its first appearance
+        # is not a regression of something that used to pass - conflating the two made "new_failures" count a
+        # test that was simply added and happened to fail, which is a different, separate fact ("added") from
+        # "this broke since last time" ("new_failures" is meant to mean).
+        "new_failures": [{"id": k, "title": ct[k].get("title", k)} for k in common if _failing(ct[k].get("status")) and not _failing(pt[k].get("status"))],
         "renamed_count": len(renamed),
         "environment_changes": environment_changes(prev.get("env", {}), cur.get("env", {})),
+        # P2: so a pre-render check can assert a category count never moves without a category_changes row -
+        # the absence of that table in a run where a category count truly changed is the exact bug it exists
+        # to catch. None (not {}) when the previous run predates taxonomy tracking - a missing baseline is
+        # not the same claim as "every category was genuinely at zero", and must not read as one.
+        "previous_taxonomy": prev.get("taxonomy"),
     }
 
 
 # ---------------------------------------------------------------------------------- evidence and ID checks
 
 def evidence_reason(category: str, failure_class: str, reason_detail: str = "") -> str:
+    if failure_class == "not_reproduced":
+        # D4: this record's check passed this run (that is what "not reproduced" means) - it did not stop
+        # before an evidence step, so the generic Defect fallback below is factually wrong for it. Evidence
+        # from the failure that first confirmed it is not persisted across runs, so there is no link to offer.
+        return "No failure evidence this run - the check passed. Evidence from the last failure: not retained."
     if category == "limitation":
         return (f"No screenshot exists: the run stopped at the {reason_detail or 'sign-in'} step, so there is nothing past it to capture."
                 if failure_class == "human_input_required" else

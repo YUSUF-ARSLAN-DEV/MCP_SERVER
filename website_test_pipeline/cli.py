@@ -106,8 +106,8 @@ def _guarded_report(build, log, *args, **kwargs):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='Explore websites and generate validated Python Playwright smoke tests.')
-    parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report','auth','all'], nargs='?', default='generate')
-    parser.add_argument('words', nargs='*', help='auth: <url> (sign in / sign up on it, keep the session) | flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run | judge [id...] (a vision model rates the final screenshot) | (intents: <file>... requirement documents)')
+    parser.add_argument('command', choices=['crawl','generate','explore','propose','verify','flowgen','flows','intents','expand','execute','report','auth','defects','all'], nargs='?', default='generate')
+    parser.add_argument('words', nargs='*', help='auth: <url> (sign in / sign up on it, keep the session) | defects: list | close <key> --reason "..." (a defect stays open across runs until closed explicitly - see defect_ledger.json) | flows: list | show <id> | approve <id> | reject <id> --reason "..." | reset <id> | add "sentence" | edit <i-id> "sentence" | drop <i-id> | intents | coverage [N] | run | judge [id...] (a vision model rates the final screenshot) | (intents: <file>... requirement documents)')
     parser.add_argument('--reason', default='', help='flows reject/approve: why (required to reject)')
     parser.add_argument('--status', default=None, help='flows list: only flows with this status')
     parser.add_argument('--skip', default='', help='flows run: stages to skip, comma separated (intents,expand,verify,flowgen,execute)')
@@ -119,6 +119,7 @@ def main() -> int:
     parser.add_argument('--rerun', action='store_true', help='report: rerun the generated tests before rendering; default uses the existing test_results.json')
     parser.add_argument('--repair', action='store_true', help='report: after the first run, feed failing tests back to the model, regenerate, and run once more')
     parser.add_argument('--account', default='', help='auth: which login to use when a site has several (default: "default"); names the saved session and the .env keys')
+    parser.add_argument('--manual', action='store_true', help='auth: open a real, visible browser and do nothing - type the password, 2FA code or anything else yourself, then press Enter in this terminal when signed in. Use for logins the popup cannot do (2FA, SSO, CAPTCHA-gated sign-in).')
     parser.add_argument('--no-window', action='store_true', help='all: do not open the progress pop-up (timer + bar)')
     parser.add_argument('--ask-human', action='store_true', help='force the CAPTCHA window on (it is on by default whenever a terminal and display are present)')
     parser.add_argument('--no-ask-human', action='store_true', help='never open the CAPTCHA window: forms with a CAPTCHA are skipped and reported as needing a person')
@@ -199,8 +200,14 @@ def main() -> int:
         progress.finish(settings)
         return worst
     if args.command == 'auth':
+        if args.manual:
+            from .authflow import run_auth_manual
+            return run_auth_manual(settings, log, args.words[0] if args.words else settings.seed_url)
         from .authflow import run_auth
         return run_auth(settings, log, args.words[0] if args.words else settings.seed_url)
+    if args.command == 'defects':
+        from .review import run_defects_command
+        return run_defects_command(settings, args.words, args.reason)
     if args.command == 'verify':
         from .runner import run_verify
         return run_verify(settings, log, args.words, args.failed_only)
@@ -255,7 +262,8 @@ def main() -> int:
             from .envinfo import capture_browser
             from .pipeline import test_run_args, xdist_args
             capture_browser(settings.artifacts_dir, os.environ.get('WTP_BROWSER') or 'chromium', os.environ.get('WTP_DEVICE', ''))   # record the browser build these results come from
-            pw_out = settings.artifacts_dir/'pw'
+            from .config import pw_output_dir
+            pw_out = pw_output_dir(settings.artifacts_dir)
             pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}', *test_run_args(), *xdist_args()]
             result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
         elif not (settings.artifacts_dir/'test_results.json').exists():

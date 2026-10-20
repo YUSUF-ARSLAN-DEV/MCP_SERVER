@@ -20,6 +20,30 @@ from .runner import _path
 _STEP_STEM = re.compile(r"^(\d{2})-")
 _OUTCOME_STEM = 99
 
+_EFFECT_SENTENCES = {
+    "navigates": "The page navigates to a new address",
+    "results": "New results appear on the page",
+    "reveals": "New content becomes visible on the page",
+    "no-visible-change": "Nothing visibly changes on the page",
+}
+
+
+def _humanize_expected(effect: str | None, to: str | None) -> str:
+    """flow.expected, in a sentence a stakeholder can evaluate - not the raw DSL token the runner/flows.py use
+    internally ("reveals", "navigates") to decide pass/fail, which means nothing outside this codebase. Empty
+    (not "no effect recorded.") when there is truly nothing - callers treat flow.expected as falsy for that."""
+    if not effect and not to:
+        return ""
+    base = _EFFECT_SENTENCES.get(effect or "", effect or "no expected effect recorded")
+    return f"{base}, landing on {_path(to)}." if to else f"{base}."
+
+
+def _humanize_observed(effect: str | None, url: str | None) -> str:
+    if not effect and not url:
+        return ""
+    base = _EFFECT_SENTENCES.get(effect or "", effect or "nothing was recorded")
+    return f"{base}; the page ended up at {_path(url)}." if url else f"{base}."
+
 
 @dataclass
 class FlowReport:
@@ -33,6 +57,8 @@ class FlowReport:
     pages: list[str] = field(default_factory=list)          # distinct pages touched, in order
     expected: str = ""
     observed: str = ""
+    observed_at: str = ""               # when THAT observation was made - apply_result freezes observed at
+                                        # the last PASS, so a reader must never mistake it for this run's result
     new_headings: list[str] = field(default_factory=list)
     history: list[str] = field(default_factory=list)
     outcome: Any = None                # the TestOutcome of its generated test, or None if it was not run
@@ -46,6 +72,8 @@ class FlowReport:
     verify_failed: bool = False        # untested, and the last real check of it (runner or pytest) failed
     needs_person: bool = False         # untested because the journey reaches a step only a person can do (a CAPTCHA)
     inconclusive: bool = False         # untested; its steps all ran but nothing visible changed, so the outcome could not be confirmed
+    quarantined: bool = False          # a diagnosed-unstable flow (flows.json: "quarantined": true) - excluded
+                                        # from the pass rate (report_model.canonical_counts) until fixed/cleared
 
     @property
     def tested(self) -> bool:
@@ -155,13 +183,16 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         intent_id=flow.get("intent_id"), steps=[describe_step(s) for s in steps],
         lands=[_path(u) for u in urls] if len(urls) == len(steps) else [],
         pages=pages_touched(flow),
-        expected=(predicted.get("effect") or "") + (f' -> {predicted["to"]}' if predicted.get("to") else ""),
-        observed=(observed.get("effect") or "") + (f' at {_path(observed["url"])}' if observed.get("url") else ""),
+        expected=_humanize_expected(predicted.get("effect"), predicted.get("to")),
+        observed=_humanize_observed(observed.get("effect"), observed.get("url")),
+        observed_at=next((e.get("at", "")[:19] for e in reversed(entries)
+                          if e.get("source") in {"runner", "pytest"} and e.get("passed")), ""),
         new_headings=list(observed.get("new_headings") or []),
         history=[f"{(e.get('at') or '')[:19]}  {_rating_line(e)}" for e in entries],
         outcome=outcome,
         navigation_only=(observed.get("effect") == "navigates" and not observed.get("new_headings")
                          and not observed.get("results") and not observed.get("new_controls")),
+        quarantined=bool(flow.get("quarantined", False)),
     )
     latest = next((e for e in reversed(entries) if e.get("source") == "vision"), None)
     if latest and latest.get("verdict") == "looks_broken":

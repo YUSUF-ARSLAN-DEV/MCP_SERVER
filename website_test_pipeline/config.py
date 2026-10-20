@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlsplit
+import hashlib
 import os
+import tempfile
 from dotenv import load_dotenv
 
 # .env is the source of truth, even over a stale shell env - except for a run the web API started (WTP_JOB=1),
@@ -13,6 +15,18 @@ ROOT = Path(__file__).resolve().parents[1]
 # unset, it is the repo itself, so a local checkout behaves exactly as before.
 DATA_DIR = Path(os.getenv("DATA_DIR", "").strip() or ROOT)
 RUNS = DATA_DIR / "runs"
+
+
+def pw_output_dir(artifacts_dir: Path) -> Path:
+    """Where pytest-playwright writes its own per-test trace/video/screenshot folders (--output). Deliberately
+    NOT nested under artifacts_dir: pytest-playwright names each test's own subfolder from the full nodeid with
+    no length cap of its own, and artifacts_dir's path (repo root + runs/<site>/artifacts/pw/...) is already
+    long enough that the combination routinely exceeds Windows' 260-char MAX_PATH - confirmed live, a real
+    trace.zip at 316 chars that no hyperlink or Explorer double-click could open. A short, deterministic temp
+    path buys back that budget. The writer (cli.py) and reader (report.py) both call this with the SAME
+    artifacts_dir, so they always agree on the location without needing to pass it through settings."""
+    key = hashlib.sha1(str(Path(artifacts_dir).resolve()).encode("utf-8")).hexdigest()[:8]
+    return Path(tempfile.gettempdir()) / "pw" / key
 
 def _int(name: str, default: int, minimum: int, maximum: int) -> int:
     value = int(os.getenv(name, default))

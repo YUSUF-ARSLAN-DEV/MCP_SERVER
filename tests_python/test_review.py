@@ -159,6 +159,21 @@ def test_command_round_trip_persists_status_and_history(tmp_path):
     assert "approved" in _run(settings, "list")[1] and "needs a login" in _run(settings, "show", B)[1]
 
 
+def test_unquarantine_needs_a_reason_just_like_quarantine_does(tmp_path):
+    """P7: an unquarantine with no recorded reason is as unaccountable as a defect closing with no audit
+    entry - "3 consecutive clean runs" belongs in the history a reader can check, not reconstructed later."""
+    settings = _settings(tmp_path, [_flow(A)])
+    code, text = _run(settings, "quarantine", A)
+    assert code == 2 and "needs --reason" in text
+    assert _run(settings, "quarantine", A, reason="flaky on the pytest path")[0] == 0
+    code, text = _run(settings, "unquarantine", A)
+    assert code == 2 and "needs --reason" in text
+    assert _run(settings, "unquarantine", A, reason="3 consecutive clean runs")[0] == 0
+    history = json.loads(settings.ratings_file.read_text(encoding="utf-8"))["ratings"]
+    assert history[A][-1] == {"source": "human", "at": history[A][-1]["at"], "by": history[A][-1]["by"],
+                              "decision": "unquarantine", "reason": "3 consecutive clean runs"}
+
+
 def test_command_defaults_to_list_and_reports_problems_with_exit_codes(tmp_path):
     settings = _settings(tmp_path, [_flow(A)])
     assert _run(settings)[0] == 0

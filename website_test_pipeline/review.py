@@ -16,7 +16,7 @@ from .ratings import RatingsFileError, append_rating, derive_status, load_rating
 
 DECISIONS = {"approve": "approved", "reject": "rejected"}
 # Every `flows <word>` the CLI accepts (add/edit/drop/intents are in intents.py, run is in cli.py); the docs are tested against this.
-SUBCOMMANDS = ("list", "show", "coverage", "approve", "reject", "reset", "add", "edit", "drop", "intents", "run", "judge")
+SUBCOMMANDS = ("list", "show", "coverage", "approve", "reject", "reset", "quarantine", "unquarantine", "add", "edit", "drop", "intents", "run", "judge")
 
 
 class ReviewError(Exception):
@@ -190,13 +190,73 @@ def run_flows_command(settings, words: list[str], reason: str = "", status: str 
             save_ratings(settings.ratings_file, ratings)
             out(f'{flow["id"]} -> {flow["status"]}')
             return 0
-        raise ReviewError(f"unknown flows command {action!r}: use {', '.join(SUBCOMMANDS)}")
+        if action in {"quarantine", "unquarantine"}:
+            # Orthogonal to status (verified/stale/...): a quarantined flow keeps running and keeps its
+            # status, it is just excluded from the pass rate (report_model.canonical_counts) until someone
+            # clears it - for a diagnosed-unstable test where retiring it entirely would hide a real signal.
+            if not rest:
+                raise ReviewError(f"{action} needs a flow id (see `flows list`)")
+            flow = find_flow(doc, rest[0])
+            quarantining = action == "quarantine"
+            # P7: an unquarantine with no recorded reason is as unaccountable as a defect closing with no
+            # audit entry - "3 consecutive clean runs" (or whatever the actual justification is) belongs in
+            # the history a reader can check, not left to be reconstructed later.
+            if not reason:
+                raise ReviewError(f"{action} needs --reason")
+            flow["quarantined"] = quarantining
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            append_rating(ratings, flow["id"], {"source": "human", "at": now, "by": _user(),
+                                                "decision": action, "reason": reason})
+            save_flows(settings.flows_file, doc)
+            save_ratings(settings.ratings_file, ratings)
+            out(f'{flow["id"]} -> quarantined={quarantining}')
+            return 0
+        raise ReviewError(f"unknown flows command {action!r}: use {', '.join(SUBCOMMANDS)}, quarantine, unquarantine")
     except ReviewError as exc:
         out(f"flows: {exc}")
         return 2
     except (FlowsFileError, RatingsFileError) as exc:
         out(f"flows: {exc}")
         return 1
+
+
+def run_defects_command(settings, words: list[str], reason: str = "", out=safe_print) -> int:
+    """`defects list|close <key> --reason "..."`. A defect stays in the report, open, across every run that
+    doesn't reproduce it - closing it is the only thing that removes it, and only a person can do that."""
+    from . import report_policy as policy
+    action = words[0] if words else "list"
+    rest = words[1:]
+    ledger_path = settings.workspace / policy.LEDGER_FILE
+    try:
+        ledger = policy.load_ledger(ledger_path)
+        if action == "list":
+            entries = ledger.get("defects", {})
+            if not entries:
+                out("No defects recorded.")
+                return 0
+            for key, entry in sorted(entries.items()):
+                status = entry.get("status", "open")
+                tail = (f'closed by {entry.get("closed_by")} ({entry.get("closed_at")}): {entry.get("closed_reason")}'
+                       if status == "closed" else
+                       f'{entry.get("total_failures", 0)} failure(s), last {entry.get("last_failed_at", "?")}, '
+                       f'consecutive clean runs: {entry.get("consecutive_not_reproduced", 0)} of {policy.AUTO_CLOSE_AFTER_CLEAN_RUNS}')
+                out(f'{key}  [{status}]  {entry.get("title", key)}  - {tail}')
+            return 0
+        if action == "close":
+            if not rest:
+                raise ReviewError("close needs a defect key (see `defects list`)")
+            if not reason:
+                raise ReviewError("close needs --reason")
+            now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            if not policy.close_defect(ledger, rest[0], _user(), reason, now):
+                raise ReviewError(f"no open defect with key {rest[0]!r} (see `defects list`)")
+            policy.save_ledger(ledger_path, ledger)
+            out(f"{rest[0]} -> closed")
+            return 0
+        raise ReviewError(f"unknown defects command {action!r}: use list, close")
+    except ReviewError as exc:
+        out(f"defects: {exc}")
+        return 2
 
 
 def _coverage_text(settings, doc: dict, rest: list[str]) -> str:

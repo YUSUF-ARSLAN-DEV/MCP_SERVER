@@ -1,0 +1,2114 @@
+{
+  "schema_version": "2.0",
+  "generated_at": "2026-10-08T12:53:51+00:00",
+  "site": "https://sat-stg.aljazeera.tv/",
+  "run_id": "run-20261008125345",
+  "run_started_at": "2026-10-08T12:47:00+00:00",
+  "run_finished_at": "2026-10-08T12:53:45+00:00",
+  "run_duration_seconds": 405.0,
+  "counts": {
+    "journeys_total": 35,
+    "journeys_with_result": 27,
+    "journeys_passed": 27,
+    "journeys_failed": 0,
+    "journeys_test_defect": 0,
+    "journeys_skipped": 0,
+    "journeys_failed_last_check": 0,
+    "journeys_no_result": 8,
+    "journeys_not_run": 8,
+    "journeys_passed_percent": 77,
+    "page_tests": 44,
+    "flow_tests": 26,
+    "flows_with_result": 26,
+    "executed_tests": 70,
+    "passed": 70,
+    "failed": 0,
+    "skipped": 3,
+    "test_defects": 0,
+    "blocked_flows": 8,
+    "quarantined": 1,
+    "quarantined_passed": 1,
+    "quarantined_failed": 0,
+    "all_items": 81,
+    "pass_rate_percent": 100,
+    "defects_found_this_run": 0,
+    "defects_carried": 0,
+    "open_defects": 0,
+    "appendix_index_rows": 74
+  },
+  "taxonomy": {
+    "defect": 0,
+    "unverified": 8,
+    "limitation": 2,
+    "test_defect": 0,
+    "tooling": 3
+  },
+  "recommendation": "CONDITIONAL GO",
+  "conditions": [
+    "8 journeys need a manual pass before sign-off (UNV-001 to UNV-008, section 5).",
+    "8 page(s) have controls that no journey exercised (COV-001 to COV-008, section 6).",
+    "3 tooling issue(s) left tests unrun or invalid; they hide real results (TOOL-001 to TOOL-003, section 5).",
+    "LIM-001 (https://sat-stg.aljazeera.tv/ar/subscribe): Not an application defect: an automated test cannot pass a CAPTCHA. Ask the site owner for a staging bypass (test key or disabled check) so the form can be automated, or run it with someone at the terminal: a window then shows the form and the CAPTCHA and a person types the code during the run.",
+    "LIM-002 (https://sat-stg.aljazeera.tv/en/subscribe): Not an application defect: an automated test cannot pass a CAPTCHA. Ask the site owner for a staging bypass (test key or disabled check) so the form can be automated, or run it with someone at the terminal: a window then shows the form and the CAPTCHA and a person types the code during the run."
+  ],
+  "exit_criteria": [
+    "Every unverified journey (UNV-001 to UNV-008) is manually signed off, with an owner named on each.",
+    "Each limitation (LIM-001, LIM-002) is either automated (staging bypass or test account) or accepted in writing by the site owner.",
+    "The tooling issues (TOOL-001 to TOOL-003) are repaired and the affected pages and journeys rerun with a real result.",
+    "The coverage gaps (COV-001 to COV-008) are reviewed by a person or covered by a new journey."
+  ],
+  "defects": [
+    {
+      "category": "unverified",
+      "severity": "High",
+      "priority": "P1 - before release",
+      "title": "A visitor on the Arabic home page picks a country, opens the channel list, and selects a channel to prepare for a search.",
+      "description": "This user journey has no test result in this run: it was verified earlier, but no test of it ran in this run (no generated test, or it was skipped).",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/ar.",
+        "Attempt journey sat-stg-aljazeera-tv-ar--a-visitor-on-the-arabic-home-p-4."
+      ],
+      "expected": "New content becomes visible on the page.",
+      "actual": "New content becomes visible on the page; the page ended up at /ar.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-11",
+      "linked_flow_id": "sat-stg-aljazeera-tv-ar--a-visitor-on-the-arabic-home-p-4",
+      "failure_class": "blocked_flow",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/ar",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor on the Arabic home page picks a country, opens the channel list, and selects a channel to prepare for a search.\" from /ar; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-001"
+    },
+    {
+      "category": "unverified",
+      "severity": "Medium",
+      "priority": "P2 - next fix cycle",
+      "title": "A visitor on the Arabic map presses zoom in then zoom out and watches the coverage move closer then further away.",
+      "description": "This user journey has no test result in this run: every step ran, but nothing on the page visibly changed, so the promised outcome could not be confirmed; the site did not fail, the check could not observe an effect.",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/ar/map.",
+        "Attempt journey sat-stg-aljazeera-tv-ar-map--a-visitor-on-the-arabic-map-pr."
+      ],
+      "expected": "New results appear on the page.",
+      "actual": "The journey was not completed.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-15",
+      "linked_flow_id": "sat-stg-aljazeera-tv-ar-map--a-visitor-on-the-arabic-map-pr",
+      "failure_class": "inconclusive",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/ar/map",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor on the Arabic map presses zoom in then zoom out and watches the coverage move closer then further away.\" from /ar/map; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-002"
+    },
+    {
+      "category": "unverified",
+      "severity": "High",
+      "priority": "P1 - before release",
+      "title": "A visitor on the Arabic subscribe page fills in their name, email, city and mobile number then submits the form to register for alerts.",
+      "description": "This user journey has no test result in this run: it was verified earlier, but no test of it ran in this run (no generated test, or it was skipped).",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/ar/subscribe.",
+        "Attempt journey sat-stg-aljazeera-tv-ar-subscribe--a-visitor-on-the-arabic-subscr."
+      ],
+      "expected": "validation.",
+      "actual": "New content becomes visible on the page; the page ended up at /ar/subscribe.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-11",
+      "linked_flow_id": "sat-stg-aljazeera-tv-ar-subscribe--a-visitor-on-the-arabic-subscr",
+      "failure_class": "blocked_flow",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/ar/subscribe",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor on the Arabic subscribe page fills in their name, email, city and mobile number then submits the form to register for alerts.\" from /ar/subscribe; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-003"
+    },
+    {
+      "category": "unverified",
+      "severity": "High",
+      "priority": "P1 - before release",
+      "title": "A visitor on the English home page opens the channel list, picks a channel, and presses Search to see the frequencies for that country and channel.",
+      "description": "This user journey has no test result in this run: every step ran, but the site showed no content for this input (for example a country and channel with no frequency data); try another input - the site itself did not fail.",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en.",
+        "Attempt journey sat-stg-aljazeera-tv-en--a-visitor-on-the-english-home--3."
+      ],
+      "expected": "The page navigates to a new address, landing on /en/frequency-search.",
+      "actual": "The journey was not completed.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-11",
+      "linked_flow_id": "sat-stg-aljazeera-tv-en--a-visitor-on-the-english-home--3",
+      "failure_class": "inconclusive",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/en",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor on the English home page opens the channel list, picks a channel, and presses Search to see the frequencies for that country and channel.\" from /en; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-004"
+    },
+    {
+      "category": "unverified",
+      "severity": "High",
+      "priority": "P1 - before release",
+      "title": "A visitor picks Algeria and the Al Jazeera Documentary Channel HD, presses Search and sees the frequency results for that country and channel",
+      "description": "This user journey has no test result in this run: every step ran, but the site showed no content for this input (for example a country and channel with no frequency data); try another input - the site itself did not fail.",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en.",
+        "Attempt journey sat-stg-aljazeera-tv-en--a-visitor-picks-a-country-and-."
+      ],
+      "expected": "New results appear on the page.",
+      "actual": "The page navigates to a new address; the page ended up at /en/frequency-search.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-11",
+      "linked_flow_id": "sat-stg-aljazeera-tv-en--a-visitor-picks-a-country-and-",
+      "failure_class": "inconclusive",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/en",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor picks Algeria and the Al Jazeera Documentary Channel HD, presses Search and sees the frequency results for that country and channel\" from /en; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-005"
+    },
+    {
+      "category": "unverified",
+      "severity": "Medium",
+      "priority": "P2 - next fix cycle",
+      "title": "A visitor entering the code on the English alerts form chooses Listen to the code instead and the code is offered as sound.",
+      "description": "This user journey has no test result in this run: it was verified earlier, but no test of it ran in this run (no generated test, or it was skipped).",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en/subscribe.",
+        "Attempt journey sat-stg-aljazeera-tv-en-subscribe--a-visitor-entering-the-code-on."
+      ],
+      "expected": "New content becomes visible on the page.",
+      "actual": "New content becomes visible on the page; the page ended up at /en/subscribe.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-15",
+      "linked_flow_id": "sat-stg-aljazeera-tv-en-subscribe--a-visitor-entering-the-code-on",
+      "failure_class": "blocked_flow",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/en/subscribe",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor entering the code on the English alerts form chooses Listen to the code instead and the code is offered as sound.\" from /en/subscribe; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-006"
+    },
+    {
+      "category": "unverified",
+      "severity": "High",
+      "priority": "P1 - before release",
+      "title": "A visitor on the subscribe page fills in every field, enters the wrong code 0000 in What code is in the image?, and submits the form to see an error.",
+      "description": "This user journey has no test result in this run: it was verified earlier, but no test of it ran in this run (no generated test, or it was skipped).",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en/subscribe.",
+        "Attempt journey sat-stg-aljazeera-tv-en-subscribe--a-visitor-on-the-subscribe-pag."
+      ],
+      "expected": "validation.",
+      "actual": "New content becomes visible on the page; the page ended up at /en/subscribe.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-11",
+      "linked_flow_id": "sat-stg-aljazeera-tv-en-subscribe--a-visitor-on-the-subscribe-pag",
+      "failure_class": "blocked_flow",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/en/subscribe",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor on the subscribe page fills in every field, enters the wrong code 0000 in What code is in the image?, and submits the form to see an error.\" from /en/subscribe; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-007"
+    },
+    {
+      "category": "unverified",
+      "severity": "High",
+      "priority": "P1 - before release",
+      "title": "A visitor on the English subscribe page fills in every field with valid details, types the code shown in the image, presses Submit Request and sees a confirmation that the request was received.",
+      "description": "This user journey has no test result in this run: it was verified earlier, but no test of it ran in this run (no generated test, or it was skipped).",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en/subscribe.",
+        "Attempt journey sat-stg-aljazeera-tv-en-subscribe--a-visitor-submits-a-valid-req."
+      ],
+      "expected": "New content becomes visible on the page.",
+      "actual": "New content becomes visible on the page; the page ended up at /en/subscribe.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: no test produced a result for this journey in this run, so no browser step was captured.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-11",
+      "linked_flow_id": "sat-stg-aljazeera-tv-en-subscribe--a-visitor-submits-a-valid-req",
+      "failure_class": "blocked_flow",
+      "scope": "flow",
+      "url": "https://sat-stg.aljazeera.tv/en/subscribe",
+      "business_impact": "Visitors cannot be shown to complete \"A visitor on the English subscribe page fills in every field with valid details, types the code shown in the image, presses Submit Request and sees a confirmation that the request was received.\" from /en/subscribe; until it has a passing test, releasing carries that risk.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "id": "UNV-008"
+    },
+    {
+      "category": "limitation",
+      "severity": "Low",
+      "priority": "P3 - when convenient",
+      "title": "A person is needed to complete the form at https://sat-stg.aljazeera.tv/ar/subscribe",
+      "description": "the form asks the visitor to prove they are human; that step cannot be automated",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/ar/subscribe.",
+        "Complete the CAPTCHA step manually."
+      ],
+      "expected": "The form should be completed and submitted.",
+      "actual": "The run stopped at CAPTCHA; the step was not automated.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: the run stopped at the CAPTCHA step, so there is nothing past it to capture.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-22",
+      "linked_flow_id": "NOT CAPTURED",
+      "failure_class": "human_input_required",
+      "scope": "page",
+      "url": "https://sat-stg.aljazeera.tv/ar/subscribe",
+      "business_impact": "The form at /ar/subscribe needs a CAPTCHA step that no automated test can pass, so submitting it is unverified.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "mitigation": "Not an application defect: an automated test cannot pass a CAPTCHA. Ask the site owner for a staging bypass (test key or disabled check) so the form can be automated, or run it with someone at the terminal: a window then shows the form and the CAPTCHA and a person types the code during the run.",
+      "id": "LIM-001"
+    },
+    {
+      "category": "limitation",
+      "severity": "Low",
+      "priority": "P3 - when convenient",
+      "title": "A person is needed to complete the form at https://sat-stg.aljazeera.tv/en/subscribe",
+      "description": "the form asks the visitor to prove they are human; that step cannot be automated",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en/subscribe.",
+        "Complete the CAPTCHA step manually."
+      ],
+      "expected": "The form should be completed and submitted.",
+      "actual": "The run stopped at CAPTCHA; the step was not automated.",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: the run stopped at the CAPTCHA step, so there is nothing past it to capture.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-22",
+      "linked_flow_id": "NOT CAPTURED",
+      "failure_class": "human_input_required",
+      "scope": "page",
+      "url": "https://sat-stg.aljazeera.tv/en/subscribe",
+      "business_impact": "The form at /en/subscribe needs a CAPTCHA step that no automated test can pass, so submitting it is unverified.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "mitigation": "Not an application defect: an automated test cannot pass a CAPTCHA. Ask the site owner for a staging bypass (test key or disabled check) so the form can be automated, or run it with someone at the terminal: a window then shows the form and the CAPTCHA and a person types the code during the run.",
+      "id": "LIM-002"
+    },
+    {
+      "category": "tooling",
+      "severity": "Low",
+      "priority": "P3 - when convenient",
+      "title": "Test skipped before it ran: test page not testable",
+      "description": "Not tested: NOT TESTABLE: no spec passed validation - unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead Root cause: spec rejected after 5 attempts, wrote skip stub: unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/ar/newfrequencies.",
+        "Run test runs/sat-stg.aljazeera.tv/tests/https-sat-stg-aljazeera-tv-ar-newfrequencies_test.py::test_page_not_testable."
+      ],
+      "expected": "The check should run and produce a result.",
+      "actual": "Not tested: NOT TESTABLE: no spec passed validation - unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead Root cause: spec rejected after 5 attempts, wrote skip stub: unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: the test was skipped before any browser step ran.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-22",
+      "linked_flow_id": "NOT CAPTURED",
+      "failure_class": "harness_skip",
+      "scope": "page",
+      "url": "https://sat-stg.aljazeera.tv/ar/newfrequencies",
+      "business_impact": "\"test page not testable\" on /ar/newfrequencies has no result from this check, so that part of the site is not covered.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "_stable_key": "https-sat-stg-aljazeera-tv-ar-newfrequencies_test.py::test_page_not_testable",
+      "id": "TOOL-001"
+    },
+    {
+      "category": "tooling",
+      "severity": "Low",
+      "priority": "P3 - when convenient",
+      "title": "Test skipped before it ran: test page not testable",
+      "description": "Not tested: NOT TESTABLE: no spec passed validation - unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead Root cause: spec rejected after 5 attempts, wrote skip stub: unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en/newfrequencies.",
+        "Run test runs/sat-stg.aljazeera.tv/tests/https-sat-stg-aljazeera-tv-en-newfrequencies_test.py::test_page_not_testable."
+      ],
+      "expected": "The check should run and produce a result.",
+      "actual": "Not tested: NOT TESTABLE: no spec passed validation - unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead Root cause: spec rejected after 5 attempts, wrote skip stub: unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: the test was skipped before any browser step ran.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-22",
+      "linked_flow_id": "NOT CAPTURED",
+      "failure_class": "harness_skip",
+      "scope": "page",
+      "url": "https://sat-stg.aljazeera.tv/en/newfrequencies",
+      "business_impact": "\"test page not testable\" on /en/newfrequencies has no result from this check, so that part of the site is not covered.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "_stable_key": "https-sat-stg-aljazeera-tv-en-newfrequencies_test.py::test_page_not_testable",
+      "id": "TOOL-002"
+    },
+    {
+      "category": "tooling",
+      "severity": "Low",
+      "priority": "P3 - when convenient",
+      "title": "Test skipped before it ran: test page not testable",
+      "description": "Not tested: NOT TESTABLE: no spec passed validation - unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead Root cause: spec rejected after 5 attempts, wrote skip stub: unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead",
+      "steps_to_reproduce": [
+        "Open https://sat-stg.aljazeera.tv/en/tunereceiver.",
+        "Run test runs/sat-stg.aljazeera.tv/tests/https-sat-stg-aljazeera-tv-en-tunereceiver_test.py::test_page_not_testable."
+      ],
+      "expected": "The check should run and produce a result.",
+      "actual": "Not tested: NOT TESTABLE: no spec passed validation - unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead Root cause: spec rejected after 5 attempts, wrote skip stub: unstable text selector 'get_by_text' - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead",
+      "screenshot_url": "NOT CAPTURED",
+      "trace_url": "NOT CAPTURED",
+      "video_url": "NOT CAPTURED",
+      "evidence_reason": "No screenshot exists: the test was skipped before any browser step ran.",
+      "status": "Open",
+      "owner": "Yusuf Arslan",
+      "due": "2026-10-22",
+      "linked_flow_id": "NOT CAPTURED",
+      "failure_class": "harness_skip",
+      "scope": "page",
+      "url": "https://sat-stg.aljazeera.tv/en/tunereceiver",
+      "business_impact": "\"test page not testable\" on /en/tunereceiver has no result from this check, so that part of the site is not covered.",
+      "blocking": false,
+      "severity_set_at": "",
+      "severity_reason": "",
+      "_stable_key": "https-sat-stg-aljazeera-tv-en-tunereceiver_test.py::test_page_not_testable",
+      "id": "TOOL-003"
+    }
+  ],
+  "delta": {
+    "baseline": true,
+    "previous_run_id": "run-20261008082511",
+    "previous_finished_at": "2026-10-08T08:25:11+00:00",
+    "previous_pass_rate_percent": 100,
+    "previous_tests_ran": 70,
+    "previous_journeys_total": 35,
+    "previous_requirements_total": 78,
+    "added": [],
+    "removed": [],
+    "quarantined_delta": 0,
+    "quarantined_now": 1,
+    "category_changes": [],
+    "fixed": [],
+    "still_failing": [],
+    "new_failures": [],
+    "renamed_count": 0,
+    "environment_changes": []
+  },
+  "requirements": {
+    "total": 78,
+    "not_backed": 53,
+    "percent": 68,
+    "rows": [
+      {
+        "id": "i-001",
+        "sentence": "Go to the landing page, pick a country, pick a channel and check the available TV satellite frequencies",
+        "source": "human",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Inconclusive (steps ran, outcome not observable)",
+        "passed": false
+      },
+      {
+        "id": "i-002",
+        "sentence": "A visitor picks Algeria and the Al Jazeera Documentary Channel HD, presses Search and sees the frequency results for that country and channel",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Inconclusive (steps ran, outcome not observable)",
+        "passed": false
+      },
+      {
+        "id": "i-003",
+        "sentence": "A visitor chooses the map option on the landing page and the interactive map opens",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-004",
+        "sentence": "A visitor picks a country and a channel on the search page, then chooses Subscribe Now and the subscribe page opens",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "control \"channel\" not found on /en/frequency-search",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-005",
+        "sentence": "A visitor searches for frequencies in a country, then chooses Subscribe Now from the search page and the subscribe page opens",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-006",
+        "sentence": "A visitor on the map presses Zoom in and the satellite coverage moves closer",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-007",
+        "sentence": "A visitor on the map presses Zoom out and the satellite coverage moves further away",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-008",
+        "sentence": "A visitor on the receiver tuning page presses Next and the next tuning step appears",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-009",
+        "sentence": "A visitor on the frequency search page chooses New Frequencies from the top menu and sees the latest updated frequencies",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "outcome page /en/newfrequencies is neither explored nor linked from an explored page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-010",
+        "sentence": "A visitor on the new frequencies page chooses Tune Your Receiver from the top menu and sees the receiver tuning steps",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-011",
+        "sentence": "A visitor on the subscribe form presses Listen to the code instead and the code is spoken aloud",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-012",
+        "sentence": "A visitor on the map chooses Find Al Jazeera using dropdown menu and the frequency search page opens",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-013",
+        "sentence": "A visitor reading the new frequencies page presses Subscribe Now and the subscribe page opens",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-014",
+        "sentence": "A visitor on the Arabic home page presses Go to Map and the interactive coverage map opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-015",
+        "sentence": "A visitor searching for frequencies on the Arabic search page chooses the interactive map link and the coverage map opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-016",
+        "sentence": "A visitor on the Arabic new frequencies page presses Subscribe Now and the alerts subscription page opens.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "model: what is missing",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-017",
+        "sentence": "A visitor on the Arabic frequency search page presses Subscribe Now and the alerts subscription page opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-018",
+        "sentence": "A visitor on the English receiver tuning page presses Setting then Next and the next tuning step appears.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "start page /... was not explored",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-019",
+        "sentence": "A visitor on the subscribe page fills in their name, email then picks a country and channel for the alerts.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "model: what is missing",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-020",
+        "sentence": "A visitor on the Arabic home page starts the receiver tuning steps and presses Next to see the next step.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "model: what is missing",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-021",
+        "sentence": "A visitor on the Arabic home page presses the Tune button and sees the receiver tuning steps.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "expanded",
+        "reason": "",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-022",
+        "sentence": "A visitor on the Arabic home page presses the Install button and sees the receiver installation steps.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "expanded",
+        "reason": "",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-023",
+        "sentence": "A visitor on the Arabic home page presses Subscribe Now and the alerts subscription page opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-024",
+        "sentence": "A visitor on the English home page presses Setting and sees the receiver tuning steps.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "expanded",
+        "reason": "",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-025",
+        "sentence": "A visitor on the subscribe page submits the form with every field empty and sees the message Please fill in this field next to the required fields.",
+        "source": "doc",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-026",
+        "sentence": "A visitor on the subscribe page chooses no Country and submits the form, seeing the message Please choose an option from the list.",
+        "source": "doc",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-027",
+        "sentence": "A visitor on the subscribe page fills in every field, enters the wrong code 0000 in What code is in the image?, and submits the form to see an error.",
+        "source": "doc",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Not run in this run",
+        "passed": false
+      },
+      {
+        "id": "i-028",
+        "sentence": "A visitor on the subscribe page presses Show me a different code and sees the image code replaced by a new one.",
+        "source": "doc",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-029",
+        "sentence": "A visitor on the subscribe page presses Listen to the code instead and is offered the code as audio.",
+        "source": "doc",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-030",
+        "sentence": "A visitor on the Arabic frequency search page chooses the interactive map link and the coverage map opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-031",
+        "sentence": "A visitor on the Arabic home page presses the Tune button and then presses Next to see the next tuning step.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "critic: the steps do not match the sentence (coherence 2: The flow conflates the 'Tune' (ضبط) button with the 'Next' (التالي) button, which are distinct controls in the site map; clicking 'ضبط' does not lead to a state where 'التالي' is the logical next step for tuning, and the outcome only reveals controls without confirming the tuning procedure was follo)",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-032",
+        "sentence": "A visitor on the Arabic home page picks a country, opens the channel list, and selects a channel to prepare for a search.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Not run in this run",
+        "passed": false
+      },
+      {
+        "id": "i-033",
+        "sentence": "A visitor on the Arabic frequency search page opens the channel list and selects a specific channel before searching.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "outcome is the page the flow started on",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-034",
+        "sentence": "A visitor on the Arabic map presses the zoom in button and the satellite coverage area expands.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-035",
+        "sentence": "A visitor on the Arabic map presses the zoom out button and the satellite coverage area shrinks.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-036",
+        "sentence": "A visitor on the Arabic map chooses the dropdown menu option and the frequency search page opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-037",
+        "sentence": "A visitor on the Arabic receiver tuning page presses the Installation button and sees the receiver installation steps.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-038",
+        "sentence": "A visitor on the English home page presses the Installation button and sees the receiver installation steps.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "expanded",
+        "reason": "",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-039",
+        "sentence": "A visitor on the Arabic home page selects a country, opens the channel list, and chooses a specific channel to prepare for a frequency search.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Not run in this run",
+        "passed": false
+      },
+      {
+        "id": "i-040",
+        "sentence": "A visitor on the English subscribe page fills in every field with valid details, types the code shown in the image, presses Submit Request and sees a confirmation that the request was received.",
+        "source": "human",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Not run in this run",
+        "passed": false
+      },
+      {
+        "id": "i-041",
+        "sentence": "A visitor following the Arabic receiver tuning steps presses Next and the next step of the procedure appears.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-042",
+        "sentence": "A visitor checking the latest Arabic frequencies presses Subscribe Now and the subscription page opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-043",
+        "sentence": "A visitor viewing the satellite map on the English site presses Zoom in and sees the coverage area expand.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-044",
+        "sentence": "A visitor filling in the English alerts form presses Show me a different code and a new image code appears.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-045",
+        "sentence": "A visitor entering the code on the English alerts form chooses Listen to the code instead and the code is offered as sound.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Not run in this run",
+        "passed": false
+      },
+      {
+        "id": "i-046",
+        "sentence": "A visitor on the Arabic frequency search page selects a channel from the list and presses Search to see the frequencies for that channel.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-047",
+        "sentence": "A visitor reading the English new and updated frequencies page presses Subscribe Now and the subscribe form opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-048",
+        "sentence": "A visitor on the Arabic receiver tuning steps presses Next twice to move ahead through the tuning steps.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-049",
+        "sentence": "A visitor on the English home page opens the channel list, picks a channel, and presses Search to see the frequencies for that country and channel.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Inconclusive (steps ran, outcome not observable)",
+        "passed": false
+      },
+      {
+        "id": "i-050",
+        "sentence": "A visitor on the English subscribe page fills in their name and email, then presses Show me a different code to see a new code image.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "expanded",
+        "reason": "",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-051",
+        "sentence": "A visitor on the Arabic frequency search page picks a channel from the channel list, presses Search, and sees the frequencies for that country and channel.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-052",
+        "sentence": "A visitor on the Arabic home page picks a country and searches for frequencies, then presses Go to Map to see the interactive coverage map.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-053",
+        "sentence": "A visitor on the Arabic frequency search page chooses New Frequencies from the top menu and the Arabic new frequencies page opens.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "model: NAV control 'New Frequencies' on /ar/frequency-search only connects to /en/newfrequencies; no control connects to /ar/newfrequencies",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-054",
+        "sentence": "A visitor on the Arabic frequency search page opens the channel list, picks a channel and presses Search to see the frequencies for that channel.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-055",
+        "sentence": "A visitor on the English home page opens the channel list, picks a channel and presses Search to see the matching frequencies.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "control \"channel\" not found on /en",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-056",
+        "sentence": "A visitor on the Arabic receiver tuning page presses Tune and then Next and the next tuning step appears.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-057",
+        "sentence": "A visitor on the Arabic map zooms in on the satellite coverage then chooses the list link to open the frequency search page.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-058",
+        "sentence": "A visitor on the English map zooms out on the satellite coverage then chooses the dropdown menu link to open the frequency search page.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-059",
+        "sentence": "A visitor on the Arabic subscribe page fills in their name, email, city and mobile number then submits the form to register for alerts.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Not run in this run",
+        "passed": false
+      },
+      {
+        "id": "i-060",
+        "sentence": "A visitor on the English frequency search page opens New Frequencies from the top menu then presses Subscribe Now to open the alerts subscription page.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-061",
+        "sentence": "A visitor on the Arabic home page chooses New Frequencies from the top menu and sees the latest updated frequencies.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "model: no control on /ar (top menu or link) navigates to /ar/newfrequencies",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-062",
+        "sentence": "A visitor on the Arabic home page chooses the latest frequencies link and the new frequencies page opens.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "control \"احصل على احدث الترددات\" not found on /ar",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-063",
+        "sentence": "A visitor signs in with the saved account and sees the secure area.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "expanded",
+        "reason": "",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-064",
+        "sentence": "A visitor presses the Login button without typing a username or password and sees a message to fill in the missing details.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-065",
+        "sentence": "A visitor on the English receiver tuning page presses Installation and sees the receiver installation steps.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-066",
+        "sentence": "A visitor on the English receiver tuning page presses Setting and the receiver settings appear.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-067",
+        "sentence": "A visitor on the English coverage map zooms in closer, then chooses the Find Aljazeera link and the frequency search page opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-068",
+        "sentence": "A visitor on the Arabic home page chooses the latest updates link and sees the new frequencies page.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "control \"New Frequencies\" not found on /ar",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-069",
+        "sentence": "A visitor on the English alerts subscription page presses Show me a different code and sees the image replaced by a new code.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-070",
+        "sentence": "A visitor on the English map presses Zoom in, then chooses Find Al Jazeera using dropdown menu and the frequency search page opens.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-071",
+        "sentence": "A visitor on the English subscribe page presses Show me a different code and a new code appears in the image.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-072",
+        "sentence": "A visitor on the Arabic subscribe page fills in every field, enters the code from the image and presses تسجيل to send the request.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "model: ...",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-073",
+        "sentence": "A visitor on the Arabic receiver tuning page chooses New Frequencies from the top menu and sees the newest frequencies.",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "control \"New Frequencies\" not found on /ar/tunereceiver",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-074",
+        "sentence": "A visitor on the Arabic map presses zoom in then zoom out and watches the coverage move closer then further away.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Inconclusive (steps ran, outcome not observable)",
+        "passed": false
+      },
+      {
+        "id": "i-075",
+        "sentence": "A visitor on the English home page opens the channel list, selects a channel, then presses Search and sees the matching frequencies.",
+        "source": "ai",
+        "flow_built": true,
+        "status": "covered",
+        "reason": "",
+        "result": "Inconclusive (steps ran, outcome not observable)",
+        "passed": false
+      },
+      {
+        "id": "i-076",
+        "sentence": "A visitor on the English home page presses Setting and then Next to see the next tuning step",
+        "source": "ai",
+        "flow_built": true,
+        "status": "expanded",
+        "reason": "",
+        "result": "Passed",
+        "passed": true
+      },
+      {
+        "id": "i-077",
+        "sentence": "A visitor on the Arabic alerts subscription page fills in every field, types the code from the image and presses Register",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "needs a goal and 1-8 steps",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      },
+      {
+        "id": "i-078",
+        "sentence": "A visitor on the Arabic alerts subscription page presses Listen to the code instead and hears the code spoken",
+        "source": "ai",
+        "flow_built": false,
+        "status": "unbuildable",
+        "reason": "a single step is only a journey when it navigates to another page",
+        "result": "No flow, so nothing was tested",
+        "passed": false
+      }
+    ]
+  },
+  "risks": [
+    {
+      "id": "RSK-001",
+      "kind": "Quarantined",
+      "subject": "A visitor on the Arabic receiver tuning steps presses Next twice to move ahead through the tuning steps.",
+      "text": "This journey's result is excluded from the pass rate (quarantined - see `flows list`/sat-stg-aljazeera-tv-ar-tunereceiver--a-visitor-on-the-arabic-receiv). Passed this run; consider `flows unquarantine` once it has passed reliably."
+    },
+    {
+      "id": "RSK-002",
+      "kind": "Stability risk",
+      "subject": "A visitor on the Arabic receiver tuning steps presses Next twice to move ahead through the tuning steps.",
+      "text": "Recent results alternate between pass and fail (P P F P P P, oldest to newest). Last 6 result(s): runner 1 run, 0 failures, pytest 5 runs, 1 failure (20%). Full history: runner 14 runs, 1 failure (7%), pytest 15 runs, 5 failures (33%). content-dependent: playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded. Retest before relying on it."
+    },
+    {
+      "id": "RSK-003",
+      "kind": "Stability risk",
+      "subject": "A visitor picks Algeria and the Al Jazeera Documentary Channel HD, presses Search and sees the frequency results for that country and channel",
+      "text": "The runner and pytest paths disagree about this journey's latest result - neither is reliable alone until this is resolved. (runner=failed (2026-10-08T07:05:30+00:00), pytest=passed (2026-09-24T11:02:17+00:00))."
+    },
+    {
+      "id": "RSK-004",
+      "kind": "Coverage risk",
+      "subject": "journey \"Search: select \"Aland Islands\" in the control; click \"Search\" (starts at /)\" (sat-stg-aljazeera-tv--search)",
+      "text": "The journey reached a new address, but the resulting content was not confirmed."
+    },
+    {
+      "id": "RSK-005",
+      "kind": "Coverage risk",
+      "subject": "journey \"بحث: select \"جزر آلاند\" in the control; click \"بحث\" (starts at /ar/frequency-search)\" (sat-stg-aljazeera-tv-ar-frequency-search--flow)",
+      "text": "The journey reached a new address, but the resulting content was not confirmed."
+    },
+    {
+      "id": "RSK-006",
+      "kind": "Coverage risk",
+      "subject": "journey \"Search: select \"Aland Islands\" in the control; click \"Search\" (starts at /en)\" (sat-stg-aljazeera-tv-en--search)",
+      "text": "The journey reached a new address, but the resulting content was not confirmed."
+    },
+    {
+      "id": "RSK-007",
+      "kind": "Coverage risk",
+      "subject": "journey \"Search: select \"Aland Islands\" in the control; click \"Search\" (starts at /en/frequency-search)\" (sat-stg-aljazeera-tv-en-frequency-search--search)",
+      "text": "The journey reached a new address, but the resulting content was not confirmed."
+    },
+    {
+      "id": "RSK-008",
+      "kind": "Coverage risk",
+      "subject": "Device and browser coverage",
+      "text": "Mobile viewport coverage was not executed; responsive and mobile release risk remains unverified."
+    },
+    {
+      "id": "RSK-009",
+      "kind": "Needs a human",
+      "subject": "CAPTCHA and verification-code forms",
+      "text": "2 form step(s) require manual completion; those steps were not automated (LIM-001, LIM-002, section 5)."
+    }
+  ],
+  "run_log": [
+    "Authentication: Signed in to the site on the first attempt (env)."
+  ],
+  "coverage": {
+    "pages_total": 12,
+    "pages_visited": 11,
+    "controls_total": 62,
+    "controls_touched": 44,
+    "tested_flows": 32,
+    "planned_flows": 3,
+    "gaps": [
+      {
+        "id": "COV-001",
+        "page": "/ar",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "أشترك اﻷن; ضبط; تركيب; التالي",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      },
+      {
+        "id": "COV-002",
+        "page": "/ar/map",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "تصغير",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      },
+      {
+        "id": "COV-003",
+        "page": "/ar/subscribe",
+        "url": "https://sat-stg.aljazeera.tv/ar/subscribe",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "الدولة *; القناة *; اللغة *; أظهر لي رمزا آخر; استمع إلى الرمز بدلا من ذلك; ما هو الرمز في الصورة *",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      },
+      {
+        "id": "COV-004",
+        "page": "/ar/tunereceiver",
+        "url": "https://sat-stg.aljazeera.tv/ar/tunereceiver",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "تركيب",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      },
+      {
+        "id": "COV-005",
+        "page": "/en",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "Please select a channel",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      },
+      {
+        "id": "COV-006",
+        "page": "/en/subscribe",
+        "url": "https://sat-stg.aljazeera.tv/en/subscribe",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "Show me a different code",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      },
+      {
+        "id": "COV-007",
+        "page": "/en/tunereceiver",
+        "url": "https://sat-stg.aljazeera.tv/en/tunereceiver",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "Setting; Installation (main action); Next",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      },
+      {
+        "id": "COV-008",
+        "page": "/ar/newfrequencies",
+        "url": "https://sat-stg.aljazeera.tv/ar/newfrequencies",
+        "impact": "Some page behavior was not exercised by a passing user journey.",
+        "untouched_controls": "أشترك اﻷن",
+        "what_to_review": "Open the page and use each listed control once, or write a journey that does."
+      }
+    ]
+  },
+  "environment": {
+    "Browser": "Chromium",
+    "Browser version": "151.0.7922.34",
+    "Device": "Desktop (no device emulation)",
+    "Playwright": "1.62.0",
+    "pytest": "9.1.1",
+    "Pipeline version": "0.1.0",
+    "Pipeline git SHA": "056237a",
+    "Headless": "True",
+    "OS": "Windows-11-10.0.26200-SP0",
+    "Python": "3.14.3",
+    "Site": "https://sat-stg.aljazeera.tv/",
+    "Internal model": "glm-5.3-flash-tr3-4bpw-abliterated",
+    "Model": "glm-5.3-flash-tr3-4bpw-abliterated",
+    "Run window": "2026-10-08T12:47:00+00:00 - 2026-10-08T12:53:45+00:00"
+  },
+  "application_build": {
+    "id": "NOT CAPTURED",
+    "source": "the site publishes no build identifier (no header, meta tag or /version.json); set APP_BUILD_ID"
+  },
+  "snapshot": {
+    "run_id": "run-20261008125345",
+    "finished_at": "2026-10-08T12:53:45+00:00",
+    "pass_rate_percent": 100,
+    "tests_ran": 70,
+    "journeys_total": 35,
+    "requirements_total": 78,
+    "tests": {
+      "https-sat-stg-aljazeera-tv_test.py::test_primary_flow_search_country_aaland_islands[chromium]": {
+        "title": "test primary flow search country aaland islands",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv_test.py::test_channel_multiselect_reveals_channel_checkboxes[chromium]": {
+        "title": "test channel multiselect reveals channel checkboxes",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv_test.py::test_go_to_map_navigates_to_map[chromium]": {
+        "title": "test go to map navigates to map",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv_test.py::test_subscribe_now_navigates_to_subscribe[chromium]": {
+        "title": "test subscribe now navigates to subscribe",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv_test.py::test_tune_receiver_next_reveals_password_step[chromium]": {
+        "title": "test tune receiver next reveals password step",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv_test.py::test_primary_navigation_links_present[chromium]": {
+        "title": "test primary navigation links present",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar_test.py::test_primary_flow_search_by_country_navigates_to_frequency_search[chromium]": {
+        "title": "test primary flow search by country navigates to frequency search",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar_test.py::test_channel_button_opens_channel_multiselect_menu[chromium]": {
+        "title": "test channel button opens channel multiselect menu",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar_test.py::test_map_button_navigates_to_map_page[chromium]": {
+        "title": "test map button navigates to map page",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar_test.py::test_subscribe_now_button_navigates_to_subscribe_page[chromium]": {
+        "title": "test subscribe now button navigates to subscribe page",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar_test.py::test_wizard_next_button_reveals_step_two_password_field[chromium]": {
+        "title": "test wizard next button reveals step two password field",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar_test.py::test_primary_nav_and_footer_links_are_present[chromium]": {
+        "title": "test primary nav and footer links are present",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-frequency-search_test.py::test_search_by_country_navigates_with_country_param[chromium]": {
+        "title": "test search by country navigates with country param",
+        "url": "https://sat-stg.aljazeera.tv/ar/frequency-search",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-frequency-search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_map_canvas_renders_after_load[chromium]": {
+        "title": "test map canvas renders after load",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_zoom_in_button_clicks_and_map_stays_visible[chromium]": {
+        "title": "test zoom in button clicks and map stays visible",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_zoom_out_button_clicks_and_map_stays_visible[chromium]": {
+        "title": "test zoom out button clicks and map stays visible",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_frequency_search_link_navigates_to_search_page[chromium]": {
+        "title": "test frequency search link navigates to search page",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_home_link_navigates_to_ar_homepage[chromium]": {
+        "title": "test home link navigates to ar homepage",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_main_heading_of_satellite_frequencies_visible[chromium]": {
+        "title": "test main heading of satellite frequencies visible",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_chrome_nav_and_footer_links_visible[chromium]": {
+        "title": "test chrome nav and footer links visible",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-map_test.py::test_skip_link_present_in_dom[chromium]": {
+        "title": "test skip link present in dom",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-newfrequencies_test.py::test_page_not_testable": {
+        "title": "test page not testable",
+        "url": "https://sat-stg.aljazeera.tv/ar/newfrequencies",
+        "status": "skipped",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-newfrequencies_test.py",
+        "quarantined": false,
+        "category": "tooling"
+      },
+      "https-sat-stg-aljazeera-tv-ar-subscribe_test.py::test_subscription_form_name_field_holds_filled_value[chromium]": {
+        "title": "test subscription form name field holds filled value",
+        "url": "https://sat-stg.aljazeera.tv/ar/subscribe",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-subscribe_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-subscribe_test.py::test_empty_submit_shows_validation_errors[chromium]": {
+        "title": "test empty submit shows validation errors",
+        "url": "https://sat-stg.aljazeera.tv/ar/subscribe",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-subscribe_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-ar-tunereceiver_test.py::test_receiver_heading_and_step_buttons_visible[chromium]": {
+        "title": "test receiver heading and step buttons visible",
+        "url": "https://sat-stg.aljazeera.tv/ar/tunereceiver",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-ar-tunereceiver_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en_test.py::test_primary_flow_search_country_navigates_to_frequency_search[chromium]": {
+        "title": "test primary flow search country navigates to frequency search",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en_test.py::test_channel_dropdown_reveals_channel_checkboxes[chromium]": {
+        "title": "test channel dropdown reveals channel checkboxes",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en_test.py::test_go_to_map_navigates_to_map_page[chromium]": {
+        "title": "test go to map navigates to map page",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en_test.py::test_subscribe_now_navigates_to_subscribe_page[chromium]": {
+        "title": "test subscribe now navigates to subscribe page",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en_test.py::test_wizard_next_reveals_passcode_step[chromium]": {
+        "title": "test wizard next reveals passcode step",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en_test.py::test_tuning_section_buttons_and_headings_visible[chromium]": {
+        "title": "test tuning section buttons and headings visible",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en_test.py::test_chrome_navigation_and_footer_present[chromium]": {
+        "title": "test chrome navigation and footer present",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-frequency-search_test.py::test_search_flow_navigates_with_country_param[chromium]": {
+        "title": "test search flow navigates with country param",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-frequency-search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-frequency-search_test.py::test_channel_button_opens_multiselect_checkboxes[chromium]": {
+        "title": "test channel button opens multiselect checkboxes",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-frequency-search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-frequency-search_test.py::test_subscribe_now_navigates_to_subscribe[chromium]": {
+        "title": "test subscribe now navigates to subscribe",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-frequency-search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-frequency-search_test.py::test_map_link_navigates_to_map[chromium]": {
+        "title": "test map link navigates to map",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-frequency-search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-frequency-search_test.py::test_main_headings_visible[chromium]": {
+        "title": "test main headings visible",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-frequency-search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-frequency-search_test.py::test_primary_nav_and_footer_present[chromium]": {
+        "title": "test primary nav and footer present",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-frequency-search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-map_test.py::test_map_canvas_renders_on_coverage_page[chromium]": {
+        "title": "test map canvas renders on coverage page",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-map_test.py::test_zoom_in_button_clicks_and_map_stays_visible[chromium]": {
+        "title": "test zoom in button clicks and map stays visible",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-map_test.py::test_zoom_out_button_clicks_and_map_stays_visible[chromium]": {
+        "title": "test zoom out button clicks and map stays visible",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-map_test.py::test_dropdown_menu_link_navigates_to_frequency_search[chromium]": {
+        "title": "test dropdown menu link navigates to frequency search",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-map_test.py::test_find_aljazeera_near_you_heading_visible[chromium]": {
+        "title": "test find aljazeera near you heading visible",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-map_test.py::test_primary_nav_and_footer_links_present[chromium]": {
+        "title": "test primary nav and footer links present",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-map_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-newfrequencies_test.py::test_page_not_testable": {
+        "title": "test page not testable",
+        "url": "https://sat-stg.aljazeera.tv/en/newfrequencies",
+        "status": "skipped",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-newfrequencies_test.py",
+        "quarantined": false,
+        "category": "tooling"
+      },
+      "https-sat-stg-aljazeera-tv-en-subscribe_test.py::test_subscribe_form_fields_hold_filled_values[chromium]": {
+        "title": "test subscribe form fields hold filled values",
+        "url": "https://sat-stg.aljazeera.tv/en/subscribe",
+        "status": "passed",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-subscribe_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "https-sat-stg-aljazeera-tv-en-tunereceiver_test.py::test_page_not_testable": {
+        "title": "test page not testable",
+        "url": "https://sat-stg.aljazeera.tv/en/tunereceiver",
+        "status": "skipped",
+        "scope": "page",
+        "file": "https-sat-stg-aljazeera-tv-en-tunereceiver_test.py",
+        "quarantined": false,
+        "category": "tooling"
+      },
+      "flow_sat_stg_aljazeera_tv_open_the_interactive_map_from_test.py::test_flow_sat_stg_aljazeera_tv_open_the_interactive_map_from[chromium]": {
+        "title": "Open the interactive map from the home page",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_open_the_interactive_map_from_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_search_test.py::test_flow_sat_stg_aljazeera_tv_search[chromium]": {
+        "title": "Search: select \"Aland Islands\" in #countrylist; click \"Search\" (starts at /)",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_start_the_receiver_installatio_test.py::test_flow_sat_stg_aljazeera_tv_start_the_receiver_installatio[chromium]": {
+        "title": "Start the receiver installation wizard from the landing page",
+        "url": "https://sat-stg.aljazeera.tv/",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_start_the_receiver_installatio_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_a_visitor_on_the_arabic_home_p_test.py::test_flow_sat_stg_aljazeera_tv_ar_a_visitor_on_the_arabic_home_p[chromium]": {
+        "title": "A visitor on the Arabic home page presses Go to Map and the interactive coverage map opens.",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_a_visitor_on_the_arabic_home_p_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_a_visitor_on_the_arabic_home_p_5_test.py::test_flow_sat_stg_aljazeera_tv_ar_a_visitor_on_the_arabic_home_p_5[chromium]": {
+        "title": "A visitor on the Arabic home page picks a country and searches for frequencies, then presses Go to Map to see the interactive coverage map.",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_a_visitor_on_the_arabic_home_p_5_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_flow_test.py::test_flow_sat_stg_aljazeera_tv_ar_flow[chromium]": {
+        "title": "بحث: select \"جزر آلاند\" in #countrylist; click \"بحث\" (starts at /ar)",
+        "url": "https://sat-stg.aljazeera.tv/ar",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_flow_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_freque_test.py::test_flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_frequ[chromium]": {
+        "title": "A visitor on the Arabic frequency search page presses Subscribe Now and the alerts subscription page opens.",
+        "url": "https://sat-stg.aljazeera.tv/ar/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_freque_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_freque_2_test.py::test_flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_frequ[chromium]": {
+        "title": "A visitor on the Arabic frequency search page opens the channel list, picks a channel and presses Search to see the frequencies for that channel.",
+        "url": "https://sat-stg.aljazeera.tv/ar/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_freque_2_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_freque_3_test.py::test_flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_frequ[chromium]": {
+        "title": "A visitor on the Arabic frequency search page selects a channel from the list and presses Search to see the frequencies for that channel.",
+        "url": "https://sat-stg.aljazeera.tv/ar/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_on_the_arabic_freque_3_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_searching_for_freque_test.py::test_flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_searching_for_frequ[chromium]": {
+        "title": "A visitor searching for frequencies on the Arabic search page chooses the interactive map link and the coverage map opens.",
+        "url": "https://sat-stg.aljazeera.tv/ar/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_frequency_search_a_visitor_searching_for_freque_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_frequency_search_flow_test.py::test_flow_sat_stg_aljazeera_tv_ar_frequency_search_flow[chromium]": {
+        "title": "بحث: select \"جزر آلاند\" in #countrylist; click \"بحث\" (starts at /ar/frequency-search)",
+        "url": "https://sat-stg.aljazeera.tv/ar/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_frequency_search_flow_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_map_a_visitor_on_the_arabic_map_ch_test.py::test_flow_sat_stg_aljazeera_tv_ar_map_a_visitor_on_the_arabic_map_ch[chromium]": {
+        "title": "A visitor on the Arabic map chooses the dropdown menu option and the frequency search page opens.",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_map_a_visitor_on_the_arabic_map_ch_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_map_a_visitor_on_the_arabic_map_zo_test.py::test_flow_sat_stg_aljazeera_tv_ar_map_a_visitor_on_the_arabic_map_zo[chromium]": {
+        "title": "A visitor on the Arabic map zooms in on the satellite coverage then chooses the list link to open the frequency search page.",
+        "url": "https://sat-stg.aljazeera.tv/ar/map",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_map_a_visitor_on_the_arabic_map_zo_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_tunereceiver_a_visitor_on_the_arabic_receiv_test.py::test_flow_sat_stg_aljazeera_tv_ar_tunereceiver_a_visitor_on_the_arabic_receiv[chromium]": {
+        "title": "A visitor on the Arabic receiver tuning steps presses Next twice to move ahead through the tuning steps.",
+        "url": "https://sat-stg.aljazeera.tv/ar/tunereceiver",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_tunereceiver_a_visitor_on_the_arabic_receiv_test.py",
+        "quarantined": true,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_ar_tunereceiver_a_visitor_on_the_arabic_receiv_2_test.py::test_flow_sat_stg_aljazeera_tv_ar_tunereceiver_a_visitor_on_the_arabic_receiv_2[chromium]": {
+        "title": "A visitor on the Arabic receiver tuning page presses Tune and then Next and the next tuning step appears.",
+        "url": "https://sat-stg.aljazeera.tv/ar/tunereceiver",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_ar_tunereceiver_a_visitor_on_the_arabic_receiv_2_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_a_visitor_on_the_english_home_4_test.py::test_flow_sat_stg_aljazeera_tv_en_a_visitor_on_the_english_home_4[chromium]": {
+        "title": "A visitor on the English home page presses Setting and then Next to see the next tuning step",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_a_visitor_on_the_english_home_4_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_search_test.py::test_flow_sat_stg_aljazeera_tv_en_search[chromium]": {
+        "title": "Search: select \"Aland Islands\" in #countrylist; click \"Search\" (starts at /en)",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_subscribe_to_frequency_change_test.py::test_flow_sat_stg_aljazeera_tv_en_subscribe_to_frequency_change[chromium]": {
+        "title": "Subscribe to frequency change updates",
+        "url": "https://sat-stg.aljazeera.tv/en",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_subscribe_to_frequency_change_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_frequency_search_a_visitor_on_the_english_frequ_test.py::test_flow_sat_stg_aljazeera_tv_en_frequency_search_a_visitor_on_the_english_freq[chromium]": {
+        "title": "A visitor on the English frequency search page opens New Frequencies from the top menu then presses Subscribe Now to open the alerts subscription page.",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_frequency_search_a_visitor_on_the_english_frequ_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_frequency_search_a_visitor_searches_for_frequen_test.py::test_flow_sat_stg_aljazeera_tv_en_frequency_search_a_visitor_searches_for_freque[chromium]": {
+        "title": "A visitor searches for frequencies in a country, then chooses Subscribe Now from the search page and the subscribe page opens",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_frequency_search_a_visitor_searches_for_frequen_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_frequency_search_reach_the_interactive_map_from_test.py::test_flow_sat_stg_aljazeera_tv_en_frequency_search_reach_the_interactive_map_fro[chromium]": {
+        "title": "Reach the interactive map from the frequency search results page",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_frequency_search_reach_the_interactive_map_from_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_frequency_search_reveal_channel_options_before_test.py::test_flow_sat_stg_aljazeera_tv_en_frequency_search_reveal_channel_options_before[chromium]": {
+        "title": "Reveal channel options before searching on the frequency search page",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_frequency_search_reveal_channel_options_before_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_frequency_search_search_test.py::test_flow_sat_stg_aljazeera_tv_en_frequency_search_search[chromium]": {
+        "title": "Search: select \"Aland Islands\" in #countrylist; click \"Search\" (starts at /en/frequency-search)",
+        "url": "https://sat-stg.aljazeera.tv/en/frequency-search",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_frequency_search_search_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_english_cover_test.py::test_flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_english_cover[chromium]": {
+        "title": "A visitor on the English coverage map zooms in closer, then chooses the Find Aljazeera link and the frequency search page opens.",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_english_cover_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_english_map_z_test.py::test_flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_english_map_z[chromium]": {
+        "title": "A visitor on the English map zooms out on the satellite coverage then chooses the dropdown menu link to open the frequency search page.",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_english_map_z_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_map_chooses_f_test.py::test_flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_map_chooses_f[chromium]": {
+        "title": "A visitor on the map chooses Find Al Jazeera using dropdown menu and the frequency search page opens",
+        "url": "https://sat-stg.aljazeera.tv/en/map",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_map_a_visitor_on_the_map_chooses_f_test.py",
+        "quarantined": false,
+        "category": null
+      },
+      "flow_sat_stg_aljazeera_tv_en_newfrequencies_a_visitor_on_the_new_frequenci_test.py::test_flow_sat_stg_aljazeera_tv_en_newfrequencies_a_visitor_on_the_new_frequenci[chromium]": {
+        "title": "A visitor on the new frequencies page chooses Tune Your Receiver from the top menu and sees the receiver tuning steps",
+        "url": "https://sat-stg.aljazeera.tv/en/newfrequencies",
+        "status": "passed",
+        "scope": "flow",
+        "file": "flow_sat_stg_aljazeera_tv_en_newfrequencies_a_visitor_on_the_new_frequenci_test.py",
+        "quarantined": false,
+        "category": null
+      }
+    },
+    "pages": [
+      "https://sat-stg.aljazeera.tv/",
+      "https://sat-stg.aljazeera.tv/ar",
+      "https://sat-stg.aljazeera.tv/ar/frequency-search",
+      "https://sat-stg.aljazeera.tv/ar/map",
+      "https://sat-stg.aljazeera.tv/ar/newfrequencies",
+      "https://sat-stg.aljazeera.tv/ar/subscribe",
+      "https://sat-stg.aljazeera.tv/ar/tunereceiver",
+      "https://sat-stg.aljazeera.tv/en",
+      "https://sat-stg.aljazeera.tv/en/frequency-search",
+      "https://sat-stg.aljazeera.tv/en/map",
+      "https://sat-stg.aljazeera.tv/en/newfrequencies",
+      "https://sat-stg.aljazeera.tv/en/subscribe",
+      "https://sat-stg.aljazeera.tv/en/tunereceiver"
+    ],
+    "tooling_urls": [
+      "https://sat-stg.aljazeera.tv/ar/newfrequencies",
+      "https://sat-stg.aljazeera.tv/en/newfrequencies",
+      "https://sat-stg.aljazeera.tv/en/tunereceiver"
+    ],
+    "untested_files": [
+      "flow_sat_stg_aljazeera_tv_ar_a_visitor_on_the_arabic_home_p_4_test.py",
+      "flow_sat_stg_aljazeera_tv_ar_map_a_visitor_on_the_arabic_map_pr_test.py",
+      "flow_sat_stg_aljazeera_tv_ar_subscribe_a_visitor_on_the_arabic_subscr_test.py",
+      "flow_sat_stg_aljazeera_tv_en_a_visitor_on_the_english_home_3_test.py",
+      "flow_sat_stg_aljazeera_tv_en_a_visitor_picks_a_country_and_test.py",
+      "flow_sat_stg_aljazeera_tv_en_subscribe_a_visitor_entering_the_code_on_test.py",
+      "flow_sat_stg_aljazeera_tv_en_subscribe_a_visitor_on_the_subscribe_pag_test.py",
+      "flow_sat_stg_aljazeera_tv_en_subscribe_a_visitor_submits_a_valid_req_test.py"
+    ],
+    "env": {
+      "Browser": "Chromium",
+      "Browser version": "151.0.7922.34",
+      "Playwright": "1.62.0"
+    }
+  }
+}

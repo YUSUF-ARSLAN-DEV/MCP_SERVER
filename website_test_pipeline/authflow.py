@@ -394,6 +394,44 @@ def run_auth(settings, log, url: str) -> int:
     return 0 if result.status in {"no-wall", "off", "session-ok", "signed-in-env", "signed-in-popup", "not-tested"} else 1
 
 
+def run_auth_manual(settings, log, url: str) -> int:
+    """`cli auth --manual [url]`: open a real, visible browser on `url` and do nothing - no autofill, no popup.
+    For a login the automated path cannot do (2FA, SSO, a CAPTCHA on the sign-in form itself): the person does
+    every step themselves in the real window, then presses Enter here once signed in. Whatever cookies/storage
+    that leaves behind is saved exactly like the automated path's session, so every later command (generate,
+    verify, execute, ...) picks it up via has_session()/context_kwargs() with no other change needed."""
+    from playwright.sync_api import sync_playwright
+    if not url:
+        log.error("auth needs a URL (or SEED_URL in .env)")
+        return 2
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=False)       # always visible - the whole point is a person using it
+        context = browser.new_context()
+        page = context.new_page()
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+        except Exception as exc:
+            log.error("auth --manual: could not open %s: %s", url, exc)
+            browser.close()
+            return 2
+        print(f"A browser window is open on {url}.")
+        print("Sign in there yourself - password, 2FA code, SSO, whatever the site asks. Nothing here will touch it.")
+        try:
+            input("Press Enter once you're signed in (or close the window to cancel)... ")
+        except (EOFError, KeyboardInterrupt):
+            browser.close()
+            return 2
+        try:
+            page.title()         # cheap call that fails if the person closed the window instead of answering
+        except Exception:
+            log.error("auth --manual: the browser window was closed before the session could be saved.")
+            return 1
+        path = save_session(context, settings)
+        browser.close()
+        print(f"Session saved to {path} (git-ignored). Future runs for this site will start already signed in.")
+    return 0
+
+
 # ------------------------------------------------------------------ flows that use the login (step 6)
 
 def account_available(settings, inventories: list[dict]) -> bool:

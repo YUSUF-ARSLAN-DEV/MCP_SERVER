@@ -1,0 +1,198 @@
+{
+  "schema_version": "2.0",
+  "generated_at": "2026-10-08T07:10:45+00:00",
+  "run_id": "run-20261008071045",
+  "run_started_at": "2026-10-08T07:05:18+00:00",
+  "run_finished_at": "2026-10-08T07:10:45+00:00",
+  "run_duration_seconds": 327.0,
+  "recommendation": "CONDITIONAL GO",
+  "conditions": [
+    "fix it"
+  ],
+  "defects": [
+    {
+      "id": "DEF-001",
+      "category": "defect",
+      "status": "Open",
+      "severity": "Medium",
+      "title": "t",
+      "description": "d",
+      "steps_to_reproduce": [
+        "s"
+      ],
+      "expected": "e",
+      "actual": "a",
+      "screenshot_url": "../evidence/x/01.png",
+      "trace_url": "../../../../../../../../AppData/Local/Temp/pw/x/trace.zip",
+      "evidence_reason": "none",
+      "owner": "Owner",
+      "due": "2026-01-01",
+      "linked_flow_id": "NOT CAPTURED",
+      "severity_set_at": "2026-01-01",
+      "severity_reason": "r",
+      "blocking": false,
+      "video_url": "../../../../../../../../AppData/Local/Temp/pw/x/video.webm"
+    }
+  ],
+  "coverage": {},
+  "taxonomy": {
+    "defect": 1,
+    "unverified": 0,
+    "limitation": 0,
+    "test_defect": 0,
+    "tooling": 0
+  },
+  "delta": {
+    "baseline": true,
+    "previous_run_id": "run-0",
+    "previous_finished_at": "2026-10-07T07:10:45+00:00",
+    "previous_pass_rate_percent": 97,
+    "previous_tests_ran": 80,
+    "renamed_count": 0,
+    "removed": [
+      {
+        "id": "r0",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r1",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r2",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r3",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r4",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r5",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r6",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r7",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r8",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r9",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r10",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r11",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r12",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r13",
+        "title": "x",
+        "reason": "x"
+      },
+      {
+        "id": "r14",
+        "title": "x",
+        "reason": "x"
+      }
+    ],
+    "added": [
+      {
+        "id": "a0",
+        "title": "x"
+      },
+      {
+        "id": "a1",
+        "title": "x"
+      },
+      {
+        "id": "a2",
+        "title": "x"
+      },
+      {
+        "id": "a3",
+        "title": "x"
+      },
+      {
+        "id": "a4",
+        "title": "x"
+      },
+      {
+        "id": "a5",
+        "title": "x"
+      }
+    ],
+    "quarantined_delta": 0,
+    "quarantined_now": 0,
+    "category_changes": [],
+    "fixed": [],
+    "still_failing": [],
+    "new_failures": []
+  },
+  "counts": {
+    "executed_tests": 70,
+    "passed": 70,
+    "failed": 0,
+    "skipped": 3,
+    "blocked_flows": 9,
+    "test_defects": 0,
+    "quarantined": 0,
+    "quarantined_passed": 0,
+    "quarantined_failed": 0,
+    "all_items": 82,
+    "page_tests": 44,
+    "flow_tests": 26,
+    "journeys_total": 35,
+    "journeys_passed": 26,
+    "journeys_failed": 0,
+    "journeys_with_result": 26,
+    "journeys_test_defect": 0,
+    "journeys_skipped": 0,
+    "journeys_failed_last_check": 0,
+    "journeys_no_result": 9,
+    "journeys_not_run": 9,
+    "journeys_passed_percent": 74,
+    "flows_with_result": 26,
+    "pass_rate_percent": 100,
+    "defects_found_this_run": 0,
+    "defects_carried": 0,
+    "open_defects": 0,
+    "appendix_index_rows": 74
+  },
+  "requirements": {
+    "total": 10,
+    "not_backed": 2,
+    "percent": 20,
+    "rows": []
+  }
+}

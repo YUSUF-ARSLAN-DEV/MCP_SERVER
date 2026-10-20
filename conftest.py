@@ -8,6 +8,7 @@ workspace's artifacts dir). A plain `pytest` on the unit tests is unaffected.
 - a makereport hook that records every outcome to
   <WTP_ARTIFACTS>/test_results.json for report.py to consume.
 """
+import hashlib
 import json
 import os
 import re
@@ -24,7 +25,15 @@ RESULTS_FILE = ARTIFACTS / "test_results.json"
 
 
 def _slug(nodeid: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"
+    """A filesystem-safe folder name for this test's evidence - capped well under Windows' 260-char MAX_PATH
+    (a long nodeid otherwise produces a folder name so long that the file exists but neither Explorer nor a
+    Word hyperlink can open it: confirmed live, a 341-char path to a real screenshot). A stable hash suffix
+    (of the FULL, untruncated nodeid) keeps a truncated name unique and reproducible across write and read,
+    since report.py's own _slug must derive the identical folder name to find this evidence again."""
+    raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"
+    if len(raw) <= 100:
+        return raw
+    return f"{raw[:91]}-{hashlib.sha1(nodeid.encode('utf-8')).hexdigest()[:8]}"
 
 
 @pytest.fixture(scope="session")
@@ -66,10 +75,16 @@ def pytest_configure(config) -> None:
 _controller_merged_results: list[dict] = []   # xdist only - see pytest_testnodedown / pytest_sessionfinish
 
 
+_SESSION_STARTED_AT: str | None = None   # set once per process - see pytest_sessionfinish for why this, not run.json
+
+
 def pytest_sessionstart(session) -> None:
+    global _SESSION_STARTED_AT
     session._collected_results = []
     if ACTIVE:
         ARTIFACTS.mkdir(parents=True, exist_ok=True)
+        if _SESSION_STARTED_AT is None:
+            _SESSION_STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -123,6 +138,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:
     # A plain (non-xdist) run, or the xdist controller after every worker has reported in above.
     results = getattr(session, "_collected_results", []) + _controller_merged_results
     payload = {
+        "started_at": _SESSION_STARTED_AT or datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "exit_status": int(exitstatus),
         "totals": {

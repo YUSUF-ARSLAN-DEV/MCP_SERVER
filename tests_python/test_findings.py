@@ -312,6 +312,24 @@ def test_a_flow_that_never_ran_or_always_agrees_does_not_flap():
     assert detect_flapping({"f1": [{"source": "runner", "passed": False}] * 3}) == []
 
 
+def test_the_sequence_and_both_executor_rates_come_from_the_same_window_not_three_different_sources():
+    """Part 5: an earlier revision sliced runner and pytest to their OWN last-window independently, then
+    merged+resliced for the sequence - three different numbers that didn't agree with each other or with
+    the appendix's full history. This proves the sequence length and the window rates now always sum to
+    the same total, with the full history kept as an explicitly separate, differently-labeled figure."""
+    entries = (
+        [{"source": "runner", "passed": True, "at": f"2026-01-0{i}"} for i in range(1, 9)]       # 8 runner, all pass
+        + [{"source": "pytest", "passed": i % 2 == 0, "at": f"2026-01-1{i}"} for i in range(1, 8)])  # 7 pytest, mixed
+    out = detect_flapping({"f1": entries}, window=6)
+    flap = [r for r in out if r.kind == "flapping"][0]
+    assert len(flap.sequence.split()) == 6
+    # "Last 6 result(s): runner A runs, ... pytest B runs, ..." - A + B must equal the window size (6).
+    import re
+    window_counts = [int(n) for n in re.findall(r"runner (\d+) run|pytest (\d+) run", flap.note.split("Full history")[0]) for n in n if n]
+    assert sum(window_counts) == 6
+    assert "Full history: runner 8 run" in flap.note and "pytest 7 run" in flap.note
+
+
 # ------------------------------------------------------------------ environment and full collection
 
 def test_environment_block_has_the_basics_and_never_raises_without_settings():

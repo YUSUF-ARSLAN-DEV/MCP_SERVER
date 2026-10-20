@@ -42,15 +42,38 @@ def test_limitations_tooling_and_test_defects_never_change_the_verdict():
     assert policy.release_decision([]) == "GO"
 
 
+def test_low_requirements_coverage_caps_a_would_be_go_at_conditional_go():
+    """C4: zero open defects does not mean most written requirements are confirmed working - a would-be GO
+    is capped at CONDITIONAL GO below the threshold."""
+    assert policy.release_decision([], requirements_backed_percent=40) == "CONDITIONAL GO"
+    assert policy.release_decision([], requirements_backed_percent=80) == "GO"
+    assert policy.release_decision([], requirements_backed_percent=None) == "GO"   # no written requirements at all
+
+
+def test_requirements_coverage_never_overrides_a_verdict_a_defect_already_made_worse():
+    assert policy.release_decision([_rec("DEF-001", "defect", "High")], requirements_backed_percent=90) == "NO-GO"
+    assert policy.release_decision([_rec("DEF-001", "defect", "Medium")], requirements_backed_percent=10) == "CONDITIONAL GO"
+
+
+def test_verdict_trigger_names_low_requirements_coverage():
+    assert policy.verdict_trigger([], requirements_backed_percent=40) == \
+        "only 40% of requirements backed by a passing result, below the 60% threshold"
+    assert policy.verdict_trigger([]) == ""
+
+
 def test_a_closed_defect_does_not_block():
     assert policy.release_decision([_rec("DEF-001", "defect", "High", status="Closed")]) == "GO"
 
 
 def test_the_headline_states_the_defect_count_in_plain_words_even_when_it_is_zero():
-    zero = policy.taxonomy_counts([])
-    assert policy.defect_headline(zero).startswith("0 application defects found this run.")
-    one = policy.taxonomy_counts([_rec("DEF-001", "defect")])
-    assert policy.defect_headline(one) == "1 application defect found this run."
+    assert policy.defect_headline(0, 0).startswith("0 application defects found this run.")
+    assert policy.defect_headline(1, 0) == "1 application defect found this run."
+
+
+def test_the_headline_distinguishes_found_this_run_from_carried_from_a_previous_run():
+    """C3: a not-reproduced ledger item was not FOUND this run - it failed to reproduce and remains open."""
+    assert policy.defect_headline(0, 1) == "0 application defects found this run; 1 open defect carried from previous runs (not reproduced this run)."
+    assert policy.defect_headline(2, 3) == "2 application defects found this run; 3 open defects carried from previous runs (not reproduced this run)."
 
 
 # ------------------------------------------------------------------ severity from user impact, and priority
@@ -297,3 +320,193 @@ def test_a_failure_caused_by_the_test_itself_is_left_out_of_the_failure_count():
     assert counts["failed"] == 2 and counts["test_defects"] == 1 and counts["skipped"] == 1
     assert counts["page_tests"] == 2 and counts["flow_tests"] == 2 and counts["executed_tests"] == 4
     assert counts["passed"] + counts["failed"] == counts["executed_tests"]
+
+
+# ------------------------------------------------------------------ defect ledger (a defect persists across runs)
+
+def _rec_for(title="t", url="https://x.test/a", scope="page"):
+    return {"title": title, "url": url, "scope": scope}
+
+
+def test_a_fresh_defect_is_added_open_with_one_failure():
+    ledger = {"version": 1, "defects": {}}
+    ghosts, closed = policy.update_ledger(ledger, {"k1": _rec_for()}, "run-1", "t1")
+    assert ghosts == [] and closed == {}   # reproduced this run, so no ghost - already in this run's own defect list
+    entry = ledger["defects"]["k1"]
+    assert entry["status"] == "open" and entry["total_failures"] == 1 and entry["consecutive_not_reproduced"] == 0
+    assert entry["first_seen_run"] == "run-1" and entry["last_failed_run"] == "run-1"
+
+
+def test_a_defect_not_reproduced_becomes_a_ghost_instead_of_disappearing():
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-1", "t1")
+    ghosts, closed = policy.update_ledger(ledger, {}, "run-2", "t2")   # k1 did not fail this run
+    assert len(ghosts) == 1 and ghosts[0]["key"] == "k1" and closed == {}
+    assert ghosts[0]["consecutive_not_reproduced"] == 1 and ghosts[0]["status"] == "open"
+    assert ledger["defects"]["k1"]["total_failures"] == 1   # only incremented on an actual reproduction
+
+
+def test_a_defect_that_reproduces_again_resets_not_reproduced_and_adds_a_failure():
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-1", "t1")
+    policy.update_ledger(ledger, {}, "run-2", "t2")
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-3", "t3")
+    entry = ledger["defects"]["k1"]
+    assert entry["consecutive_not_reproduced"] == 0 and entry["total_failures"] == 2 and entry["last_failed_run"] == "run-3"
+
+
+def test_closing_a_defect_removes_it_from_future_ghosts():
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-1", "t1")
+    assert policy.close_defect(ledger, "k1", "sam", "fixed in prod", "t2") is True
+    assert ledger["defects"]["k1"]["status"] == "closed"
+    ghosts, closed = policy.update_ledger(ledger, {}, "run-2", "t2")
+    assert ghosts == [] and closed == {}   # closed, not open - never reappears as a ghost
+    assert policy.close_defect(ledger, "k1", "sam", "again", "t3") is False   # already closed
+    assert policy.close_defect(ledger, "nonexistent", "sam", "x", "t3") is False
+
+
+def test_a_closed_defect_that_reproduces_again_reopens_with_its_closure_kept_in_history():
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-1", "t1")
+    policy.close_defect(ledger, "k1", "sam", "fixed in prod", "t2")
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-3", "t3")   # the same defect fails again
+    entry = ledger["defects"]["k1"]
+    assert entry["status"] == "open" and entry["closed_by"] is None
+    assert entry["closure_history"] == [{"closed_by": "sam", "closed_at": "t2", "closed_reason": "fixed in prod",
+                                         "reopened_at": "t3", "reopened_run": "run-3"}]
+
+
+def test_severity_is_set_once_and_a_later_reproduction_never_recomputes_it():
+    """C2: severity reflects user impact and is fixed when the defect is first confirmed - reproducing it
+    again is never a reason to change it, even if a fresh computation would come out differently."""
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": {**_rec_for(), "severity": "Medium", "severity_set_at": "t1", "severity_reason": "r1"}}, "run-1", "t1")
+    entry = ledger["defects"]["k1"]
+    assert entry["severity"] == "Medium" and entry["severity_set_at"] == "t1" and entry["severity_reason"] == "r1"
+    # Reproduces again, and this time a (hypothetical) fresh computation would say High - frozen value wins.
+    policy.update_ledger(ledger, {"k1": {**_rec_for(), "severity": "High", "severity_set_at": "t3", "severity_reason": "r3"}}, "run-3", "t3")
+    entry = ledger["defects"]["k1"]
+    assert entry["severity"] == "Medium" and entry["severity_set_at"] == "t1" and entry["severity_reason"] == "r1"
+
+
+def test_a_ghost_never_recomputes_severity_either():
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": {**_rec_for(), "severity": "High", "severity_set_at": "t1", "severity_reason": "r1"}}, "run-1", "t1")
+    ghosts, _ = policy.update_ledger(ledger, {}, "run-2", "t2")   # not reproduced
+    assert ghosts[0]["severity"] == "High" and ghosts[0]["severity_set_at"] == "t1" and ghosts[0]["severity_reason"] == "r1"
+
+
+def test_a_legacy_ledger_entry_with_no_severity_gets_one_recorded_on_migration():
+    ledger = {"version": 1, "defects": {"k1": {"title": "t", "url": "https://x.test/a", "scope": "page",
+             "first_seen_run": "run-0", "first_seen_at": "t0", "total_failures": 1, "closure_history": [],
+             "status": "open", "last_failed_run": "run-0", "last_failed_at": "t0", "consecutive_not_reproduced": 0,
+             "closed_by": None, "closed_at": None, "closed_reason": None}}}
+    ghosts, _ = policy.update_ledger(ledger, {}, "run-1", "t1")
+    assert ghosts[0]["severity"] in {"Critical", "High", "Medium", "Low"}
+    assert ghosts[0]["severity_set_at"] == "t1" and "migration" in ghosts[0]["severity_reason"]
+
+
+def test_a_defect_auto_closes_after_three_consecutive_clean_runs():
+    """The other half of 'keeps its blocking status until a person closes it, which requires 3 consecutive
+    clean runs or a deliberate close' - without this, that sentence would describe a mechanism that doesn't exist."""
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-1", "t1")
+    g1, c1 = policy.update_ledger(ledger, {}, "run-2", "t2")
+    assert len(g1) == 1 and c1 == {} and ledger["defects"]["k1"]["status"] == "open"
+    g2, c2 = policy.update_ledger(ledger, {}, "run-3", "t3")
+    assert len(g2) == 1 and c2 == {} and ledger["defects"]["k1"]["status"] == "open"
+    g3, c3 = policy.update_ledger(ledger, {}, "run-4", "t4")
+    assert g3 == []   # the 3rd consecutive clean run closed it - no longer rendered as an open ghost
+    entry = ledger["defects"]["k1"]
+    assert entry["status"] == "closed" and entry["closed_by"] == "system (auto)"
+    # P1.2: the audit trail for THIS close, returned so the caller can render it in the same run it happened.
+    assert c3["k1"]["actor"] == "[auto]" and c3["k1"]["clean_run_count"] == 3 and c3["k1"]["event"] == "closed"
+    assert entry["audit_log"][-1] == c3["k1"]
+    assert policy.update_ledger(ledger, {}, "run-5", "t5") == ([], {})   # stays closed, never reappears
+
+
+def test_a_not_reproduced_defect_gets_an_honest_evidence_note_not_the_generic_fallback():
+    """D4: a ghost's check PASSED this run - "the test ended before its first evidence step" is false for it."""
+    note = policy.evidence_reason("defect", "not_reproduced")
+    assert "the check passed" in note
+    assert "ended before its first evidence step" not in note
+
+
+# ------------------------------------------------------------------ owner routing by category
+
+def test_by_category_routes_a_defect_tooling_and_limitation_to_different_people():
+    cfg = {"default": "Default Person", "by_category": {
+        "application_defect": "Dev Owner", "test_harness": "QA Owner", "site_owner_agreement": "Site Owner"}}
+    assert policy.resolve_owner(cfg, _rec("DEF-001", "defect")) == "Dev Owner"
+    assert policy.resolve_owner(cfg, _rec("TOOL-001", "tooling")) == "QA Owner"
+    assert policy.resolve_owner(cfg, _rec("LIM-001", "limitation")) == "Site Owner"
+
+
+def test_by_category_also_accepts_the_internal_category_name_directly():
+    cfg = {"by_category": {"tooling": "Internal Name Owner"}}
+    assert policy.resolve_owner(cfg, _rec("TOOL-001", "tooling")) == "Internal Name Owner"
+
+
+def test_an_unset_category_falls_back_to_default_not_unassigned():
+    cfg = {"default": "Default Person", "by_category": {"application_defect": "Dev Owner"}}
+    assert policy.resolve_owner(cfg, _rec("UNV-001", "unverified")) == "Default Person"
+
+
+def test_owner_source_distinguishes_by_category_from_a_true_default_fallback():
+    """P6: "same owner for every category" and "fell back to the default owner" are different claims -
+    by_category can be fully configured and still resolve every category to one person, which is a real
+    organizational fact, not a missing setting. The disclosure must tell these apart."""
+    fully_configured = {"default": "D", "by_category": {"application_defect": "D", "test_harness": "D", "site_owner_agreement": "D"}}
+    name, source = policy.resolve_owner_with_source(fully_configured, _rec("DEF-001", "defect"))
+    assert name == "D" and source == "by_category"   # NOT "default", even though the value is the same
+    partially_configured = {"default": "D", "by_category": {"application_defect": "D"}}
+    name2, source2 = policy.resolve_owner_with_source(partially_configured, _rec("UNV-001", "unverified"))
+    assert name2 == "D" and source2 == "default"   # genuinely fell back - no by_category entry for "unverified"
+
+
+def test_category_changes_names_the_test_and_the_reason_for_each_move():
+    prev = _snap("r1", {"a::t1": {**_t("passed"), "category": "unverified"},
+                        "a::t2": {**_t("failed"), "category": "defect"},
+                        "a::t3": {**_t("passed"), "category": None}})
+    cur = _snap("r2", {"a::t1": {**_t("failed"), "category": "defect"},     # reclassified unverified -> defect
+                       "a::t2": {**_t("passed"), "category": None},        # resolved
+                       "a::t3": {**_t("failed"), "category": "tooling"}})  # newly classified
+    delta = policy.compute_delta(prev, cur)
+    changes = {c["id"]: c for c in delta["category_changes"]}
+    assert changes["a::t1"]["reason"] == "reclassified from unverified to defect"
+    assert changes["a::t2"]["reason"] == "resolved (was defect, now passes clean)"
+    assert changes["a::t3"]["reason"] == "newly classified as tooling"
+
+
+def test_a_defect_closing_this_run_always_produces_a_category_change_row():
+    """P2: the category-changes table was absent in a run where DEF-001 left the ledger - exactly the event
+    it exists to record. A defect -> closed transition must always produce a row, carrying the audit trail
+    (actor, reason, clean-run count), not a generic "resolved" that erases how it actually happened."""
+    prev = _snap("r1", {"a::t1": {**_t("failed"), "category": "defect"}})
+    cur = _snap("r2", {"a::t1": {**_t("passed"), "category": None}})
+    closed_this_run = {"a::t1": {"at": "2026-10-08T12:53:45+00:00", "event": "closed", "actor": "[auto]",
+                                 "reason": "not reproduced for 3 consecutive runs", "clean_run_count": 3}}
+    delta = policy.compute_delta(prev, cur, closed_this_run=closed_this_run)
+    assert len(delta["category_changes"]) == 1
+    change = delta["category_changes"][0]
+    assert change["id"] == "a::t1"
+    assert "[auto]" in change["reason"] and "not reproduced for 3 consecutive runs" in change["reason"]
+    assert "clean run count at close: 3" in change["reason"]
+    assert not change["reason"].startswith("resolved")
+
+
+def test_no_category_change_when_category_is_unchanged():
+    prev = _snap("r1", {"a::t1": {**_t("passed"), "category": "defect"}})
+    cur = _snap("r2", {"a::t1": {**_t("passed"), "category": "defect"}})
+    assert policy.compute_delta(prev, cur)["category_changes"] == []
+
+
+def test_ledger_round_trips_through_disk(tmp_path):
+    path = tmp_path / "defect_ledger.json"
+    ledger = {"version": 1, "defects": {}}
+    policy.update_ledger(ledger, {"k1": _rec_for()}, "run-1", "t1")
+    policy.save_ledger(path, ledger)
+    reloaded = policy.load_ledger(path)
+    assert reloaded["defects"]["k1"]["total_failures"] == 1
+    assert policy.load_ledger(tmp_path / "missing.json") == {"version": 1, "defects": {}}

@@ -62,6 +62,7 @@ class FlapRecord:
     sequence: str          # e.g. "F P P F P", oldest to newest, real executions only
     last_at: str
     note: str
+    kind: str = "flapping"   # "flapping" (mixed pass/fail) or "disagreement" (runner and pytest disagree)
 
 
 def _first_error_line(error: str | None) -> str:
@@ -395,20 +396,55 @@ def _flow_spec_name(flow_id: str) -> str:
 
 # ------------------------------------------------------------------ suite stability (flapping)
 
+def _source_summary(runs: list[dict]) -> str:
+    """'4 runs, 0 failures' or '7 runs, 3 failures (43%)' - runner and pytest exercise the journey through two
+    different mechanisms (a live browser session vs. a generated pytest file), so a reader needs their failure
+    rates kept apart to judge which path's result to trust, not one blended number that hides which path
+    actually broke."""
+    if not runs:
+        return "0 runs"
+    failures = sum(1 for e in runs if not e.get("passed"))
+    pct = f" ({round(100 * failures / len(runs))}%)" if failures else ""
+    return f"{len(runs)} run{'s' if len(runs) != 1 else ''}, {failures} failure{'s' if failures != 1 else ''}{pct}"
+
+
 def detect_flapping(ratings: dict[str, list[dict]], names: dict[str, str] | None = None,
                     window: int = FLAP_WINDOW) -> list[FlapRecord]:
     """Flows/tests whose recent REAL executions (runner/pytest, not model opinions) mix passes and
-    failures - a green checkmark next to one of these is provisional, not settled."""
+    failures - a green checkmark next to one of these is provisional, not settled. Also flags when the
+    runner's and pytest's own latest results for the same journey disagree: if one path passes what the
+    other fails, neither result alone can be trusted for that journey until that is resolved.
+
+    The P/F sequence and the two per-executor rates next to it MUST come from the same window - computing
+    the sequence from one slice and the rates from each source's OWN separately-sliced last N (as an earlier
+    revision did) produces three numbers that don't agree with each other or with the appendix's full
+    history, which a reader has no way to check against anything in the report."""
     names = names or {}
     out = []
-    for test_id, entries in ratings.items():
-        runs = [e for e in entries if e.get("source") in {"runner", "pytest"}][-window:]
-        seq = ["P" if e.get("passed") else "F" for e in runs]
+    for test_id, entries in sorted(ratings.items()):
+        all_runs = sorted((e for e in entries if e.get("source") in {"runner", "pytest"}), key=lambda e: e.get("at", ""))
+        windowed = all_runs[-window:]
+        seq = ["P" if e.get("passed") else "F" for e in windowed]
+        win_runner = [e for e in windowed if e.get("source") == "runner"]
+        win_pytest = [e for e in windowed if e.get("source") == "pytest"]
+        full_runner = [e for e in all_runs if e.get("source") == "runner"]
+        full_pytest = [e for e in all_runs if e.get("source") == "pytest"]
         if len(set(seq)) > 1:
-            reasons = {e.get("error") for e in runs if not e.get("passed") and e.get("error")}
-            note = ("content-dependent: " + next(iter(reasons))[:100]) if reasons else "cause not recorded on the failing runs"
-            out.append(FlapRecord(names.get(test_id, test_id), "flow", " ".join(seq), runs[-1].get("at", ""), note))
-    return sorted(out, key=lambda f: f.test)
+            reasons = {e.get("error") for e in windowed if not e.get("passed") and e.get("error")}
+            cause = ("content-dependent: " + next(iter(reasons))[:100]) if reasons else "cause not recorded on the failing runs"
+            note = (f"Last {len(windowed)} result(s): runner {_source_summary(win_runner)}, pytest {_source_summary(win_pytest)}. "
+                   f"Full history: runner {_source_summary(full_runner)}, pytest {_source_summary(full_pytest)}. {cause}")
+            out.append(FlapRecord(names.get(test_id, test_id), "flow", " ".join(seq), all_runs[-1].get("at", ""), note))
+        if full_runner and full_pytest and bool(full_runner[-1].get("passed")) != bool(full_pytest[-1].get("passed")):
+            r, p = full_runner[-1], full_pytest[-1]
+            out.append(FlapRecord(
+                names.get(test_id, test_id), "flow",
+                f"runner={'passed' if r.get('passed') else 'failed'} ({r.get('at', '?')}), "
+                f"pytest={'passed' if p.get('passed') else 'failed'} ({p.get('at', '?')})",
+                max(r.get("at", ""), p.get("at", "")),
+                "The runner and pytest paths disagree about this journey's latest result - neither is reliable "
+                "alone until this is resolved.", kind="disagreement"))
+    return sorted(out, key=lambda f: (f.test, f.kind))
 
 
 # ------------------------------------------------------------------ areas behind a login

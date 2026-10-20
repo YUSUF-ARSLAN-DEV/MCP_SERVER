@@ -1,11 +1,12 @@
 import json
 from pathlib import Path
 
+import pytest
 from docx import Document
 from PIL import Image
 
 from website_test_pipeline.flowgen import file_name
-from website_test_pipeline.report import create_report, load_run
+from website_test_pipeline.report import _find_attachments, create_report, load_run
 
 START = "https://x.test/en"
 
@@ -130,7 +131,8 @@ def test_the_consolidated_table_lists_every_test_with_expected_observed_and_verd
     assert "Passcode" in by_test["wizard step"][4]
     assert by_test["wizard step"][5] and by_test["wizard step"][5] != "As expected."
     flow_row = next(r for r in rows if r[2] == "A visitor picks a country and sees the results.")
-    assert flow_row[1] == "flow" and flow_row[4] == "navigates -> /en/find" and flow_row[6] == "PASSED"
+    assert (flow_row[1] == "flow" and flow_row[4] == "The page navigates to a new address, landing on /en/find."
+           and flow_row[6] == "PASSED")
     assert flow_row[5] and flow_row[5] != "(never ran)"
 
 
@@ -406,7 +408,123 @@ def test_the_report_is_refused_when_nobody_is_named_as_owner(tmp_path, monkeypat
         create_report(artifacts, tests, tmp_path / "report", combined=True)
     (tmp_path / "owners.json").write_text(json.dumps({"default": "Dana Reviewer"}), encoding="utf-8")
     create_report(artifacts, tests, tmp_path / "report", combined=True)
-    assert "Dana Reviewer" in chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+def test_a_non_blocking_open_defect_states_why_it_does_not_block():
+    """Part 8: "No release blockers were recorded" next to a report with one open Medium defect reads as a
+    contradiction unless it says why that defect isn't a blocker."""
+    from website_test_pipeline.report import _risks_section
+    report_data = {"defects": [{"id": "DEF-001", "category": "defect", "status": "Open", "severity": "Medium",
+                                "title": "t", "blocking": False, "business_impact": "x"}],
+                   "taxonomy": {"defect": 1, "unverified": 0, "limitation": 0, "tooling": 0, "test_defect": 0},
+                   "risks": []}
+    document = Document()
+    _risks_section(document, None, report_data)
+    text = "\n".join(p.text for p in document.paragraphs)
+    assert "No release blockers were recorded. DEF-001 is Medium, below the High/Critical blocking threshold" in text
+
+
+def test_find_attachments_copies_into_the_runs_own_folder_instead_of_linking_the_temp_source(tmp_path):
+    """Part 4: a trace/video link into pytest-playwright's --output temp dir resolves for nobody and is wiped
+    on reboot - the fix is to copy the artifact into the run's own evidence folder (the same place and
+    pattern Screenshot links already use) and return THAT path, not the original temp one."""
+    pw_dir = tmp_path / "pw_temp" / "some-test-chromium"
+    pw_dir.mkdir(parents=True)
+    source = pw_dir / "trace.zip"
+    source.write_bytes(b"fake trace data")
+    dest_dir = tmp_path / "run_evidence" / "some-test"
+    found = _find_attachments(tmp_path / "pw_temp", "some-test", copy_into=dest_dir)
+    assert len(found) == 1
+    assert Path(found[0]).parent == dest_dir   # points into the run's own tree, not pw_temp
+    assert Path(found[0]).read_bytes() == b"fake trace data"
+    assert "pw_temp" not in found[0]
+
+
+def test_a_defect_that_passes_this_run_still_renders_as_open_until_a_person_closes_it(tmp_path):
+    """Part 7: the ledger mechanism that is supposed to keep a defect visible after a passing run has to be
+    exercised against an ACTUAL render, not just the ledger functions in isolation - f--good passes clean
+    this run (test_results.json below), but a previous run's failure is already in defect_ledger.json."""
+    from website_test_pipeline import report_policy as policy
+    artifacts, tests = _workspace(tmp_path)
+    good_node = f"tests/{file_name(_flow('f--good'))}::test_flow_good[chromium]"
+    key = policy.stable_test_key(good_node)
+    ledger = {"version": 1, "defects": {key: {
+        "title": "A visitor picks a country and sees the results.", "url": START, "scope": "flow",
+        "first_seen_run": "run-1", "first_seen_at": "2026-10-01T00:00:00+00:00",
+        "last_failed_run": "run-1", "last_failed_at": "2026-10-01T00:00:00+00:00",
+        "total_failures": 3, "consecutive_not_reproduced": 0, "status": "open",
+        "closed_by": None, "closed_at": None, "closed_reason": None, "closure_history": []}}}
+    (tmp_path / "defect_ledger.json").write_text(json.dumps(ledger), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    # C3: a not-reproduced ghost was not found THIS run - it is carried from a previous one.
+    assert "1 open defect carried from previous runs (not reproduced this run)" in joined
+    assert "0 application defects found this run" in joined
+    assert "not reproduced this run, confirmed in 3 prior report(s), still open" in joined
+    assert "DEF" in joined  # has a row in the Defects table under a DEF- id, not dropped from it
+    updated = json.loads((tmp_path / "defect_ledger.json").read_text(encoding="utf-8"))
+    assert updated["defects"][key]["consecutive_not_reproduced"] == 1
+    assert updated["defects"][key]["status"] == "open"   # still open - nothing but an explicit close removes it
+
+
+def test_an_aborted_build_never_commits_a_ledger_mutation(tmp_path, monkeypatch):
+    """P1 root cause: report.py used to call save_ledger (inside _defect_records) BEFORE validate_report_data
+    could reject the build - a build that aborted after that point still permanently incremented
+    consecutive_not_reproduced, which is exactly how a real defect's auto-close fired one run early. The
+    ledger write must be deferred until the whole build is proven to succeed, the same way save_history is."""
+    import website_test_pipeline.report as report_mod
+    from website_test_pipeline import report_policy as policy
+    artifacts, tests = _workspace(tmp_path)
+    good_node = f"tests/{file_name(_flow('f--good'))}::test_flow_good[chromium]"
+    key = policy.stable_test_key(good_node)
+    ledger = {"version": 1, "defects": {key: {
+        "title": "t", "url": START, "scope": "flow", "first_seen_run": "run-1", "first_seen_at": "2026-10-01T00:00:00+00:00",
+        "last_failed_run": "run-1", "last_failed_at": "2026-10-01T00:00:00+00:00",
+        "total_failures": 1, "consecutive_not_reproduced": 1, "status": "open",
+        "closed_by": None, "closed_at": None, "closed_reason": None, "closure_history": []}}}
+    ledger_path = tmp_path / "defect_ledger.json"
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    before = ledger_path.read_text(encoding="utf-8")
+
+    def _boom(data):
+        raise ValueError("forced validation failure for this test")
+    monkeypatch.setattr(report_mod, "validate_report_data", _boom)
+    with pytest.raises(ValueError, match="forced validation failure"):
+        create_report(artifacts, tests, tmp_path / "report", combined=True)
+    assert ledger_path.read_text(encoding="utf-8") == before   # byte-for-byte unchanged - no mutation committed
+
+
+def test_a_defect_at_two_consecutive_clean_runs_renders_open_with_the_counter_visible(tmp_path):
+    """P1.5: proof the suite would have caught the premature close - a defect that reaches 2 of 3 consecutive
+    clean runs must still render as OPEN with the progress counter visible; only the 3rd closes it, never
+    earlier (confirmed live: a build that aborted after writing the ledger let a 2-of-3 state masquerade as
+    the 3rd clean run, closing the real DEF-001 one run early)."""
+    from website_test_pipeline import report_policy as policy
+    artifacts, tests = _workspace(tmp_path)
+    good_node = f"tests/{file_name(_flow('f--good'))}::test_flow_good[chromium]"
+    key = policy.stable_test_key(good_node)
+    ledger = {"version": 1, "defects": {key: {
+        "title": "A visitor picks a country and sees the results.", "url": START, "scope": "flow",
+        "first_seen_run": "run-1", "first_seen_at": "2026-10-01T00:00:00+00:00",
+        "last_failed_run": "run-1", "last_failed_at": "2026-10-01T00:00:00+00:00",
+        "total_failures": 3, "consecutive_not_reproduced": 1, "status": "open",
+        "closed_by": None, "closed_at": None, "closed_reason": None, "closure_history": []}}}
+    (tmp_path / "defect_ledger.json").write_text(json.dumps(ledger), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)   # this run: 1 -> 2
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "consecutive clean runs: 2 of 3" in joined
+    assert "still open" in joined
+    assert "DEF" in joined   # still has a row in the Defects table - not closed, not absent
+    after_2 = json.loads((tmp_path / "defect_ledger.json").read_text(encoding="utf-8"))
+    assert after_2["defects"][key]["status"] == "open" and after_2["defects"][key]["consecutive_not_reproduced"] == 2
+    create_report(artifacts, tests, tmp_path / "report", combined=True)   # this run: 2 -> 3, closes
+    after_3 = json.loads((tmp_path / "defect_ledger.json").read_text(encoding="utf-8"))
+    assert after_3["defects"][key]["status"] == "closed"
+    assert after_3["defects"][key]["audit_log"][-1]["actor"] == "[auto]"
+    assert after_3["defects"][key]["audit_log"][-1]["clean_run_count"] == 3
+    final_data = json.loads((tmp_path / "report" / "report-data.json").read_text(encoding="utf-8"))
+    assert final_data["counts"]["open_defects"] == 0
+    assert not any(d["status"] == "Open" and d["category"] == "defect" for d in final_data["defects"])
 
 
 def test_a_second_run_gets_a_delta_block_with_removed_tests_and_their_reason(tmp_path):

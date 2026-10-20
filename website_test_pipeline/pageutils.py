@@ -62,16 +62,30 @@ def visible_among(page, loc, count: int):
             pass
         if vcount == 1:
             return visible
-        for i in range(vcount):
-            candidate = visible.nth(i)
+        # .nth(i) is a frozen snapshot, not re-checked on Playwright's own actionability retries - fine for
+        # a genuinely rare case, but confirmed live on a wizard whose two panels stay simultaneously
+        # CSS-visible permanently (not just mid-transition), so this branch is its NORMAL path, not an edge
+        # case. Re-confirm the same index is still the in-viewport one a couple more times before handing
+        # back a handle Playwright will then retry blindly for up to 30s if it goes stale the instant after.
+        for _ in range(3):
+            picked = None
+            for i in range(vcount):
+                candidate = visible.nth(i)
+                try:
+                    if candidate.evaluate(_IN_VIEWPORT_JS):
+                        picked = i
+                        break
+                except Exception:
+                    continue
+            if picked is None:
+                break
+            page.wait_for_timeout(150)
             try:
-                if candidate.evaluate(_IN_VIEWPORT_JS):
-                    return candidate                           # picked once - only several-at-once CSS
-                                                                 # matches reach here, which is rare enough
-                                                                 # that re-checking this on every retry isn't needed
+                if visible.nth(picked).evaluate(_IN_VIEWPORT_JS):
+                    return visible.nth(picked)
             except Exception:
-                continue
-    return loc.first
+                pass
+        return loc.first
 
 
 def resolve_locator(page, selector: str):

@@ -168,6 +168,37 @@ def test_the_evidence_screenshot_is_taken_after_the_page_stops_loading(tmp_path)
     assert order == ["action", "verify", "loader-check", "screenshot"]
 
 
+def test_an_action_that_times_out_once_is_retried_once_before_giving_up(tmp_path):
+    """P7: "found but not interactable" is usually a transient readiness problem (a transition, a re-render)
+    - one retry after a short pause resolves it far more often than it masks a real failure."""
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    from website_test_pipeline.evidence import action_evidence
+
+    class _Page:
+        def evaluate(self, script): return False
+        def wait_for_timeout(self, ms): order.append(f"wait-{ms}")
+        def screenshot(self, path, full_page): pass
+
+    order = []
+    calls = {"n": 0}
+
+    def flaky_once():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise PlaywrightTimeoutError("not interactable")
+        order.append("action-succeeded")
+
+    action_evidence(_Page(), "01-x", flaky_once, lambda: order.append("verify"), tmp_path)
+    assert order == ["wait-500", "action-succeeded", "verify"]
+    assert calls["n"] == 2
+
+    def always_times_out():
+        raise PlaywrightTimeoutError("still not interactable")
+    import pytest
+    with pytest.raises(PlaywrightTimeoutError):
+        action_evidence(_Page(), "02-x", always_times_out, lambda: None, tmp_path)   # a genuine failure still raises
+
+
 # ------------------------------------------------------------------ waiting for a client-rendered page to paint
 
 class _FnPage:

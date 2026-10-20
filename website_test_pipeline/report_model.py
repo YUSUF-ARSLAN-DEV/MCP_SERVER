@@ -7,7 +7,9 @@ recommendation on one source of truth.
 from __future__ import annotations
 
 import json
-from datetime import date
+import os
+import re
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +32,14 @@ def canonical_counts(run: Any) -> dict[str, int | float]:
     separate; ``all_items`` is the auditable total across all four statuses.
     """
     page_outcomes = [o for report in getattr(run, "url_reports", []) for o in report.outcomes]
-    flow_outcomes = [f.outcome for f in getattr(run, "tested_flows", []) if f.outcome is not None]
+    # A diagnosed-unstable flow (flow.quarantined, see flowreport.FlowReport) is excluded from the test-level
+    # pass rate until it is fixed or cleared - this is the ONLY place that decision is made; every other count
+    # (journeys_failed, the Defects table, the appendix index) reads quarantined_tests from here rather than
+    # re-deriving its own notion of "does this count", which is how four separate instances of the same
+    # quarantine-propagation bug shipped across four revisions before this one.
+    quarantined_flows = [f for f in getattr(run, "tested_flows", []) if getattr(f, "quarantined", False)]
+    flow_outcomes = [f.outcome for f in getattr(run, "tested_flows", [])
+                     if f.outcome is not None and not getattr(f, "quarantined", False)]
 
     def invalid(o: Any) -> bool:
         # a failure caused by a fault in the test itself (report.py triage) is not an application result
@@ -51,6 +60,9 @@ def canonical_counts(run: Any) -> dict[str, int | float]:
     all_items = executed + skipped + blocked + test_defects
     pass_rate = round(100 * passed / executed) if executed else 0
     flows = list(getattr(run, "flow_reports", []))
+    # Journeys are counted over ALL flows (quarantine never hides a journey's own pass/fail fact - only the
+    # test-level pass rate above excludes it); a blocked critical path lowers journeys_total, and the pass
+    # rate can look high while journeys are untested.
     journeys_passed = sum(f.passed for f in flows)
     journeys_test_defect = sum(f.failed and invalid(f.outcome) for f in flows)
     journeys_failed = sum(f.failed for f in flows) - journeys_test_defect
@@ -58,10 +70,10 @@ def canonical_counts(run: Any) -> dict[str, int | float]:
     journeys_check_failed = sum(f.verify_failed for f in flows if not f.tested)
     journeys_no_result = sum(not f.tested and not f.verify_failed for f in flows)
     journeys_total = len(flows)
+    journeys_with_result = journeys_passed + journeys_failed
     counts: dict[str, int | float] = {
-        # Journeys are counted over ALL flows, so a blocked critical path lowers this number; the pass rate below
-        # only covers tests that ran and can look high while journeys are untested.
         "journeys_total": journeys_total,
+        "journeys_with_result": journeys_with_result,
         "journeys_passed": journeys_passed,
         "journeys_failed": journeys_failed,
         "journeys_test_defect": journeys_test_defect,
@@ -79,6 +91,9 @@ def canonical_counts(run: Any) -> dict[str, int | float]:
         "skipped": skipped,
         "test_defects": test_defects,
         "blocked_flows": blocked,
+        "quarantined": len(quarantined_flows),
+        "quarantined_passed": sum(1 for f in quarantined_flows if f.passed),
+        "quarantined_failed": sum(1 for f in quarantined_flows if f.failed),
         "all_items": all_items,
         "pass_rate_percent": pass_rate,
     }
@@ -111,6 +126,26 @@ def validate_counts(counts: dict[str, Any]) -> None:
     if "flows_with_result" in counts and counts["flows_with_result"] != (
             counts["flow_tests"] + counts.get("journeys_skipped", 0) + counts.get("journeys_test_defect", 0)):
         raise ValueError("report count invariant failed: journeys with a result != flow tests + skipped + invalid flow tests")
+    if "journeys_with_result" in counts and counts["journeys_with_result"] != counts["journeys_passed"] + counts["journeys_failed"]:
+        raise ValueError(f"report count invariant failed: journeys_passed ({counts['journeys_passed']}) + journeys_failed "
+                         f"({counts['journeys_failed']}) != journeys_with_result ({counts['journeys_with_result']})")
+    if "journeys_with_result" in counts and counts["journeys_passed"] > counts["journeys_with_result"]:
+        raise ValueError("report count invariant failed: journeys_passed exceeds journeys_with_result")
+    # P3: "26 flow tests ran" and "27 journeys have a result" read as the same claim unless the quarantined
+    # test is named as the difference - confirmed live: S4's own prose and its own table disagreed by exactly
+    # the 1 quarantined flow test, both claiming to be "the same figure".
+    if "journeys_with_result" in counts and "flow_tests" in counts:
+        expected = counts["flow_tests"] + counts.get("quarantined", 0)
+        if counts["journeys_with_result"] != expected:
+            raise ValueError(f"report count invariant failed: flow_tests ({counts['flow_tests']}) + quarantined "
+                             f"({counts.get('quarantined', 0)}) != journeys_with_result ({counts['journeys_with_result']})")
+    if "appendix_index_rows" in counts:
+        # _all_outcomes (report.py) includes a test_defect outcome too - it still ran and still gets a row,
+        # it is just excluded from executed_tests because the test itself, not the application, was wrong.
+        expected_rows = counts["executed_tests"] + counts["skipped"] + counts.get("quarantined", 0) + counts.get("test_defects", 0)
+        if counts["appendix_index_rows"] != expected_rows:
+            raise ValueError(f"appendix index would render {counts['appendix_index_rows']} rows, but "
+                             f"executed_tests + skipped + quarantined + test_defects = {expected_rows}")
 
 
 def validate_report_data(data: dict[str, Any]) -> None:
@@ -119,6 +154,14 @@ def validate_report_data(data: dict[str, Any]) -> None:
         if key not in data:
             raise ValueError(f"report data missing required field: {key}")
     validate_counts(data["counts"])
+    _validate_delta_reconciles(data)
+    _validate_timestamps(data)
+    _validate_evidence_links(data)
+    _validate_ledger_not_contradicted(data)
+    _validate_severity_has_a_recorded_cause(data)
+    _validate_cited_run_ids_match_their_timestamp(data)
+    _validate_category_drift_has_a_row(data)
+    _validate_exit_criteria_cover_every_capping_clause(data)
     recommendation = data["recommendation"]
     if recommendation not in VALID_RECOMMENDATIONS:
         raise ValueError(f"invalid release recommendation: {recommendation}")
@@ -157,6 +200,144 @@ def validate_report_data(data: dict[str, Any]) -> None:
                 raise ValueError(f"defect {defect['id']} has an empty {field}; use NOT CAPTURED")
 
 
+def _validate_delta_reconciles(data: dict[str, Any]) -> None:
+    """The "change since the previous run" arithmetic (report.py's reconciliation sentence) must actually
+    balance before it is ever rendered - a sentence that states its own mismatch is the exact failure mode
+    this function exists to prevent (three prior revisions each shipped one)."""
+    delta = data.get("delta") or {}
+    if not delta.get("baseline"):
+        return
+    dropped = len(delta.get("removed", [])) - delta.get("renamed_count", 0)
+    expected = (delta.get("previous_tests_ran", 0) - dropped + len(delta.get("added", []))
+                - delta.get("quarantined_delta", 0) - delta.get("test_defect_delta", 0))
+    actual = data["counts"]["executed_tests"]
+    if expected != actual:
+        from .report_policy import ReportConsistencyError   # imported here: report_policy must stay import-free of this module
+        raise ReportConsistencyError(
+            f"delta reconciliation does not balance: {delta.get('previous_tests_ran', 0)} (previous) - {dropped} "
+            f"(removed, excluding renames) + {len(delta.get('added', []))} (added) - {delta.get('quarantined_delta', 0)} "
+            f"(quarantine change) - {delta.get('test_defect_delta', 0)} (test-defect change) = {expected}, but this "
+            f"run counted {actual}. The report is not emitted with a sentence that admits its own mismatch.")
+
+
+def _validate_timestamps(data: dict[str, Any]) -> None:
+    """started/finished/duration must describe the SAME run, not one carried over from an earlier manifest -
+    confirmed live: three reruns once reported the identical generate-time timestamp."""
+    started, finished, duration = data.get("run_started_at"), data.get("run_finished_at"), data.get("run_duration_seconds")
+    if not started or not finished or duration is None:
+        return
+    try:
+        s = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        f = datetime.fromisoformat(finished.replace("Z", "+00:00"))
+    except ValueError:
+        return
+    actual_duration = (f - s).total_seconds()
+    if abs(actual_duration - duration) >= 1.0:
+        raise ValueError(f"run timestamps are inconsistent: finished - started = {actual_duration:.2f}s, "
+                         f"but duration is reported as {duration:.2f}s")
+
+
+def _validate_severity_has_a_recorded_cause(data: dict[str, Any]) -> None:
+    """C2: severity is set once, from user impact, when a defect is first confirmed - and that origin must
+    always be rendered next to it (Severity: High (set 2026-10-08: reason)), never a bare value with no
+    recorded cause, so a severity change (or a first setting) is never silent."""
+    for defect in data.get("defects", []):
+        if defect.get("category") != "defect":
+            continue
+        if not str(defect.get("severity_set_at") or "").strip():
+            raise ValueError(f"defect {defect.get('id', '?')} has a severity ({defect.get('severity')}) with no "
+                             "recorded severity_set_at - severity may not render without a cause")
+        if not str(defect.get("severity_reason") or "").strip():
+            raise ValueError(f"defect {defect.get('id', '?')} has a severity ({defect.get('severity')}) with no "
+                             "recorded severity_reason - severity may not render without a cause")
+
+
+def _validate_cited_run_ids_match_their_timestamp(data: dict[str, Any]) -> None:
+    """D2: a run ID of the form run-YYYYMMDDHHMMSS encodes a timestamp (report_policy.run_id_for) - a report
+    citing that run ID next to a DIFFERENT timestamp for the same event is internally inconsistent, even
+    though each value was individually valid. Confirmed live: "last failed in run-20261008071045
+    (2026-10-08T08:05:08)" - an encoded 07:10:45 next to a printed 08:05:08."""
+    for defect in data.get("defects", []):
+        run_id, run_at = defect.get("_cited_run_id"), defect.get("_cited_run_at")
+        if not run_id or not run_at:
+            continue
+        match = re.fullmatch(r"run-(\d{14})", run_id)
+        if not match:
+            continue
+        try:
+            cited = datetime.strptime(match.group(1), "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+            printed = datetime.fromisoformat(str(run_at).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if abs((cited - printed).total_seconds()) >= 60:
+            raise ValueError(f"defect {defect.get('id', '?')} cites {run_id!r} (encodes {cited.isoformat()}) next "
+                             f"to timestamp {run_at!r} - these describe the same event and must agree")
+
+
+def _validate_exit_criteria_cover_every_capping_clause(data: dict[str, Any]) -> None:
+    """P4: all four other exit criteria could be satisfied and GO would still be unreachable if requirements
+    coverage stays below the threshold - the exit criteria list must say so, or a reader has no way to know
+    that clause exists at all."""
+    reqs = data.get("requirements") or {}
+    if not reqs.get("total"):
+        return
+    backed_percent = 100 - reqs["percent"]
+    from .report_policy import REQUIREMENTS_BACKED_THRESHOLD
+    if backed_percent < REQUIREMENTS_BACKED_THRESHOLD and not any(
+            "requirements" in c.lower() for c in data.get("exit_criteria", [])):
+        raise ValueError(f"requirements coverage ({backed_percent:.0f}%) is below the "
+                         f"{REQUIREMENTS_BACKED_THRESHOLD:.0f}% threshold that caps the verdict, but no exit "
+                         "criterion says so")
+
+
+def _validate_category_drift_has_a_row(data: dict[str, Any]) -> None:
+    """P2: a category count (Defect/Unverified/Limitation/Tooling/Test defect) may not differ from the
+    previous run without at least one category_changes row explaining a move - confirmed live: the table was
+    entirely absent in a run where a Defect genuinely left the ledger."""
+    delta = data.get("delta") or {}
+    prev_tax = delta.get("previous_taxonomy")
+    tax = data.get("taxonomy")
+    if not delta.get("baseline") or prev_tax is None or tax is None:
+        return
+    changed = {cat for cat in tax if prev_tax.get(cat, 0) != tax.get(cat, 0)}
+    # A category count can also move because a test was added or removed (each already disclosed in its own
+    # table, with its own reason) - only flag a drift that NOTHING explains: no reclassification, and no
+    # test-count change at all that could plausibly account for it.
+    if changed and not delta.get("category_changes") and not delta.get("added") and not delta.get("removed"):
+        raise ValueError(f"categor{'y' if len(changed) == 1 else 'ies'} {', '.join(sorted(changed))} changed "
+                         "count since the previous run, but no category_changes row, added test or removed "
+                         "test explains it")
+
+
+def _validate_ledger_not_contradicted(data: dict[str, Any]) -> None:
+    """C1: the ledger is the single authority on whether a defect is still open. No test may be described as
+    "resolved"/"now passes clean" in the category-changes delta while an open DEF-* record for the same test
+    says otherwise - confirmed live: a report called DEF-001 resolved, open, and release-blocking at once."""
+    open_keys = {d["_stable_key"] for d in data.get("defects", [])
+                if d.get("status") == "Open" and d.get("category") == "defect" and "_stable_key" in d}
+    for change in (data.get("delta") or {}).get("category_changes", []):
+        if change["id"] in open_keys and str(change.get("reason", "")).startswith("resolved"):
+            raise ValueError(f"category change for {change['id']!r} says 'resolved' while an open DEF-* record "
+                             "for the same test still exists - the ledger is the single authority on defect "
+                             "state and must not be contradicted elsewhere in the same render")
+
+
+def _validate_evidence_links(data: dict[str, Any]) -> None:
+    """An evidence link that resolves for nobody is worse than no link: a reader clicks it, it does nothing,
+    and now they distrust every other link in the report too. Confirmed live: trace/video hrefs pointing
+    eight ../ segments into a Windows temp directory that is wiped on reboot."""
+    base = os.environ.get("ARTIFACT_BASE_URL", "").strip()
+    for defect in data.get("defects", []):
+        for key in ("screenshot_url", "trace_url", "video_url"):
+            href = defect.get(key)
+            if not href or href == "NOT CAPTURED" or base:
+                continue
+            if "AppData" in href or "/tmp/" in href or "Temp/" in href or href.count("../") > 3:
+                raise ValueError(f"defect {defect.get('id', '?')} has an evidence link that cannot resolve for a "
+                                 f"reader ({key}={href!r}); copy the artifact into the run's own evidence folder "
+                                 "or set ARTIFACT_BASE_URL")
+
+
 def _validate_taxonomy(data: dict[str, Any]) -> None:
     """Verdict, per-type counts and the defect list must agree (only checked for data built by the report generator)."""
     tax = data.get("taxonomy")
@@ -168,10 +349,20 @@ def _validate_taxonomy(data: dict[str, Any]) -> None:
             raise ValueError(f"taxonomy count for {category} ({n}) does not match the records listed")
     if sum(tax.values()) != len(records):
         raise ValueError("taxonomy counts do not add up to the number of recorded items")
+    # B2: open_defects is a LEDGER quantity, checked against the Defects table here, and must never be used
+    # as a term in an arithmetic identity (passed + failed == tests_ran uses counts["failed"], never this).
+    open_defects = sum(r.get("category") == "defect" and r.get("status") == "Open" for r in records)
+    if "open_defects" in data.get("counts", {}) and data["counts"]["open_defects"] != open_defects:
+        raise ValueError(f"counts.open_defects ({data['counts']['open_defects']}) != open DEF-* "
+                         f"records this run ({open_defects}) - every 'application defects' figure must read "
+                         "this count, never the test-level pass/fail tally")
     from .report_policy import release_decision
-    expected = release_decision(records)
+    reqs = data.get("requirements") or {}
+    backed_percent = 100 - reqs["percent"] if reqs.get("total") else None
+    expected = release_decision(records, requirements_backed_percent=backed_percent)
     if data["recommendation"] != expected:
-        raise ValueError(f"recommendation {data['recommendation']} does not follow from the Defects table ({expected})")
+        raise ValueError(f"recommendation {data['recommendation']} does not follow from the Defects table and "
+                         f"requirements coverage ({expected})")
     if len(data["conditions"]) > 5:
         raise ValueError("more than five release conditions; collapse repeated items into counts")
 

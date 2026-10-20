@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import shutil
 import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 from . import report_policy as policy
+from .config import pw_output_dir
 from .coverage import Coverage, compute_coverage
 from .findings import (
     Finding, FlapRecord, auth_failure_findings, auth_summary_lines, collect_findings, detect_flapping,
@@ -213,7 +215,12 @@ def _dedupe(values: list[str]) -> list[str]:
 # ---------------------------------------------------------------------------- load
 
 def _slug(nodeid: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"
+    """Must produce the exact same folder name conftest.py's _slug wrote the evidence under - see its
+    docstring for why long nodeids are capped with a hash suffix rather than left unbounded."""
+    raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"
+    if len(raw) <= 100:
+        return raw
+    return f"{raw[:91]}-{hashlib.sha1(nodeid.encode('utf-8')).hexdigest()[:8]}"
 
 
 def _pw_slug(nodeid: str) -> str:
@@ -236,8 +243,10 @@ def _make_outcome(row: dict, url: str, spec_path: str | None, artifacts_dir: Pat
         error=row.get("error"),
         assertions=assertions_for(spec, title) if spec and spec.exists() else [],
         evidence=_find_images(artifacts_dir / "evidence" / _slug(row.get("nodeid", ""))),
-        attachments=_find_attachments(artifacts_dir / "pw", _pw_slug(row.get("nodeid", ""))),
-        screenshots=_find_attachments(artifacts_dir / "pw", _pw_slug(row.get("nodeid", "")), IMAGE_EXTS),
+        attachments=_find_attachments(pw_output_dir(artifacts_dir), _pw_slug(row.get("nodeid", "")),
+                                      copy_into=artifacts_dir / "evidence" / _slug(row.get("nodeid", ""))),
+        screenshots=_find_attachments(pw_output_dir(artifacts_dir), _pw_slug(row.get("nodeid", "")), IMAGE_EXTS,
+                                      copy_into=artifacts_dir / "evidence" / _slug(row.get("nodeid", ""))),
     )
 
 
@@ -349,8 +358,13 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
     run = RunReport(
         base_url=_common_prefix([u for u in by_url]),
         model=model or manifest.get("model", ""),
-        started_at=manifest.get("started_at", ""),
-        finished_at=manifest.get("finished_at", results.get("finished_at", "")),
+        # results (test_results.json) is fresh every time pytest actually runs; manifest (run.json) is only
+        # as recent as the last `generate`, which can be hours or days stale by the time `report --rerun`
+        # runs again - confirmed live, three different reruns all reporting the identical generate-time
+        # timestamp. Prefer the fresh value; fall back to manifest only for an older test_results.json that
+        # predates started_at being recorded there.
+        started_at=results.get("started_at") or manifest.get("started_at", ""),
+        finished_at=results.get("finished_at") or manifest.get("finished_at", ""),
         url_reports=[by_url[k] for k in sorted(by_url)],
         flow_reports=flow_reports,
         coverage=_coverage(artifacts_dir, manifest, flows_list),
@@ -367,7 +381,10 @@ def load_run(artifacts_dir: Path, tests_dir: Path, model: str = "", flows_file: 
     inventories = load_inventories(artifacts_dir)
     run.findings = collect_findings(run, tests_dir, inventories, flows_by_id, ratings)
     names = {f["id"]: (f.get("goal") or f["id"]) for f in flows_list}
-    run.flapping = detect_flapping(ratings, names)
+    # ratings history can outlive a flow (renamed, retired, or - as happened live once - left behind after a
+    # flows.json cleanup); never let a flow outside this run's own set bleed into the risks this run reports.
+    current_ratings = {fid: entries for fid, entries in ratings.items() if fid in flows_by_id}
+    run.flapping = detect_flapping(current_ratings, names)
     run.untested_auth = untested_auth(inventories)
     run.human_input_pages = human_input_pages(inventories)
     run.requirements = _requirements(workspace / "intents.json")
@@ -456,13 +473,28 @@ def _find_images(directory: Path) -> list[str]:
     return [str(p) for p in sorted(directory.iterdir()) if p.suffix.lower() in IMAGE_EXTS]
 
 
-def _find_attachments(pw_dir: Path, slug: str, exts: set[str] = ATTACH_EXTS) -> list[str]:
+def _find_attachments(pw_dir: Path, slug: str, exts: set[str] = ATTACH_EXTS, copy_into: Path | None = None) -> list[str]:
+    """pytest-playwright writes trace.zip/video.webm under its own --output dir (pw_output_dir: a short temp
+    path, deliberately outside the run's own tree - see config.pw_output_dir's docstring). A link INTO that
+    temp directory resolves for nobody and is wiped on reboot, so when copy_into is given, each attachment
+    is copied there first and ITS path is returned - the same place and the same relative-link pattern the
+    Screenshot links already use (confirmed working), instead of a one-off exception for Trace and Video."""
     if not pw_dir.is_dir():
         return []
     out: list[str] = []
     for child in pw_dir.iterdir():
         if child.is_dir() and slug and slug in child.name:
-            out.extend(str(p) for p in sorted(child.iterdir()) if p.suffix.lower() in exts)
+            for p in sorted(child.iterdir()):
+                if p.suffix.lower() not in exts:
+                    continue
+                if copy_into is not None:
+                    copy_into.mkdir(parents=True, exist_ok=True)
+                    dest = copy_into / p.name
+                    if not dest.exists() or dest.stat().st_mtime < p.stat().st_mtime:
+                        shutil.copy2(p, dest)
+                    out.append(str(dest))
+                else:
+                    out.append(str(p))
     return out
 
 
@@ -676,7 +708,8 @@ def _render_flow(document, flow: FlowReport, *, embed: bool = True, link_base: P
 
     document.add_heading("Expected vs observed", 3)
     document.add_paragraph(f"Expected: {flow.expected or 'not stated'}", style="List Bullet")
-    document.add_paragraph(f"Observed in a real run: {flow.observed or 'never run'}", style="List Bullet")
+    observed_label = f"Last successful observation ({flow.observed_at})" if flow.observed_at else "Last successful observation"
+    document.add_paragraph(f"{observed_label}: {flow.observed or 'never run'}", style="List Bullet")
     if flow.new_headings:
         document.add_paragraph("New on the page: " + " | ".join(flow.new_headings), style="List Bullet")
 
@@ -873,12 +906,18 @@ def _make_record(run: "RunReport", report_dir: Path | None, *, category: str, fa
                  description: str, steps: list[str], expected: str, actual: str, url: str, impact: str,
                  flow_id: str = "NOT CAPTURED", evidence: str | None = None, trace: str | None = None,
                  video: str | None = None, failure_text: str = "", assertion_text: str = "",
-                 mitigation: str | None = None, reason_detail: str = "") -> dict[str, Any]:
+                 mitigation: str | None = None, reason_detail: str = "", historically_reliable: bool = False,
+                 severity_override: str | None = None, severity_set_at: str = "", severity_reason: str = "") -> dict[str, Any]:
     """One auditable record. Severity comes from user impact (report_policy.impact_severity), never from how the
     failure was classified; priority follows severity; a limitation is never P1 and nothing but a High/Critical
-    application defect is ever a release blocker."""
-    severity = policy.impact_severity(category, scope=scope, title=title, failure_text=failure_text or actual,
-                                      assertion_text=assertion_text)
+    application defect is ever a release blocker.
+
+    C2: for an open Defect, severity is set ONCE, when first confirmed, and never recomputed by a later run -
+    "not reproduced" (or "reproduced again") is never a valid reason for a severity change in either direction.
+    severity_override carries forward the ledger's frozen value; severity_set_at/severity_reason are the
+    recorded cause that must render next to it, so a change is never silent."""
+    severity = severity_override or policy.impact_severity(category, scope=scope, title=title, failure_text=failure_text or actual,
+                                                           assertion_text=assertion_text, historically_reliable=historically_reliable)
     shot = _evidence_target(evidence, report_dir, run) if evidence else "NOT CAPTURED"
     trace_url = _evidence_target(trace, report_dir, run) if trace else "NOT CAPTURED"
     video_url = _evidence_target(video, report_dir, run) if video else "NOT CAPTURED"
@@ -905,6 +944,8 @@ def _make_record(run: "RunReport", report_dir: Path | None, *, category: str, fa
         "url": url or "",
         "business_impact": impact,
         "blocking": category == "defect" and severity in {"Critical", "High"},
+        "severity_set_at": severity_set_at,
+        "severity_reason": severity_reason,
     }
     if mitigation:
         record["mitigation"] = mitigation
@@ -926,7 +967,9 @@ def _triage_outcomes(run: "RunReport") -> None:
             outcome.invalid_reason = reason
 
 
-def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[dict[str, Any]]:
+def _defect_records(run: "RunReport", report_dir: Path | None = None,
+                    ledger_saves: list[tuple[Path, dict[str, Any]]] | None = None,
+                    closed_this_run_out: dict[str, dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Every item of the Defect Report, each in exactly one of five types:
     Defect (DEF) - something ran and was broken;  Unverified (UNV) - the journey could not be confirmed either way;
     Limitation (LIM) - the tooling cannot test it (CAPTCHA, sign-in, no test account);
@@ -934,6 +977,19 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[di
     Tooling issue (TOOL) - the harness failed (no spec, spec rejected, test skipped)."""
     raw: list[dict[str, Any]] = []
     direct_keys: set[tuple[str, str, str]] = set()
+    current_defects: dict[str, dict[str, str]] = {}   # stable key -> {title,url,scope} - see the ledger block below
+    # C2: loaded here, before the main loop, so a REPRODUCED defect can reuse its ledger-frozen severity
+    # instead of recomputing one - severity is set once, when a defect is first confirmed, and a run that
+    # reproduces (or fails to reproduce) it changes neither its severity nor its open status.
+    ledger = policy.load_ledger(run.artifacts_dir.parent / policy.LEDGER_FILE) if run.artifacts_dir is not None else {}
+    ledger_entries = ledger.get("defects", {})
+    # D2: run.run_id encodes run.finished_at (report_policy.run_id_for) - the ledger must be stamped with the
+    # SAME timestamp, not the wall-clock moment the report happens to be generated, or a cited run ID's
+    # encoded time silently drifts from the timestamp printed beside it (confirmed live: an 08:05 ledger
+    # timestamp next to a run ID encoding 07:10).
+    now = _utc_timestamp(run.finished_at)
+    if now == "NOT CAPTURED":
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for scope, key, outcome, flow in _all_outcomes(run):
         title = _plain_flow_title(flow.title) if flow else outcome.title.replace("_", " ")
         evidence = (outcome.evidence or outcome.screenshots or [None])[0]
@@ -943,12 +999,14 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[di
         steps = [f"Open {outcome.url}.", f"Run test {key}."]
         if outcome.status == "skipped":
             reason = plain_skip_reason(outcome.error)
-            raw.append(_make_record(
+            rec = _make_record(
                 run, report_dir, category="tooling", failure_class="harness_skip", scope=scope,
                 title=f"Test skipped before it ran: {title}", description=reason, steps=steps,
                 expected="The check should run and produce a result.", actual=reason, url=outcome.url, flow_id=flow_id,
                 evidence=evidence, trace=trace, video=video,
-                impact=f'"{title}" on {_page_of(outcome.url)} has no result from this check, so that part of the site is not covered.'))
+                impact=f'"{title}" on {_page_of(outcome.url)} has no result from this check, so that part of the site is not covered.')
+            rec["_stable_key"] = policy.stable_test_key(outcome.nodeid)
+            raw.append(rec)
             continue
         if outcome.status not in {"failed", "error"}:
             continue
@@ -961,25 +1019,74 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[di
                     (_plain_assertion(outcome.assertions[-1]) if outcome.assertions else "The check completes as specified."))
         actual = plain_error(outcome.error) if outcome.error else "The test failed without a captured reason."
         kind = getattr(finding, "kind", "unclear") if finding else "unclear"
+        flaky = False
         if outcome.invalid_reason:
             category = "test_defect"
             description = f"{outcome.invalid_reason} This is a defect in the automated test, not in the application."
             impact = f'The test "{title}" on {_page_of(outcome.url)} is wrong, so it says nothing about the application; it is left out of the failure count and the release decision.'
         else:
+            # A Playwright locator timeout/visibility race (the element never became clickable in time) means
+            # the test never got far enough to observe a wrong final state - unlike a definite mismatch (wrong
+            # URL/content reached), this is a timing problem in the check itself. This still ran and still
+            # broke, so it stays a real Defect (UNV is reserved for a journey with no result at all) - but on
+            # a flow that has otherwise passed enough to still be "verified" (one tolerated failure - see
+            # ratings.derive_status), that combination caps its severity rather than forcing it to High/Critical:
+            # a rerun would likely pass, so treating it exactly like a newly-discovered, reproduced-to-completion
+            # defect would overstate what this run actually showed.
+            raw_error = outcome.error or ""
+            timing_race = bool(re.search(r"Timeout \d+ms exceeded", raw_error)) and bool(re.search(r"not (visible|stable|enabled)", raw_error))
+            flaky = kind == "unclear" and timing_race and flow is not None and flow.status == "verified"
             category = policy.category_for(kind)
             description = f"{actual} Failure class: {kind}." if finding else actual
-            impact = (f'Visitors doing "{title}" from {_page_of(outcome.url)} may not be able to finish it; this run failed to confirm the journey works.'
-                      if flow else f'The check "{title}" on {_page_of(outcome.url)} failed, so that part of the page is not confirmed to work.')
-        raw.append(_make_record(
+            if flaky:
+                description += (" This flow's recent history mixes passes and failures with this same timeout "
+                                "signature (see the Risks section); it remains recorded as verified.")
+                impact = (f'Visitors doing "{title}" from {_page_of(outcome.url)} intermittently cannot finish it - the automated '
+                          "check has passed in previous runs and failed with the same timing signature in others, so this is "
+                          "flagged as a real but likely intermittent defect, not a one-off.")
+            else:
+                impact = (f'Visitors doing "{title}" from {_page_of(outcome.url)} may not be able to finish it; this run failed to confirm the journey works.'
+                          if flow else f'The check "{title}" on {_page_of(outcome.url)} failed, so that part of the page is not confirmed to work.')
+        stable_key = policy.stable_test_key(outcome.nodeid)
+        # C2: if the ledger already holds a severity for this exact test, reuse it - reproducing a defect
+        # again is never a reason to recompute its severity, only to confirm it is still open.
+        existing_entry = ledger_entries.get(stable_key) if category == "defect" else None
+        override_kwargs = ({"severity_override": existing_entry["severity"],
+                            "severity_set_at": existing_entry.get("severity_set_at", ""),
+                            "severity_reason": existing_entry.get("severity_reason", "")}
+                           if existing_entry and existing_entry.get("severity") else {})
+        rec = _make_record(
             run, report_dir, category=category, failure_class="test_defect" if category == "test_defect" else kind, scope=scope,
             title=title, description=description, steps=steps, expected=expected, actual=actual, url=outcome.url,
-            flow_id=flow_id, evidence=evidence, trace=trace, video=video, impact=impact,
-            failure_text=f"{outcome.error or ''}\n{actual}", assertion_text=outcome.assertions[-1] if outcome.assertions else ""))
+            flow_id=flow_id, evidence=evidence, trace=trace, video=video, impact=impact, historically_reliable=flaky,
+            failure_text=f"{outcome.error or ''}\n{actual}", assertion_text=outcome.assertions[-1] if outcome.assertions else "",
+            **override_kwargs)
+        rec["_stable_key"] = stable_key
+        if category == "defect":
+            # A brand-new defect (no ledger entry yet) got no override above, so _make_record computed a
+            # fresh severity with no recorded cause - stamp one now, on the record AND the ledger-bound dict,
+            # so both agree and neither renders severity with no reason.
+            rec["severity_set_at"] = rec["severity_set_at"] or now
+            rec["severity_reason"] = rec["severity_reason"] or title
+            current_defects[stable_key] = {"title": title, "url": outcome.url, "scope": scope, "flow_id": flow_id,
+                                           "severity": rec["severity"], "severity_set_at": rec["severity_set_at"],
+                                           "severity_reason": rec["severity_reason"]}
+        raw.append(rec)
         direct_keys.add((scope, outcome.title, outcome.url))
         if flow:
             direct_keys.add((scope, flow.title, outcome.url))
 
     for failure in run.generation_failures:
+        # When generation keeps failing validation, the generator writes a skip-stub test instead of giving up
+        # silently (generator.py: "wrote skip stub") - so the SAME root cause on the SAME page also shows up
+        # above as a "harness_skip" outcome. Reporting both is the same problem twice under two different IDs;
+        # fold the generation detail into the existing skip record instead of adding a second one.
+        existing = next((r for r in raw if r["category"] == "tooling" and r["failure_class"] == "harness_skip"
+                         and r["url"] == failure["url"]), None)
+        if existing is not None:
+            existing["description"] = f"{existing['description']} Root cause: {failure['error']}"
+            existing["actual"] = f"{existing['actual']} Root cause: {failure['error']}"
+            continue
         raw.append(_make_record(
             run, report_dir, category="tooling", failure_class="generation_failed", scope="page",
             title=f"No test was generated for {failure['url']}", description=failure["error"],
@@ -993,14 +1100,18 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[di
         if (finding.scope, finding.test, finding.url) in direct_keys:
             continue
         category = policy.category_for(finding.kind)
-        raw.append(_make_record(
+        title = finding.summary or "A recorded validation finding needs review."
+        rec = _make_record(
             run, report_dir, category=category, failure_class=finding.kind or "unclear", scope=finding.scope,
-            title=finding.summary or "A recorded validation finding needs review.",
-            description=finding.summary or "A recorded validation finding needs review.",
+            title=title, description=title,
             steps=[finding.repro or f"Open {finding.url or 'the affected page'}."],
             expected="The recorded check should complete without this finding.", actual=finding.summary or "NOT CAPTURED",
             url=finding.url, flow_id=finding.test if finding.scope == "flow" else "NOT CAPTURED",
-            impact=f'A {finding.kind or "validation"} finding on {_page_of(finding.url)}: {_full(finding.summary or "see the finding")}. It needs review before the release decision can be trusted.'))
+            impact=f'A {finding.kind or "validation"} finding on {_page_of(finding.url)}: {_full(finding.summary or "see the finding")}. It needs review before the release decision can be trusted.')
+        if category == "defect":
+            rec["severity_set_at"] = rec["severity_set_at"] or now
+            rec["severity_reason"] = rec["severity_reason"] or title
+        raw.append(rec)
 
     for flow in run.untested_flows:
         failed_check = flow.verify_failed         # its last real check failed: a failure, not merely "could not run"
@@ -1008,7 +1119,7 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[di
                          "inconclusive" if flow.inconclusive else "blocked_flow")
         category = policy.category_for(failure_class)
         title = _plain_flow_title(flow.title)
-        raw.append(_make_record(
+        rec = _make_record(
             run, report_dir, category=category, failure_class=failure_class, scope="flow", title=title,
             description=f"This user journey has no test result in this run: {flow.not_run_reason}.",
             steps=[f"Open {flow.start_url}.", f"Attempt journey {flow.flow_id}."],
@@ -1017,7 +1128,13 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[di
             evidence=flow.outcome.evidence[0] if flow.outcome and flow.outcome.evidence else None,
             failure_text=f"{flow.not_run_reason}\n{flow.observed}",
             impact=f'Visitors cannot be shown to complete "{title}" from {_page_of(flow.start_url)}; until it has a passing test, releasing carries that risk.',
-            reason_detail="CAPTCHA" if flow.needs_person else ""))
+            reason_detail="CAPTCHA" if flow.needs_person else "")
+        if category == "defect":
+            # This path has no pytest nodeid to key a ledger entry on (it is "no result this run", not a
+            # fresh reproduction) - severity still needs a recorded cause, just not ledger-frozen yet.
+            rec["severity_set_at"] = rec["severity_set_at"] or now
+            rec["severity_reason"] = rec["severity_reason"] or title
+        raw.append(rec)
 
     for page in run.human_input_pages:
         raw.append(_make_record(
@@ -1044,6 +1161,73 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None) -> list[di
             mitigation="Provide a dedicated test account for the areas behind a sign-in, so those pages are tested.",
             impact=f'Pages behind the sign-in at {_page_of(wall["url"])} were not tested, so anything a signed-in visitor does there is unverified.'))
 
+    # A defect that failed before and simply didn't reproduce this run must not just vanish - the worst failure
+    # mode for a tool like this is a defect that fails, then passes, then disappears with no record it was ever
+    # found. The ledger persists across runs (runs/<site>/defect_ledger.json); a "not reproduced" entry stays
+    # in the Defect Report, counted in the Executive Summary like any other open defect, until a person closes
+    # it explicitly (`cli defects close <key>`), not because one green run went by.
+    closed_this_run: dict[str, dict[str, Any]] = {}
+    if run.artifacts_dir is not None:
+        ledger_path = run.artifacts_dir.parent / policy.LEDGER_FILE
+        ghosts, closed_this_run = policy.update_ledger(ledger, current_defects, run.run_id, now)
+        for ghost in ghosts:
+            # P1.4: a reader must be able to see a defect approaching close before it goes - the progress
+            # counter is the one number that would have made the 2-of-3 premature close visible as it happened.
+            progress = f'{ghost["consecutive_not_reproduced"]} of {policy.AUTO_CLOSE_AFTER_CLEAN_RUNS}'
+            ghost_rec = _make_record(
+                run, report_dir, category="defect", failure_class="not_reproduced", scope=ghost.get("scope", "page"),
+                title=(f'{ghost["title"]} — not reproduced this run, confirmed in {ghost["total_failures"]} prior report(s), '
+                      f'still open (consecutive clean runs: {progress})'),
+                url=ghost.get("url", ""), flow_id=ghost.get("flow_id", "NOT CAPTURED"),
+                # D1: this counts REPORTS in which this reproduced, a different (coarser) unit than the
+                # per-executor execution counts in the Stability risk finding (RSK-00x, section 8) for the
+                # same journey - stated explicitly so the two are never read as the same number disagreeing.
+                description=(f'Not reproduced this run. Confirmed as an open defect in {ghost["total_failures"]} report(s) generated '
+                            f'since {ghost["first_seen_at"]} (a coarser count than the per-executor run history in section 8); '
+                            f'last failed in {ghost["last_failed_run"]} ({ghost["last_failed_at"]}). Consecutive clean runs: '
+                            f'{progress} - still open until a person closes it or the threshold is reached '
+                            f'(ledger key {ghost["key"]}).'),
+                steps=[f'Open {ghost.get("url") or "the affected page"}.', f'Re-run the check that previously failed: {ghost["title"]}.'],
+                expected="The check should pass, confirming this is resolved.",
+                actual=f'Did not reproduce this run (last failed {ghost["last_failed_at"]}).',
+                impact=f'"{ghost["title"]}" was a confirmed defect as recently as {ghost["last_failed_at"]} and has not been '
+                      "confirmed fixed; treating it as resolved without a deliberate close risks re-shipping the same defect.",
+                failure_text=f'not reproduced; last failed {ghost["last_failed_at"]} in {ghost["last_failed_run"]}',
+                # C2: a ghost never gets a fresh severity computation - "not reproduced" is not a valid
+                # reason for a severity change, so it keeps exactly what the ledger froze.
+                severity_override=ghost.get("severity"), severity_set_at=ghost.get("severity_set_at", ""),
+                severity_reason=ghost.get("severity_reason", ""))
+            # C1: this IS the ledger-open key for this test - compute_delta/report_model use it to stop
+            # anything else from calling the same item "resolved" while the ledger still calls it open.
+            ghost_rec["_stable_key"] = ghost["key"]
+            # D2: exposed structurally (not just baked into prose) so report_model can assert this cited run
+            # ID's encoded time actually matches the timestamp printed beside it.
+            ghost_rec["_cited_run_id"] = ghost["last_failed_run"]
+            ghost_rec["_cited_run_at"] = ghost["last_failed_at"]
+            ghost_rec["_clean_run_progress"] = progress
+            raw.append(ghost_rec)
+        # P1.2: the audit trail for a close that happened in THIS run, surfaced in the same render it
+        # occurred - not left to be noticed only on a future read of the ledger file.
+        for key, audit in closed_this_run.items():
+            entry = ledger.get("defects", {}).get(key, {})
+            flow_id = entry.get("flow_id")
+            line = (f'[defect ledger] {audit["actor"]} closed "{entry.get("title", key)}" on {audit["at"][:10]} - '
+                   f'{audit["reason"]} (clean run count at close: {audit["clean_run_count"]}).')
+            flow = next((f for f in run.flow_reports if f.flow_id == flow_id), None) if flow_id and flow_id != "NOT CAPTURED" else None
+            if flow is not None:
+                flow.history.append(line)
+        if closed_this_run_out is not None:
+            closed_this_run_out.update(closed_this_run)
+        # P1: a build that aborts after this point (validation, a document that fails to render) must not
+        # commit the mutation (consecutive_not_reproduced, an auto-close) to disk - exactly the bug that let
+        # an aborted build's ledger write silently count toward the 3-consecutive-clean-run threshold, closing
+        # a defect one run early. Deferred to the caller (create_report), which saves only after every
+        # document is built - same principle already applied to save_history below it.
+        if ledger_saves is not None:
+            ledger_saves.append((ledger_path, ledger))
+        else:
+            policy.save_ledger(ledger_path, ledger)
+
     counters = {c: 0 for c in policy.CATEGORIES}
     records: list[dict[str, Any]] = []
     for category in policy.CATEGORIES:
@@ -1069,12 +1253,15 @@ def _coverage_gaps(run: "RunReport") -> list[dict[str, str]]:
     n = 1
     for page in run.coverage.pages:
         if not page.visited or page.untouched:
+            # Flag which untouched control(s) on THIS row look like the page's main action, inline - a count
+            # elsewhere ("N untested control(s) look like a page's main action") does not say which row has one.
+            marked = [f"{c} (main action)" if _CRITICAL_CONTROL.search(c) else c for c in page.untouched]
             gaps.append({
                 "id": f"COV-{n:03d}",
                 "page": page.path,
                 "url": page.url,
                 "impact": "Some page behavior was not exercised by a passing user journey.",
-                "untouched_controls": "; ".join(page.untouched) or "The page was not visited by a tested flow.",
+                "untouched_controls": "; ".join(marked) or "The page was not visited by a tested flow.",
                 "what_to_review": ("Open the page and use each listed control once, or write a journey that does."
                                    if page.untouched else "Visit the page and check its main content; no journey reached it."),
             })
@@ -1115,9 +1302,26 @@ def _warning_items(run: "RunReport") -> list[tuple[str, str]]:
 def _risk_items(run: "RunReport", records: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Every risk or coverage note, each with an ID and the subject it is about."""
     found: list[tuple[str, str, str]] = []
+    open_flow_ids = {r.get("linked_flow_id") for r in records if r.get("category") == "defect" and r.get("status") == "Open"}
+    for flow in run.tested_flows:
+        if flow.quarantined:
+            # C1: a quarantined journey can pass this run while its linked defect is STILL open per the
+            # ledger (not reproduced != resolved) - say so here too, or this reads as "passed, so it's fine"
+            # right next to a Defects table that still lists it as open and release-blocking.
+            still_open_note = (" An open defect is still linked to this journey per the defect ledger (not "
+                               "reproduced this run, not resolved) - closing it is a deliberate human action."
+                               if not flow.failed and flow.flow_id in open_flow_ids else "")
+            found.append(("Quarantined", flow.title,
+                          f'This journey\'s result is excluded from the pass rate (quarantined - see `flows list`/{flow.flow_id}). '
+                          + ("STILL FAILED this run despite quarantine - the underlying problem is unresolved." if flow.failed else
+                             "Passed this run; consider `flows unquarantine` once it has passed reliably.") + still_open_note))
     for flap in run.flapping:
-        found.append(("Stability risk", flap.test,
-                      f"Recent results alternate between pass and fail ({flap.sequence}, oldest to newest); retest before relying on it."))
+        if flap.kind == "disagreement":
+            found.append(("Stability risk", flap.test, f"{flap.note} ({flap.sequence})."))
+        else:
+            found.append(("Stability risk", flap.test,
+                          f"Recent results alternate between pass and fail ({flap.sequence}, oldest to newest). {flap.note} "
+                          "Retest before relying on it."))
     for subject, warning in _warning_items(run):
         kind, text = _plain_warning(warning)
         found.append((kind, subject, text))
@@ -1161,31 +1365,72 @@ def _plain_warning(warning: str) -> tuple[str, str]:
     return "Review item", "A validation item needs manual review; see the appendix for details." if text else "NOT CAPTURED"
 
 
-def _run_snapshot(run: "RunReport", counts: dict[str, Any], records: list[dict[str, Any]], env: dict[str, str]) -> dict[str, Any]:
+def _run_snapshot(run: "RunReport", counts: dict[str, Any], records: list[dict[str, Any]], env: dict[str, str],
+                  requirements_total: int) -> dict[str, Any]:
+    # Category by stable test key, from the records _defect_records tagged with _stable_key - absent means
+    # the test had no record this run (passed clean). Comparing this between runs is how compute_delta tells
+    # "reclassified from Unverified to Defect" apart from "newly discovered" or "resolved", instead of the
+    # category counts moving with no stated cause at all.
+    category_by_key = {r["_stable_key"]: r["category"] for r in records if "_stable_key" in r}
     tests: dict[str, dict[str, str]] = {}
     for scope, key, outcome, flow in _all_outcomes(run):
-        tests[policy.stable_test_key(outcome.nodeid or key)] = {
+        stable_key = policy.stable_test_key(outcome.nodeid or key)
+        tests[stable_key] = {
             "title": flow.title if flow else outcome.title.replace("_", " "), "url": outcome.url, "status": outcome.status,
-            "scope": scope, "file": _row_file({"nodeid": outcome.nodeid})}
+            "scope": scope, "file": _row_file({"nodeid": outcome.nodeid}), "quarantined": bool(flow and flow.quarantined),
+            # a failure caused by the test itself is not counted in tests_ran (canonical_counts), so the delta
+            # arithmetic has to see it too; a quarantined flow is already excluded as quarantined, never twice
+            "invalid": bool(outcome.status in {"failed", "error"} and getattr(outcome, "invalid_reason", None)
+                            and not (flow and flow.quarantined)),
+            "category": category_by_key.get(stable_key)}
     pages = [r.url for r in run.url_reports] + [f.start_url for f in run.flow_reports]
     pages += [p.url for p in (run.coverage.pages if run.coverage else [])]
     tooling_urls = [r["url"] for r in records if r["category"] == "tooling" and r["url"]]
     untested_files = [flow_spec_name({"id": f.flow_id}) for f in run.untested_flows]
     kept = {k: env.get(k, "") for k in ("Browser", "Browser version", "Playwright")}
     return policy.snapshot(run_id=run.run_id, finished_at=_utc_timestamp(run.finished_at), counts=counts, tests=tests,
-                           pages=pages, tooling_urls=tooling_urls, untested_files=untested_files, env=kept)
+                           pages=pages, tooling_urls=tooling_urls, untested_files=untested_files, env=kept,
+                           journeys_total=counts.get("journeys_total", 0), requirements_total=requirements_total,
+                           taxonomy=policy.taxonomy_counts(records))
 
 
-def _report_data(run: "RunReport", report_dir: Path) -> dict[str, Any]:
+def _report_data(run: "RunReport", report_dir: Path,
+                 ledger_saves: list[tuple[Path, dict[str, Any]]] | None = None) -> dict[str, Any]:
     counts = canonical_counts(run)
-    records = _defect_records(run, report_dir)
+    closed_this_run: dict[str, dict[str, Any]] = {}
+    records = _defect_records(run, report_dir, ledger_saves=ledger_saves, closed_this_run_out=closed_this_run)
+    # Three DIFFERENT questions, each with its own number - collapsing any two of them into one is exactly
+    # how two self-contradictions shipped in a row:
+    #   failed            (canonical_counts) - arithmetic: passed + failed == executed_tests, always.
+    #   defects_found_this_run - a NEW failure actually observed this run (ledger failure_class != "not_reproduced").
+    #   defects_carried        - an OPEN ledger item that did NOT reproduce this run (a ghost record).
+    # open_defects = found_this_run + carried, and is NOT an arithmetic identity term - it must never appear
+    # in the same row as Tests run/Passed as if it reconciled against them (B1/B2).
+    counts["defects_found_this_run"] = sum(r["category"] == "defect" and r["status"] == "Open"
+                                           and r["failure_class"] != "not_reproduced" for r in records)
+    counts["defects_carried"] = sum(r["category"] == "defect" and r["status"] == "Open"
+                                    and r["failure_class"] == "not_reproduced" for r in records)
+    counts["open_defects"] = counts["defects_found_this_run"] + counts["defects_carried"]
+    # C1: the ledger is the single authority on whether a defect is still open. Every open defect record
+    # (fresh failure or ghost) was just upserted into the ledger as status="open" by _defect_records above -
+    # nothing downstream (delta, category-changes, flapping) may independently call the SAME item "resolved".
+    ledger_open_keys = {r["_stable_key"] for r in records
+                        if r.get("category") == "defect" and r.get("status") == "Open" and "_stable_key" in r}
+    # The actual row count _test_index_section will iterate, proven equal to tests_ran + skipped + quarantined
+    # before anything renders - the 74-vs-70 appendix gap (3 revisions ago) was exactly this never being checked.
+    counts["appendix_index_rows"] = len(_all_outcomes(run))
     gaps = _coverage_gaps(run)
     tax = policy.taxonomy_counts(records)
-    recommendation = policy.release_decision(records)
+    requirements = _requirement_stats(run)
+    # C4: requirements coverage is a second, independent verdict input, not an inert number next to a verdict
+    # it never influences - a report can show zero open defects while most requirements are unbacked.
+    backed_percent = 100 - requirements["percent"] if requirements["total"] else None
+    recommendation = policy.release_decision(records, requirements_backed_percent=backed_percent)
     conditions = policy.build_conditions(records, [g["id"] for g in gaps], recommendation)
     env = environment_block(run)
-    snap = _run_snapshot(run, counts, records, env)
-    delta = policy.compute_delta(policy.previous_run(policy.load_history(Path(report_dir) / policy.HISTORY_FILE), run.run_id), snap)
+    snap = _run_snapshot(run, counts, records, env, requirements["total"])
+    delta = policy.compute_delta(policy.previous_run(policy.load_history(Path(report_dir) / policy.HISTORY_FILE), run.run_id), snap,
+                                 ledger_open_keys=ledger_open_keys, closed_this_run=closed_this_run)
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     return {
         "schema_version": "2.0",
@@ -1199,10 +1444,11 @@ def _report_data(run: "RunReport", report_dir: Path) -> dict[str, Any]:
         "taxonomy": tax,
         "recommendation": recommendation,
         "conditions": conditions,
-        "exit_criteria": policy.exit_criteria(records, [g["id"] for g in gaps], recommendation),
+        "exit_criteria": policy.exit_criteria(records, [g["id"] for g in gaps], recommendation,
+                                              requirements_backed_percent=backed_percent),
         "defects": records,
         "delta": delta,
-        "requirements": _requirement_stats(run),
+        "requirements": requirements,
         "risks": _risk_items(run, records),
         "run_log": _run_log_lines(run),
         "coverage": {
@@ -1258,8 +1504,7 @@ def _evidence_cell(cell, record: dict[str, Any]) -> None:
         return
     for index, (label, url) in enumerate(links):
         paragraph = cell.paragraphs[0] if index == 0 else cell.add_paragraph()
-        paragraph.add_run(f"{label}: ")
-        _add_hyperlink(paragraph, url, url)
+        _add_hyperlink(paragraph, url, label)
 
 
 def _record_table(document, rows: list[dict[str, Any]], spec: list[tuple[str, Any, float]]) -> None:
@@ -1289,9 +1534,12 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
     tax = data["taxonomy"]
     by_cat = {c: [r for r in records if r["category"] == c] for c in policy.CATEGORIES}
     document.add_paragraph(policy.taxonomy_sentence(tax))
+    document.add_paragraph("Release rule: " + policy.release_rule_text())
     document.add_paragraph(
-        "Release rule: any open High or Critical Defect is NO-GO. With no such Defect, any other open Defect or any open Unverified journey "
-        "is CONDITIONAL GO. Limitations, test defects and tooling issues never change the verdict, and none of them is a release blocker.")
+        "ID legend: DEF = Defect (something ran and was broken), UNV = Unverified journey (could not be confirmed either way), "
+        "LIM = Limitation (tooling cannot test it - CAPTCHA, sign-in, no test account), TST = Test defect (the test itself is "
+        "wrong), TOOL = Tooling issue (the harness failed), COV = Coverage gap (section 6). "
+        "Priority: P1 = before release, P2 = next fix cycle, P3 = when convenient.")
     if not records:
         document.add_paragraph("No open defects, unverified journeys or limitations were recorded in this run. No failures to triage this run.")
         return
@@ -1304,6 +1552,10 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
             ("ID", lambda d: _display_id(d["id"]), 0.75), ("Severity", lambda d: d["severity"], 0.7),
             ("Priority", lambda d: d["priority"].split(" - ")[0], 0.5), ("Title", lambda d: d["title"], 1.9),
             ("Page", lambda d: d["url"], 1.0), ("Evidence", "evidence", 1.55)])
+        for d in by_cat["defect"]:
+            document.add_paragraph(
+                f'{_display_id(d["id"])}: {d["description"]} Expected: {d["expected"]} Actual: {d["actual"]} '
+                f'Impact: {d["business_impact"]}')
     else:
         document.add_paragraph("0 application defects: no test that ran found the application broken.")
 
@@ -1314,7 +1566,7 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
         _record_table(document, by_cat["unverified"], [
             ("ID", lambda d: _display_id(d["id"]), 0.75), ("Severity", lambda d: d["severity"], 0.7),
             ("Priority", lambda d: d["priority"].split(" - ")[0], 0.5), ("Journey", lambda d: d["title"], 1.9),
-            ("Why unverified", lambda d: d["actual"], 1.0), ("Evidence", "evidence", 1.55)])
+            ("Why unverified", lambda d: d["description"], 1.0), ("Evidence", "evidence", 1.55)])
     else:
         document.add_paragraph("No journey is unverified.")
 
@@ -1348,9 +1600,14 @@ def _defect_detail_tables(document, defects: list[dict[str, Any]]) -> None:
     for defect in defects:
         document.add_heading(f'{defect["id"]} — {defect["title"]}', 3)
         table = _grid(document, ("Field", "Details"))
+        # C2: a recorded reason next to the severity, so a change in either direction is never silent.
+        severity_display = defect["severity"]
+        if defect.get("severity_set_at"):
+            date_part = defect["severity_set_at"][:10]
+            severity_display = f'{defect["severity"]} (set {date_part}: {defect.get("severity_reason") or "no reason recorded"})'
         fields = (
             ("Type", policy.CATEGORY_LABEL[defect["category"]]),
-            ("Severity (how bad)", defect["severity"]),
+            ("Severity (how bad)", severity_display),
             ("Priority (how urgent)", defect.get("priority", "NOT CAPTURED")),
             ("Description", defect["description"]),
             ("Steps to reproduce", "\n".join(f"{i}. {s}" for i, s in enumerate(defect["steps_to_reproduce"], 1))),
@@ -1416,8 +1673,15 @@ def _risks_section(document, run: RunReport, report_data: dict[str, Any], *, lea
         for defect in blockers:
             document.add_paragraph(f'{defect["id"]}: {defect["title"]} — {defect["business_impact"]}', style="List Bullet")
     else:
-        document.add_paragraph("No release blockers were recorded. Only an open High or Critical application defect blocks a release; "
-                               "unverified journeys and limitations never do.")
+        # P5: both branches end with the SAME rule source section 5 renders (policy.release_rule_text), so
+        # this restatement can never drift from it - it was a second, independent copy of one rule before.
+        open_defects = [d for d in defects if d["category"] == "defect" and d["status"] == "Open"]
+        if open_defects:
+            named = "; ".join(f'{d["id"]} is {d["severity"]}' for d in open_defects)
+            document.add_paragraph(f"No release blockers were recorded. {named}, below the High/Critical blocking threshold "
+                                   "- an open Defect that is not itself blocking. Release rule: " + policy.release_rule_text())
+        else:
+            document.add_paragraph("No release blockers were recorded. Release rule: " + policy.release_rule_text())
     document.add_heading("Risks and coverage notes", 2)
     risks = report_data["risks"]
     for risk in risks:
@@ -1436,8 +1700,15 @@ def _test_index_section(document, run: RunReport) -> None:
         cells = table.add_row().cells
         title = flow.title if flow else outcome.title.replace("_", " ")
         expected = flow.expected if flow and flow.expected else (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "(no assertion captured)")
-        observed = flow.observed if flow and flow.observed else (plain_skip_reason(outcome.error) if outcome.status == "skipped" else ("As expected." if outcome.passed else plain_error(outcome.error)))
-        values = (_display_id(f"T-{number:03d}"), scope, title, outcome.url, expected, observed or "NOT CAPTURED", outcome.status.upper())
+        # flow.observed only ever holds what was seen on the flow's LAST PASS (apply_result freezes it there
+        # on purpose - see its docstring), so it must never be shown for THIS outcome unless this outcome is
+        # itself the pass that produced it; a failing run must always show its own actual failure text, not a
+        # stale "what it looked like when it worked" from an earlier run.
+        observed = (plain_skip_reason(outcome.error) if outcome.status == "skipped" else
+                   plain_error(outcome.error) if not outcome.passed else
+                   (flow.observed if flow and flow.observed else "As expected."))
+        result = "QUARANTINED" if flow and flow.quarantined else outcome.status.upper()
+        values = (_display_id(f"T-{number:03d}"), scope, title, outcome.url, expected, observed or "NOT CAPTURED", result)
         for cell, value in zip(cells, values):
             cell.text = value
 
@@ -1556,24 +1827,47 @@ def _defect_id_for(defects: list[dict[str, Any]], key: str, flow: FlowReport | N
     return "-"
 
 
-def _delta_block(document, delta: dict[str, Any], counts: dict[str, Any]) -> None:
+def _delta_block(document, delta: dict[str, Any], counts: dict[str, Any], requirements_total: int = 0) -> None:
     """What changed since the previous run. A pass-rate movement without this block cannot be explained, so it is
     always printed: either the comparison, or the statement that this run is the first."""
     document.add_heading("Change since the previous run", 2)
     if not delta.get("baseline"):
         document.add_paragraph(delta["note"])
         return
+    prev_journeys = delta.get("previous_journeys_total")
+    prev_reqs = delta.get("previous_requirements_total")
+    journeys_line = (f'user journeys {prev_journeys} -> {counts["journeys_total"]}, ' if prev_journeys is not None
+                     else "user journeys: not recorded for the previous run, ")
+    reqs_line = (f'written requirements {prev_reqs} -> {requirements_total}. ' if prev_reqs is not None
+                else f"written requirements: not recorded for the previous run, now {requirements_total}. ")
     document.add_paragraph(
         f'Compared with {delta["previous_run_id"]} (finished {delta.get("previous_finished_at") or "at an unrecorded time"}): '
         f'pass rate {delta["previous_pass_rate_percent"]}% -> {counts["pass_rate_percent"]}%, '
-        f'tests that ran {delta["previous_tests_ran"]} -> {counts["executed_tests"]}.')
+        f'tests that ran {delta["previous_tests_ran"]} -> {counts["executed_tests"]}, ' + journeys_line + reqs_line +
+        "Journeys and requirements move independently of the test count: a journey can gain or lose steps, "
+        "and a requirement can be rewritten or split, without any test being added or removed.")
     table = _grid(document, ("Change", "Tests"))
     for label, key in (("Tests added", "added"), ("Tests removed", "removed"), ("Failures now passing", "fixed"),
                        ("Failures still open", "still_failing"), ("New failures", "new_failures")):
         cells = table.add_row().cells
         cells[0].text, cells[1].text = label, str(len(delta[key]))
+    cells = table.add_row().cells
+    cells[0].text, cells[1].text = "Tests quarantined (currently)", str(delta.get("quarantined_now", 0))
     if delta.get("renamed_count"):
         document.add_paragraph(f'{delta["renamed_count"]} removed test(s) were renamed, not dropped; they are listed under "Tests removed" with the new name and are not counted as added.')
+    # "added 17, removed 35" alone does not reconcile to the headline totals unless the reader also subtracts
+    # the renamed ones out of "removed" themselves, and a newly-quarantined test leaving tests_ran without
+    # being "removed" - print the arithmetic so nobody has to do that by hand. report_model.validate_report_data
+    # already proved this balances before this function ever ran; there is deliberately no "(this run
+    # counted N)" fallback here - a mismatch is a build failure (Part 0), never a rendered sentence.
+    dropped = len(delta["removed"]) - delta.get("renamed_count", 0)
+    q_delta = delta.get("quarantined_delta", 0)
+    q_term = f' - {q_delta} (newly quarantined)' if q_delta > 0 else (f' + {-q_delta} (unquarantined)' if q_delta < 0 else "")
+    td_delta = delta.get("test_defect_delta", 0)
+    td_term = f' - {td_delta} (newly invalid)' if td_delta > 0 else (f' + {-td_delta} (no longer invalid)' if td_delta < 0 else "")
+    document.add_paragraph(
+        f'Reconciling the totals: {delta["previous_tests_ran"]} (previous) - {dropped} (removed, excluding renames) '
+        f'+ {len(delta["added"])} (added){q_term}{td_term} = {counts["executed_tests"]} (this run).')
     for heading, key in (("Tests added", "added"), ("Tests removed", "removed"), ("Failures now passing", "fixed"),
                          ("Failures still open", "still_failing"), ("New failures", "new_failures")):
         rows = delta[key]
@@ -1587,6 +1881,35 @@ def _delta_block(document, delta: dict[str, Any], counts: dict[str, Any]) -> Non
             values = (row["id"], row["title"], row["reason"]) if withreason else (row["id"], row["title"])
             for cell, value in zip(grid.add_row().cells, values):
                 cell.text = value
+    changes = delta.get("category_changes") or []
+    if changes:
+        document.add_paragraph("Category changes (Unverified / Limitation / Tooling / Defect moved since the previous run):")
+        grid = _grid(document, ("Test ID", "Title", "From", "To", "Reason"))
+        _set_table_widths(grid, (1.8, 2.2, 1.0, 1.0, 2.5))
+        for row in changes:
+            for cell, value in zip(grid.add_row().cells, (row["id"], row["title"], row["from"] or "(none)", row["to"] or "(none)", row["reason"])):
+                cell.text = str(value)
+
+
+def _quarantine_note(counts: dict[str, Any]) -> str:
+    """D5: state what the quarantined test(s) actually did this run, never imply they failed."""
+    if not counts["quarantined"]:
+        return ""
+    result = ("all passed" if counts["quarantined_failed"] == 0 else
+             "all failed" if counts["quarantined_passed"] == 0 else
+             f"{counts['quarantined_passed']} passed, {counts['quarantined_failed']} failed")
+    return f" (excluding {counts['quarantined']} quarantined test(s), which {result})"
+
+
+def _open_defects_display(counts: dict[str, Any]) -> str:
+    """B1: 'Open defects' is a ledger quantity, not an arithmetic one - say how much of it is carried vs found
+    fresh this run so it is never mistaken for a term that should balance against Tests run/Passed."""
+    found, carried = counts["defects_found_this_run"], counts["defects_carried"]
+    if not carried:
+        return str(found)
+    if not found:
+        return f"{carried} (carried)"
+    return f"{found + carried} ({found} found, {carried} carried)"
 
 
 def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] | None = None) -> None:
@@ -1599,29 +1922,43 @@ def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] 
     if not _all_outcomes(run) and not run.untested_flows:
         return
     counts = data["counts"]
+    # A quarantined test ran and its result is real (the Defects/journeys-failed tables below say so); it is
+    # only excluded from the test-level pass rate. Any sentence that states a pass rate next to a non-zero
+    # defect count must say so explicitly, or "100%, 0 failed" and "1 open defect" read as a contradiction -
+    # confirmed live: an external review caught exactly that two revisions in a row.
+    quarantine_note = _quarantine_note(counts)
     document.add_heading("Test Execution Summary", 1)
     document.add_heading("Run totals", 2)
     document.add_paragraph(
         f'{counts["executed_tests"]} tests ran ({counts["page_tests"]} page + {counts["flow_tests"]} flow): '
         f'{counts["passed"]} passed and {counts["failed"]} failed. '
         f'{counts["skipped"]} were skipped by the harness and {counts["test_defects"]} were invalid because the test itself was wrong '
-        f'(both are Tooling issues in section 5, not failures); {counts["blocked_flows"]} user journeys had no result. '
-        f'Pass rate among tests that ran: {counts["pass_rate_percent"]}%. That rate ignores journeys with no result, so read it with the '
+        f'(both are Tooling issues in section 5, not failures); {counts["blocked_flows"]} user journeys had no result'
+        + (f'; {counts["quarantined"]} quarantined test(s) ran but are excluded from the figures below (section 8)' if counts["quarantined"] else "")
+        + f'. Pass rate among tests that ran: {counts["pass_rate_percent"]}%{quarantine_note}. That rate ignores journeys with no result, so read it with the '
         f'journey figure: {counts["journeys_passed"]} of {counts["journeys_total"]} user journeys passed '
         f'({counts["journeys_passed_percent"]}%).'
     )
+    # P3: the same field, stated explicitly, instead of two numbers that read as the same claim and aren't -
+    # the quarantined flow test is excluded from "flow tests that ran" but still counts toward journeys with
+    # a result, which is the one place flow_tests + quarantined and journeys_with_result must visibly agree.
+    quarantine_addendum = f', plus {counts["quarantined"]} quarantined,' if counts["quarantined"] else ""
     document.add_paragraph(
-        f'What is counted: {counts["page_tests"]} page test(s) plus {counts["flow_tests"]} flow test(s) ran. Each flow test is one user journey; '
-        f'{counts["flows_with_result"]} of the {counts["journeys_total"]} journeys have a result in this run (the same figure section 6 uses), '
-        "and a journey with no flow test has no result.")
+        f'What is counted: {counts["page_tests"]} page test(s) plus {counts["flow_tests"]} flow test(s) ran{quarantine_addendum} '
+        f'giving {counts["journeys_with_result"]} of the {counts["journeys_total"]} journeys a result in this run (the same figure '
+        "section 6 uses). Each flow test is one user journey, and a journey with no flow test has no result.")
     metrics = _grid(document, ("Metric", "Value"))
     for label, value in (("Tests that ran", counts["executed_tests"]), ("Page tests that ran", counts["page_tests"]),
                          ("Flow tests that ran", counts["flow_tests"]), ("Passed", counts["passed"]),
-                         ("Failed (application)", counts["failed"]), ("Skipped by the harness", counts["skipped"]),
+                         ("Failed this run", counts["failed"]),
+                         ("Open defects (carried from ledger)", counts["defects_carried"]),
+                         ("Skipped by the harness", counts["skipped"]),
                          ("Invalid (the test itself is wrong)", counts["test_defects"]),
+                         ("Quarantined (excluded from pass rate)", counts["quarantined"]),
                          ("User journeys with no result this run", counts["blocked_flows"]),
-                         ("Pass rate (tests that ran only)", f'{counts["pass_rate_percent"]}%'),
+                         ("Pass rate (tests that ran only)", f'{counts["pass_rate_percent"]}%{quarantine_note}'),
                          ("User journeys passed (of all journeys)", f'{counts["journeys_passed"]} of {counts["journeys_total"]} ({counts["journeys_passed_percent"]}%)'),
+                         ("User journeys failed", counts["journeys_failed"]),
                          ("...of which only proved the URL changed", sum(f.passed and f.navigation_only for f in run.flow_reports))):
         cells = metrics.add_row().cells
         cells[0].text, cells[1].text = label, str(value)
@@ -1630,14 +1967,17 @@ def _test_summary_section(document, run: RunReport, report_data: dict[str, Any] 
         document.add_paragraph(
             f"{nav_only} of the passed journeys only prove that the address changed; nothing on the resulting page was checked "
             "(no heading, results or new controls were recorded). They show the click worked, not that the page is right.")
-    _delta_block(document, data["delta"], counts)
+    _delta_block(document, data["delta"], counts, data["requirements"]["total"])
     attention = []
     for test_number, (scope, key, outcome, flow) in enumerate(_all_outcomes(run), 1):
         if outcome.status not in {"failed", "error"} or outcome.invalid_reason:
             continue
         title = flow.title if flow else outcome.title.replace("_", " ")
         expected = flow.expected if flow and flow.expected else (_plain_assertion(outcome.assertions[0]) if outcome.assertions else "NOT CAPTURED")
-        observed = flow.observed if flow and flow.observed else plain_error(outcome.error)
+        # Every row here failed (filtered above) - flow.observed only ever holds what was seen on the LAST
+        # PASS (apply_result freezes it there on purpose), so showing it here would describe the wrong run.
+        # The actual failure text is what a reader needs for a row titled "requiring attention".
+        observed = plain_error(outcome.error)
         attention.append((_display_id(f"T-{test_number:03d}"), _display_id(_defect_id_for(data["defects"], key, flow)), scope, title, outcome.url, expected, observed or "NOT CAPTURED", outcome.status.upper()))
     if attention:
         document.add_heading("Tests requiring attention", 2)
@@ -1794,7 +2134,7 @@ def _metadata(document, run: RunReport, scope: str) -> None:
     document.add_paragraph(f"Run duration: {duration:.2f}s" if duration is not None else "Run duration: NOT CAPTURED")
     document.add_paragraph(
         f"Totals: {counts['executed_tests']} tests ran | {counts['passed']} passed | {counts['failed']} failed | "
-        f"{counts['skipped']} skipped | {counts['blocked_flows']} blocked journeys"
+        f"{counts['skipped']} skipped | {counts['blocked_flows']} journeys with no result"
     )
 
 
@@ -1819,21 +2159,35 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
     tax = data["taxonomy"]
     recommendation = data["recommendation"]
     status = "FAIL" if recommendation == "NO-GO" else ("PASS WITH ISSUES" if recommendation == "CONDITIONAL GO" else "PASS")
-    document.add_paragraph(policy.defect_headline(tax))
+    quarantine_note = _quarantine_note(counts)
+    # C3: "found this run" and "carried from a previous run" are different claims about a defect - a
+    # not-reproduced ledger item was not found this run, it failed to reproduce.
+    found, carried = counts["defects_found_this_run"], counts["defects_carried"]
+    document.add_paragraph(policy.defect_headline(found, carried))
     document.add_paragraph("Objective: check the discovered pages and the user journeys generated from them, then provide a release recommendation.")
+    defect_clause = (f'{found} application defect(s) found this run' + (f' and {carried} carried from previous runs' if carried else '')
+                     if found else (f'{carried} open application defect(s) carried from previous runs (not reproduced this run)' if carried
+                                    else '0 application defects'))
+    reqs = data["requirements"]
+    backed_percent = 100 - reqs["percent"] if reqs["total"] else None
+    trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent)
+    trigger_note = f" ({trigger})" if trigger else ""
     document.add_paragraph(
-        f'Release decision: {recommendation}, derived from the Defects table. {counts["passed"]} of {counts["executed_tests"]} tests passed '
-        f'({counts["pass_rate_percent"]}%); {counts["failed"]} failed, {counts["blocked_flows"]} journeys had no result, and {counts["skipped"]} were skipped. '
+        f'Release decision: {recommendation}{trigger_note}, derived from the Defects table. {counts["passed"]} of {counts["executed_tests"]} tests passed '
+        f'({counts["pass_rate_percent"]}%{quarantine_note}); {defect_clause}, {counts["blocked_flows"]} journeys had no result, and {counts["skipped"]} were skipped. '
         f'Journeys passed: {counts["journeys_passed"]} of {counts["journeys_total"]} ({counts["journeys_passed_percent"]}%). '
         + policy.taxonomy_sentence(tax))
-    reqs = data["requirements"]
     document.add_paragraph(
         f'Requirements coverage: {reqs["not_backed"]} of {reqs["total"]} requirements ({reqs["percent"]}%) are not backed by a passing result '
         f'(section 6), next to a {counts["pass_rate_percent"]}% pass rate among the tests that ran.' if reqs["total"] else
         "Requirements coverage: no written requirements were supplied, so it cannot be computed; the pass rate covers only the tests that ran.")
-    table = _grid(document, ("Overall status", "Tests run", "Passed", "Failed", "Skipped", "Journeys with no result", "Recommendation"))
+    # B1/B2: "Failed this run" is an arithmetic term (passed + failed this run == tests run, always); "Open
+    # defects" is a ledger quantity and must never be collapsed into the same column - that collapse is what
+    # made "70 + 1 = 71" read as broken arithmetic when it was really two different questions in one cell.
+    table = _grid(document, ("Overall status", "Tests run", "Passed", "Failed this run", "Open defects",
+                             "Skipped", "Journeys with no result", "Recommendation"))
     values = (status, str(counts["executed_tests"]), str(counts["passed"]), str(counts["failed"]),
-              str(counts["skipped"]), str(counts["blocked_flows"]), recommendation)
+              _open_defects_display(counts), str(counts["skipped"]), str(counts["blocked_flows"]), recommendation)
     for cell, value in zip(table.add_row().cells, values):
         cell.text = value
     document.add_heading("Conditions and top risks", 2)
@@ -1924,16 +2278,27 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
     document.add_heading("Conclusions & Recommendations", 1)
     data = report_data or _report_data(run, Path.cwd())
     recommendation = data["recommendation"]
+    # C2/C4: name the trigger next to the verdict, so nobody has to reverse-engineer it from a severity field.
+    reqs = data["requirements"]
+    backed_percent = 100 - reqs["percent"] if reqs["total"] else None
+    trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent)
+    trigger_note = f": {trigger}" if trigger else ""
     if recommendation == "GO":
         document.add_paragraph("Final verdict: GO. The tested scope is suitable for release. Review the documented out-of-scope items before signing off.")
     elif recommendation == "CONDITIONAL GO":
-        document.add_paragraph("Final verdict: CONDITIONAL GO. No application defect blocks the release, but it is not unconditional until the exit criteria below are met.")
+        document.add_paragraph(f"Final verdict: CONDITIONAL GO{trigger_note}. No application defect blocks the release, but it is not unconditional until the exit criteria below are met.")
     else:
-        document.add_paragraph("Final verdict: NO-GO. Do not release based on this run.")
+        document.add_paragraph(f"Final verdict: NO-GO{trigger_note}. Do not release based on this run.")
     document.add_paragraph(policy.taxonomy_sentence(data["taxonomy"]))
     document.add_paragraph("Exit criteria: the conditions that move the current verdict to GO.")
     for criterion in data["exit_criteria"]:
         document.add_paragraph(criterion, style="List Bullet")
+    if (run.app_build or {}).get("id") == "NOT CAPTURED":
+        document.add_paragraph(
+            "Recommendation to the site team: publish a build identifier (a response header, a <meta> tag, or a "
+            "/version.json with a commit SHA or build number) on every environment under test. Without one, no two "
+            "test runs can be proven to have tested the same deployed code - a passing run today and a passing run "
+            "next week could silently be testing two different builds.", style="List Bullet")
     records = data["defects"]
     if records:
         document.add_paragraph("Actions, each with a named owner and a due date (ISO):")
@@ -1945,6 +2310,33 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
             cells[1].text = _action_text(d)
             cells[2].text = d["owner"]
             cells[3].text = d["due"]
+        categories = {d["category"] for d in records}
+        owners = {d["owner"] for d in records}
+        # P6: "same owner for everyone" and "fell back to the default owner" are different claims - by_category
+        # can be fully configured and still resolve every category to the same person, which is not a missing
+        # configuration. Only records that ACTUALLY used cfg["default"] (owner_source) are a true fallback;
+        # this disclosure must say which situation this is, not assume the former whenever it sees the latter.
+        fell_back = [d for d in records if d.get("owner_source") == "default"]
+        if len(categories) > 1 and len(owners) == 1 and fell_back:
+            descriptions = {"defect": "fix an application defect", "test_defect": "correct a wrong test",
+                            "tooling": "repair the test harness", "limitation": "get the site owner's agreement on a limitation",
+                            "unverified": "give an unverified journey a manual pass"}
+            fallback_categories = {d["category"] for d in fell_back}
+            kinds = sorted(descriptions.get(c, c) for c in fallback_categories)
+            document.add_paragraph(
+                f'{len(fell_back)} action(s) above have no "by_category" entry for their kind of work and fell back to the '
+                f'single configured default owner ({next(iter(owners))}), across {len(kinds)} different kinds of work '
+                f'({"; ".join(kinds)}). Recommendation: add '
+                f'"by_category" entries to {policy.OWNERS_FILE} so each kind of work routes to whoever actually does it, '
+                "instead of one person by default.")
+        elif len(categories) > 1 and len(owners) == 1:
+            # by_category IS configured for every category here - the single name is a real organizational
+            # fact (one person currently owns all of it), not a missing setting, so say that instead.
+            document.add_paragraph(
+                f'All {len(records)} action(s) above route through "by_category" entries in {policy.OWNERS_FILE}, which '
+                f'currently name the same person ({next(iter(owners))}) for every category - that reflects today\'s '
+                'actual ownership, not a missing configuration. Update the relevant "by_category" entry once a '
+                "different person owns a given kind of work.")
 
 
 def _verify_document(document, data: dict[str, Any]) -> None:
@@ -1997,7 +2389,8 @@ def _verify_document(document, data: dict[str, Any]) -> None:
     for name in ("Executive Summary", "Risks & Issues", "Conclusions & Recommendations", "Defect Report (Bugs Found)"):
         if sentence not in " ".join(texts.get(name, [])):
             raise policy.ReportConsistencyError(f"section '{name}' does not carry the same defect counts as the Defect Report")
-    if not " ".join(texts.get("Executive Summary", [])).lstrip().startswith(policy.defect_headline(data["taxonomy"])):
+    if not " ".join(texts.get("Executive Summary", [])).lstrip().startswith(
+            policy.defect_headline(data["counts"]["defects_found_this_run"], data["counts"]["defects_carried"])):
         raise policy.ReportConsistencyError("the executive summary must lead with the application defect count")
     if data["delta"].get("baseline") and "Test Execution Summary" in texts and not any(
             "Compared with" in t for t in texts["Test Execution Summary"]):
@@ -2172,6 +2565,11 @@ def _appendix_section(document, run: RunReport, *, link_base: Path | None, headi
             document.add_paragraph(line, style="List Bullet")
 
     document.add_heading("Appendix index", 2)
+    idx_counts = canonical_counts(run)
+    idx_rows = idx_counts["executed_tests"] + idx_counts["skipped"] + idx_counts["quarantined"] + idx_counts["test_defects"]
+    document.add_paragraph(
+        f'The test index below has {idx_rows} rows = {idx_counts["executed_tests"]} tests that ran + '
+        f'{idx_counts["skipped"]} skipped + {idx_counts["quarantined"]} quarantined + {idx_counts["test_defects"]} invalid.')
     index = _grid(document, ("Entry", "Contents"))
     for entry, contents in (("Complete test index", "Every executed test with a unique ID and expected/observed result."),
                             ("Coverage data", "Page URLs, denominator rules, and untouched controls."),
@@ -2240,7 +2638,12 @@ def create_report(
 ) -> RunReport:
     run = load_run(artifacts_dir, tests_dir, model=model, flows_file=flows_file, ratings_file=ratings_file)
     out_dir.mkdir(parents=True, exist_ok=True)
-    report_data = _report_data(run, out_dir)
+    # P1: ledger mutations (consecutive_not_reproduced, an auto-close) are computed here but not yet written -
+    # an aborted build (failed validation, a document that fails to render) must not commit them, the same
+    # way it must not become save_history's baseline below. Committing a mutation from a build that was never
+    # actually delivered is exactly how a defect's auto-close fired one run early.
+    ledger_saves: list[tuple[Path, dict[str, Any]]] = []
+    report_data = _report_data(run, out_dir, ledger_saves=ledger_saves)
     validate_report_data(report_data)
     write_report_data(out_dir / "report-data.json", report_data)
     # Secondary (per-page) reports go in their own subfolder so out_dir's top level stays just the
@@ -2252,6 +2655,9 @@ def create_report(
         build_url_docx(run, report, pages_dir / f"{name_for(report.url)}.docx")
     if combined:
         build_combined_docx(run, out_dir / "full-report.docx", report_data, appendix=appendix)
-    # Only after every document was built: a failed build must not become the baseline of the next comparison.
+    # Only after every document was built: a failed build must not become the baseline of the next comparison,
+    # nor commit any ledger mutation computed above.
+    for ledger_path, ledger in ledger_saves:
+        policy.save_ledger(ledger_path, ledger)
     policy.save_history(out_dir / policy.HISTORY_FILE, policy.load_history(out_dir / policy.HISTORY_FILE), report_data["snapshot"])
     return run

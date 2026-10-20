@@ -61,7 +61,12 @@ class VisionError(Exception):
 # ------------------------------------------------------------------ the picture
 
 def _slug(nodeid: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"     # the same slug conftest.py names evidence folders with
+    """The same slug conftest.py names evidence folders with, including its length cap - see that file's
+    docstring for why (a long nodeid otherwise produces a path too long for Windows/Word to open)."""
+    raw = re.sub(r"[^A-Za-z0-9_.-]+", "-", nodeid).strip("-") or "test"
+    if len(raw) <= 100:
+        return raw
+    return f"{raw[:91]}-{hashlib.sha1(nodeid.encode('utf-8')).hexdigest()[:8]}"
 
 
 def outcome_screenshot(settings, flow: dict, results: dict | None = None) -> Path | None:
