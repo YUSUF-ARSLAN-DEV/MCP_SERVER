@@ -34,6 +34,9 @@ class AppSettings:
     # a person may point a run at their own model server (Ollama, LM Studio ...) on a private address; off by default,
     # because on a shared server that would let a visitor make it call into its own network
     allow_private_model_urls: bool = field(default_factory=lambda: _flag("ALLOW_PRIVATE_MODEL_URLS"))
+    # how many runs may execute at the same time (each is a browser plus a pipeline process): different people's runs
+    # no longer wait in one line. Each person still has one active run at a time.
+    max_concurrent_jobs: int = field(default_factory=lambda: max(1, _int("MAX_CONCURRENT_JOBS", 2)))
     max_pages_limit: int = field(default_factory=lambda: _int("MAX_PAGES_LIMIT", 25))
     job_timeout_s: int = field(default_factory=lambda: _int("JOB_TIMEOUT_S", 1800))
     max_jobs_per_day: int = field(default_factory=lambda: _int("MAX_JOBS_PER_DAY", 5))

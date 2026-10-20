@@ -89,7 +89,8 @@ class JobRunner:
     def __init__(self, db: Database, settings: AppSettings):
         self.db, self.settings = db, settings
         self._task: asyncio.Task | None = None
-        self._current: tuple[str, asyncio.subprocess.Process] | None = None
+        self._running: set[asyncio.Task] = set()                       # one task per run in progress
+        self._procs: dict[str, asyncio.subprocess.Process] = {}        # job id -> its pipeline process
 
     async def start(self) -> None:
         self.db.recover_interrupted()
@@ -102,13 +103,17 @@ class JobRunner:
                 await self._task
             except asyncio.CancelledError:
                 pass
-        if self._current:
-            kill_tree(self._current[1])
+        for task in list(self._running):
+            task.cancel()
+        await asyncio.gather(*self._running, return_exceptions=True)
+        for proc in list(self._procs.values()):
+            kill_tree(proc)
 
     def cancel(self, job_id: str) -> None:
-        """Kill the pipeline if it is the job running now (the row is marked cancelled by the caller)."""
-        if self._current and self._current[0] == job_id:
-            kill_tree(self._current[1])
+        """Kill the pipeline if this job is running now (the row is marked cancelled by the caller)."""
+        proc = self._procs.get(job_id)
+        if proc is not None:
+            kill_tree(proc)
 
     def environment(self, job: dict) -> dict:
         options = job["options"]
@@ -157,17 +162,23 @@ class JobRunner:
             leftover.unlink(missing_ok=True)
 
     async def _loop(self) -> None:
+        """Start queued runs, oldest first, while there is room: up to max_concurrent_jobs at once."""
         while True:
-            job = self.db.claim_next()
+            job = self.db.claim_next() if len(self._running) < self.settings.max_concurrent_jobs else None
             if job is None:
                 await asyncio.sleep(self.settings.idle_interval_s)
                 continue
-            try:
-                await self._run(job)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:          # a bug here must fail this job, not end the worker
-                self.db.finish_job(job["id"], "failed", f"Could not run: {exc}")
+            task = asyncio.create_task(self._run_safely(job))
+            self._running.add(task)
+            task.add_done_callback(self._running.discard)
+
+    async def _run_safely(self, job: dict) -> None:
+        try:
+            await self._run(job)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:              # a bug here must fail this job, not end the worker (or anyone else's run)
+            self.db.finish_job(job["id"], "failed", f"Could not run: {exc}")
 
     async def _run(self, job: dict) -> None:
         run_dir = Path(job["run_dir"])
@@ -178,7 +189,7 @@ class JobRunner:
             proc = await asyncio.create_subprocess_exec(
                 *self.settings.command, env=self.environment(job), cwd=str(config.ROOT),
                 stdout=log, stderr=asyncio.subprocess.STDOUT, stdin=asyncio.subprocess.DEVNULL, **kwargs)
-            self._current = (job["id"], proc)
+            self._procs[job["id"]] = proc
             forget_model_secret(run_dir)       # the process has its environment now; the key does not need to sit on disk
             started, timed_out, shown = time.monotonic(), False, None
             try:
@@ -194,7 +205,7 @@ class JobRunner:
                         kill_tree(proc)
                         await proc.wait()
             finally:
-                self._current = None
+                self._procs.pop(job["id"], None)
                 forget_model_secret(run_dir)   # the run has read its key; nothing keeps it
                 if proc.returncode is None:
                     kill_tree(proc)           # the worker itself was stopped
