@@ -179,15 +179,19 @@ def priority_for(category: str, severity: str) -> str:
     return "P2 - next fix cycle" if severity == "Medium" else "P3 - when convenient"
 
 
-def assert_priorities_vary(records: list[dict[str, Any]]) -> None:
-    """Severity must come from user impact, so a run in which every scored item (Defects and Unverified journeys) has the
-    same priority was not scored. Limitations, test defects and tooling issues have a priority fixed by the rules
-    (always P3), so they cannot show scoring variety and are not part of this check."""
+def priority_uniformity_note(records: list[dict[str, Any]]) -> str | None:
+    """A note for the report when every scored item (Defects and Unverified journeys) has the same priority, else None.
+
+    Severity must come from user impact, and one priority across the board COULD mean nothing was scored - but it is
+    just as often true: three real defects can all be High. This used to refuse the whole report, which meant a run
+    with a few findings of equal weight produced no report at all (found live). It is now said in the report, under
+    "Validation warnings", for a person to confirm. Limitations, test defects and tooling issues have a priority fixed
+    by the rules (always P3), so they cannot show scoring variety and are not part of this check."""
     scored = [r for r in records if r["category"] in {"defect", "unverified"}]
     if len(scored) >= 2 and len({r["priority"] for r in scored}) == 1:
-        raise ReportConsistencyError(
-            f"all {len(scored)} scored items (defects and unverified journeys) have the same priority ({scored[0]['priority']}); "
-            "severity was not computed from user impact. The report is not emitted.")
+        return (f"All {len(scored)} scored items (defects and unverified journeys) have the same priority ({scored[0]['priority']}). "
+                "That can be right - they may truly share one impact - but check that each severity was judged from its own user impact.")
+    return None
 
 
 # -------------------------------------------------------------------------------------- release decision

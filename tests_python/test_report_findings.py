@@ -581,3 +581,21 @@ def test_a_defect_lives_its_whole_life_through_real_renders_open_persist_frozen_
     assert entry["status"] == "closed" and entry["audit_log"][-1]["actor"] == "[auto]"
     assert entry["audit_log"][-1]["clean_run_count"] == 3 and entry["severity"] == born_severity
     assert data["counts"]["open_defects"] == 0 and data["recommendation"] != "NO-GO"
+
+
+def test_two_real_defects_of_equal_weight_still_produce_a_report_that_says_so(tmp_path):
+    """Found live: a run with three genuine, equally weighted findings was refused outright ("every scored item has the same
+    priority"), so it produced no report at all. A tie is now flagged in "Validation warnings" for a person to confirm."""
+    artifacts, tests = _workspace(tmp_path)
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    wrong_page = "E   AssertionError: Page.expect_url\nE     Expected URL to match /en/find but was https://x.test/en"
+    for row in results["tests"]:
+        if "test_flow_" in row["nodeid"]:
+            row.update(status="failed", error=wrong_page)
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)                  # used to raise ReportConsistencyError
+    data = json.loads((tmp_path / "report" / "report-data.json").read_text(encoding="utf-8"))
+    scored = [d for d in data["defects"] if d["category"] in {"defect", "unverified"}]
+    assert len(scored) == 2 and len({d["priority"] for d in scored}) == 1
+    text = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Scoring check" in text and "All 2 scored items" in text and "judged from its own user impact" in text

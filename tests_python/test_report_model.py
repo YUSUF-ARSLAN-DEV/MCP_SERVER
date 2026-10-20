@@ -194,6 +194,31 @@ def test_evidence_links_may_not_point_into_a_temp_directory(monkeypatch):
                                     taxonomy={"defect": 1}, recommendation="CONDITIONAL GO", conditions=["fix it"]))
 
 
+def _validate_with_links(**links):
+    defect = {"id": "DEF-001", "category": "defect", "status": "Open", "severity": "Medium", "title": "t",
+              "description": "d", "steps_to_reproduce": ["s"], "expected": "e", "actual": "a", "trace_url": "NOT CAPTURED",
+              "screenshot_url": "../evidence/x/01.png", "owner": "Owner", "due": "2026-01-01",
+              "linked_flow_id": "NOT CAPTURED", "severity_set_at": "2026-01-01", "severity_reason": "r", **links}
+    validate_report_data(_base_data(defects=[defect], counts=_base_counts(open_defects=1), taxonomy={"defect": 1},
+                                    recommendation="CONDITIONAL GO", conditions=["fix it"]))
+
+
+def test_an_in_tree_link_is_fine_even_when_the_runs_folder_is_named_after_a_temp_path(monkeypatch):
+    """Found live: a server keeping runs under %TEMP% had every report refused because the evidence FOLDER NAME (the test's
+    path) contained the words AppData / Temp. The link itself was a perfectly good ../evidence/<folder>/ one."""
+    monkeypatch.delenv("ARTIFACT_BASE_URL", raising=False)
+    _validate_with_links(screenshot_url="../evidence/AppData-Local-Temp-wtp-ui-runs-site-tests-x-288522f7/test-failed-1.png",
+                         trace_url="../evidence/AppData-Local-Temp-wtp-ui-runs-site-tests-x-288522f7/trace.zip")
+
+
+@pytest.mark.parametrize("href", ["C:\\Users\\x\\AppData\\Local\\Temp\\pw\\trace.zip", "/tmp/pw/trace.zip", "file:///tmp/x.zip",
+                                  "\\\\server\\share\\x.png", "../../../../../x/trace.zip"])
+def test_an_absolute_link_or_one_that_climbs_out_of_the_run_still_cannot_resolve(monkeypatch, href):
+    monkeypatch.delenv("ARTIFACT_BASE_URL", raising=False)
+    with pytest.raises(ValueError, match="cannot resolve"):
+        _validate_with_links(trace_url=href)
+
+
 def test_category_change_may_not_say_resolved_while_the_same_test_is_still_an_open_defect():
     """C1: the ledger is the single authority on whether a defect is still open - confirmed live: a report
     called the same defect resolved, open, and release-blocking all at once."""

@@ -325,14 +325,21 @@ def _validate_ledger_not_contradicted(data: dict[str, Any]) -> None:
 def _validate_evidence_links(data: dict[str, Any]) -> None:
     """An evidence link that resolves for nobody is worse than no link: a reader clicks it, it does nothing,
     and now they distrust every other link in the report too. Confirmed live: trace/video hrefs pointing
-    eight ../ segments into a Windows temp directory that is wiped on reboot."""
+    eight ../ segments into a Windows temp directory that is wiped on reboot.
+
+    What makes a link unresolvable is its SHAPE: an absolute path (it only exists on the machine that wrote it) or one that
+    climbs out of the run's folder. It is not the words in it: a server may keep every run under a temp folder, and an
+    in-tree link such as ../evidence/AppData-Local-Temp-...-tests-x/01.png (a folder named after the test's path) is fine.
+    The old check looked for "AppData" / "Temp/" anywhere in the link and so refused every report from such a server."""
     base = os.environ.get("ARTIFACT_BASE_URL", "").strip()
     for defect in data.get("defects", []):
         for key in ("screenshot_url", "trace_url", "video_url"):
             href = defect.get(key)
             if not href or href == "NOT CAPTURED" or base:
                 continue
-            if "AppData" in href or "/tmp/" in href or "Temp/" in href or href.count("../") > 3:
+            link = str(href).replace("\\", "/")
+            climbs = len(re.match(r"(?:\.\./)*", link).group(0)) // 3
+            if re.match(r"^(?:[A-Za-z]:|/|file:|//)", link) or climbs > 3:
                 raise ValueError(f"defect {defect.get('id', '?')} has an evidence link that cannot resolve for a "
                                  f"reader ({key}={href!r}); copy the artifact into the run's own evidence folder "
                                  "or set ARTIFACT_BASE_URL")

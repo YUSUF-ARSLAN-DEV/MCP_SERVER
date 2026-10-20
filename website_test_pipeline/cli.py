@@ -266,12 +266,16 @@ def main() -> int:
             if has_session(settings):
                 pytest_env['WTP_STORAGE_STATE'] = str(session_path(settings))
             from .envinfo import capture_browser
-            from .pipeline import test_run_args, xdist_args
+            from .pipeline import conftest_args, test_run_args, xdist_args
             capture_browser(settings.artifacts_dir, os.environ.get('WTP_BROWSER') or 'chromium', os.environ.get('WTP_DEVICE', ''))   # record the browser build these results come from
             from .config import pw_output_dir
             pw_out = pw_output_dir(settings.artifacts_dir)
-            pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}', *test_run_args(), *xdist_args()]
+            pytest_cmd = [sys.executable, '-m', 'pytest', str(settings.tests_dir), '-q', *PYTEST_ARTIFACT_ARGS, f'--output={pw_out}', *conftest_args(settings), *test_run_args(), *xdist_args()]
+            (settings.artifacts_dir/'test_results.json').unlink(missing_ok=True)      # a fresh run's results, never a leftover from an earlier one
             result = subprocess.run(pytest_cmd, cwd=settings.root, env=pytest_env)
+            if not (settings.artifacts_dir/'test_results.json').exists():
+                log.error('REPORT the tests wrote no results (pytest exit code %s): they could not run at all. See the pytest output above.', result.returncode)
+                return 2                                                          # a stage could not run - `all` stops and the API marks the run failed
         elif not (settings.artifacts_dir/'test_results.json').exists():
             log.error('REPORT no existing test_results.json; run execute first or use --rerun')
             return 2

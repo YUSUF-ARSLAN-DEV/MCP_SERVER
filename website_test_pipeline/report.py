@@ -1237,7 +1237,9 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
                 record["id"] = f"{policy.PREFIX[category]}-{counters[category]:03d}"
                 records.append(record)
     policy.assign_owners(records, run.owners, _run_date(run))
-    policy.assert_priorities_vary(records)
+    note = policy.priority_uniformity_note(records)
+    if note and note not in run.notes:
+        run.notes.append(note)                    # shown under "Validation warnings"; it no longer blocks the report
     return records
 
 
@@ -1355,6 +1357,8 @@ def _plain_warning(warning: str) -> tuple[str, str]:
         return "Coverage note", "Some page behavior could not be driven automatically; this is informational, not a confirmed defect."
     if "shallow coverage" in text:
         return "Coverage risk", "The page has more controls than the passing journeys exercised."
+    if "scored items" in text and "same priority" in text:
+        return "Scoring check", text           # worded for the stakeholder already (see report_policy.priority_uniformity_note)
     if "only proves the URL changed" in text:
         return "Coverage risk", "The journey reached a new address, but the resulting content was not confirmed."
     if "inconsistent" in text or "flapping" in text:

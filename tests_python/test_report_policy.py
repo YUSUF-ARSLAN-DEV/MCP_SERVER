@@ -102,12 +102,13 @@ def test_a_limitation_is_always_low_and_never_p1():
     assert policy.priority_for("limitation", "High") == "P3 - when convenient"
 
 
-def test_a_run_where_every_scored_item_has_one_priority_is_rejected():
+def test_a_run_where_every_scored_item_has_one_priority_is_flagged_for_a_person_not_refused():
     same = [_rec("UNV-001", "unverified", "Medium"), _rec("UNV-002", "unverified", "Medium")]
-    with pytest.raises(ReportConsistencyError, match="same priority"):
-        policy.assert_priorities_vary(same)
-    policy.assert_priorities_vary(same + [_rec("DEF-001", "defect", "High")])
-    policy.assert_priorities_vary([_rec("UNV-001", "unverified")])            # one item cannot be uniform
+    note = policy.priority_uniformity_note(same)
+    assert note and "All 2 scored items" in note and "P2" in note and "judged from its own user impact" in note
+    assert policy.priority_uniformity_note(same + [_rec("DEF-001", "defect", "High")]) is None      # they vary: nothing to say
+    assert policy.priority_uniformity_note([_rec("UNV-001", "unverified")]) is None                 # one item cannot be uniform
+    assert policy.priority_uniformity_note([_rec("LIM-001", "limitation"), _rec("LIM-002", "limitation")]) is None   # fixed by rule
 
 
 # ------------------------------------------------------------------ product vs test

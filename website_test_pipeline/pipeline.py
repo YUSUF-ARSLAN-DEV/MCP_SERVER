@@ -19,6 +19,7 @@ import os
 import socket
 import subprocess
 import sys
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from .authflow import has_session, preflight_session, session_path
@@ -61,6 +62,18 @@ def test_run_args() -> list[str]:
     return args
 
 
+def conftest_args(settings) -> list[str]:
+    """The pipeline's shared pytest fixtures (evidence_dir, the browser session, result collection) are in the repo's
+    conftest.py, and pytest only finds that for tests UNDER the repo. A run whose folder lives elsewhere - a server
+    keeping its runs in DATA_DIR - must load it explicitly, or every test fails at setup with `fixture 'evidence_dir'
+    not found` and no results are ever written (found live: a whole run "finished" with 76 setup errors)."""
+    try:
+        Path(settings.tests_dir).resolve().relative_to(Path(settings.root).resolve())
+        return []
+    except ValueError:
+        return ["-p", "conftest"]
+
+
 def xdist_args() -> list[str]:
     """-n <workers> for pytest-xdist, so independent generated test files execute in parallel worker
     processes instead of one at a time. Each worker gets its own Playwright browser via the existing `page`
@@ -77,7 +90,7 @@ def run_execute(settings, log) -> int:
     if has_session(settings):
         env["WTP_STORAGE_STATE"] = str(session_path(settings))
     capture_browser(settings.artifacts_dir, os.environ.get("WTP_BROWSER") or "chromium", os.environ.get("WTP_DEVICE", ""))   # the build these results come from
-    result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q", *test_run_args(), *xdist_args()], cwd=settings.root, env=env)
+    result = subprocess.run([sys.executable, "-m", "pytest", str(settings.tests_dir), "-q", *conftest_args(settings), *test_run_args(), *xdist_args()], cwd=settings.root, env=env)
     feed_results(settings, log)
     return result.returncode
 
