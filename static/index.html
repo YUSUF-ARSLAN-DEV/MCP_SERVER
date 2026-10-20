@@ -127,6 +127,7 @@ nav{display:flex;flex-direction:column}
   <h1>Smoke Tester<small>AI-assisted web smoke testing</small></h1>
   <a class="navi" href="#/new" data-r="new">+ New run</a>
   <a class="navi" href="#/live" data-r="live">Live run <span class="dot running pulse" id="liveDot" style="display:none;margin-left:6px"></span></a>
+  <a class="navi" href="#/models" data-r="models" id="navModels" style="display:none">Models</a>
   <a class="navi" href="#/users" data-r="users" id="navUsers" style="display:none">Users</a>
   <div class="site"><a href="#/" style="color:inherit;text-decoration:none">Runs</a></div>
   <div class="runlist" id="runList"></div>
@@ -158,12 +159,8 @@ nav{display:flex;flex-direction:column}
   <div class="card">
     <h3>Model</h3>
     <label for="mMode">Which model writes and judges the tests?</label>
-    <select id="mMode">
-      <option value="server">Use the server's default</option>
-      <option value="openai">OpenAI-compatible (OpenAI, vLLM, LM Studio, Ollama, gateways)</option>
-      <option value="anthropic">Anthropic (Claude)</option>
-      <option value="google">Google (Gemini)</option>
-    </select>
+    <select id="mMode"></select>
+    <p class="sub" id="mNone" style="display:none;margin:8px 0 0">You have no saved models yet. <a href="#/models">Save one</a> to reuse it, or type a one-off below.</p>
     <div id="mFields" style="display:none">
       <label for="mUrl" id="mUrlLabel">API address</label><input id="mUrl" type="url" autocomplete="off">
       <label for="mName">Model name</label><input id="mName" autocomplete="off" spellcheck="false">
@@ -191,6 +188,27 @@ nav{display:flex;flex-direction:column}
     <div class="card" id="humanCard"><h3>Waiting on a person</h3><div id="humanBody" class="empty">Nothing is waiting for you.</div>
       <p class="sub" style="margin:12px 0 0"><button class="btn sec sm" id="cancelBtn" disabled>Cancel run</button></p></div>
   </div>
+</section>
+
+<section class="view" id="models">
+  <h2>Models</h2>
+  <p class="sub">Your saved model configurations. Only you can see or use them, the keys are stored encrypted, and a key is never shown again once saved.</p>
+  <div class="card" id="modelsBody"><div class="empty">Loading...</div></div>
+  <div class="card">
+    <h3 id="mfTitle">Add a model</h3>
+    <div class="row">
+      <div style="flex:1;min-width:180px"><label for="mfName">Name <small>(how it appears in the list)</small></label><input id="mfName" autocomplete="off" placeholder="e.g. Work Qwen server"></div>
+      <div style="flex:1;min-width:180px"><label for="mfProvider">Kind of API</label>
+        <select id="mfProvider"><option value="openai">OpenAI-compatible (OpenAI, vLLM, LM Studio, Ollama, gateways)</option><option value="anthropic">Anthropic (Claude)</option><option value="google">Google (Gemini)</option></select></div>
+    </div>
+    <label for="mfUrl" id="mfUrlLabel">API address</label><input id="mfUrl" type="url" autocomplete="off">
+    <label for="mfModel">Model name</label><input id="mfModel" autocomplete="off" spellcheck="false">
+    <label for="mfKey" id="mfKeyLabel">API key</label><input id="mfKey" type="password" autocomplete="off" spellcheck="false">
+    <p class="sub" id="mfHint" style="margin:8px 0 0"></p>
+    <div class="err" id="mfErr"></div>
+    <p><button class="btn" id="mfSave">Save model</button> <button class="btn sec" id="mfCancel" style="display:none">Cancel edit</button></p>
+  </div>
+  <p class="honest">Anyone who can run the server's computer could read the encryption key file next to the database; set <code>SECRETS_KEY</code> in the server's environment to keep them apart.</p>
 </section>
 
 <section class="view" id="users">
@@ -292,12 +310,13 @@ const sevClass=s=>s==='High'||s==='Critical'?'nogo':s==='Medium'?'cond':'idle';
 const TABS=['overview','report','journeys','defects'];
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===view));
-  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')||(a.dataset.r==='users'&&view==='users')));
+  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')||(a.dataset.r==='users'&&view==='users')||(a.dataset.r==='models'&&view==='models')));
   scrollTo(0,0);
 }
 function route(){
   const parts=(location.hash||'#/').replace(/^#\/?/,'').split('/').filter(Boolean);
-  if(parts[0]==='new'){S.shown=null;show('new');paintRunList();return;}
+  if(parts[0]==='new'){S.shown=null;show('new');paintRunList();reloadModels().then(paintModelChoices);return;}
+  if(parts[0]==='models'){S.shown=null;show('models');paintRunList();loadModels();return;}
   if(parts[0]==='live'){S.shown=null;show('run');paintRunList();openLive();return;}
   if(parts[0]==='users'){S.shown=null;show('users');paintRunList();loadUsers();return;}
   if(parts[0]==='runs'&&parts[1]){S.shown=decodeURIComponent(parts[1]);show('runpage');renderRunPage(TABS.includes(parts[2])?parts[2]:'overview');return;}
@@ -322,18 +341,32 @@ async function showAuth(){
   let st={};try{st=await (await fetch('/api/session',{credentials:'same-origin'})).json();}catch(e){}
   if(st.authenticated)return;
   if(st.setup_needed)return setupForm(st);
-  if(st.accounts)return signInForm();
+  if(st.accounts)return signInForm(st);
   return codeForm(false);
 }
-function signInForm(msg){
+function signInForm(st,msg){
   lockModal(`<h3>Sign in</h3><p class="sub" style="margin:0">Use your account to see and start your runs.</p>
   <label for="siU">Username</label><input id="siU" autocomplete="username">
   <label for="siP">Password</label><input id="siP" type="password" autocomplete="current-password">
   <div class="err" id="siE">${esc(msg||'')}</div>
-  <div class="actions"><button class="btn" id="siGo">Sign in</button></div>`,'siU');
+  <div class="actions">${st&&st.signup==='open'?'<button class="btn sec" id="siNew">Create an account</button>':''}<button class="btn" id="siGo">Sign in</button></div>`,'siU');
   const go=async()=>{const r=await postJson('/api/login',{username:$('siU').value,password:$('siP').value});
     if(r.ok){unlockModal();resetState();init();}else $('siE').textContent=r.error;};
   $('siGo').onclick=go;$('siP').onkeydown=e=>{if(e.key==='Enter')go();};
+  if($('siNew'))$('siNew').onclick=()=>{unlockModal();signupForm(st);};
+}
+function signupForm(st){
+  lockModal(`<h3>Create an account</h3><p class="sub" style="margin:0">Your runs and saved models are yours alone. You will bring your own model and API key.</p>
+  <label for="nuU">Username</label><input id="nuU" autocomplete="username">
+  <label for="nuP">Password <small>(at least 10 characters)</small></label><input id="nuP" type="password" autocomplete="new-password">
+  <label for="nuP2">Repeat the password</label><input id="nuP2" type="password" autocomplete="new-password">
+  <div class="err" id="nuE"></div>
+  <div class="actions"><button class="btn sec" id="nuBack">I already have an account</button><button class="btn" id="nuGo">Create account</button></div>`,'nuU');
+  $('nuGo').onclick=async()=>{
+    if($('nuP').value!==$('nuP2').value){$('nuE').textContent='The two passwords are not the same.';return;}
+    const r=await postJson('/api/signup',{username:$('nuU').value,password:$('nuP').value});
+    if(r.ok){unlockModal();resetState();init();}else $('nuE').textContent=r.error;};
+  $('nuBack').onclick=()=>{unlockModal();signInForm(st);};
 }
 function setupForm(st){
   lockModal(`<h3>Create the first account</h3><p class="sub" style="margin:0">This becomes the administrator. You can add everyone else afterwards.</p>
@@ -359,10 +392,11 @@ function codeForm(canGoBack,st){
   $('gok').onclick=go;$('gc').onkeydown=e=>{if(e.key==='Enter')go();};
   if($('gBack'))$('gBack').onclick=()=>{unlockModal();setupForm(st);};
 }
-function resetState(){stopWatching();Object.assign(S,{jobs:[],shown:null,painted:null,liveId:null,report:{},me:null,asked:null});}
+function resetState(){stopWatching();Object.assign(S,{jobs:[],shown:null,painted:null,liveId:null,report:{},me:null,asked:null,models:[]});}
 function paintUser(){
   const me=S.me;
   $('navUsers').style.display=(me&&me.role==='admin')?'block':'none';
+  $('navModels').style.display=me?'block':'none';
   $('userBox').innerHTML=`<b>${esc(me?me.username:'Shared access')}</b>${me?esc(me.role==='admin'?'administrator':'member'):'one shared code, no accounts'}
     <div style="margin-top:6px">${me?'<div><button class="linkbtn" id="chgPw">Change password</button></div>':''}<div><button class="linkbtn" id="signOut">Sign out</button></div></div>`;
   if($('chgPw'))$('chgPw').onclick=changePasswordForm;
@@ -482,48 +516,115 @@ function statTiles(d){
     [rq.total?(rq.total-(rq.not_backed||0))+' / '+rq.total:'-',rq.total?'requirements backed by a pass':'no written requirements']];
   return t.map(([b,s])=>`<div class="stat"><b>${esc(b)}</b><span>${esc(s)}</span></div>`).join('');
 }
-/* ---------- model choice (per run) ---------- */
+/* ---------- models: the per-provider hints, your saved ones, and the choice for one run ---------- */
+const PROV={openai:'OpenAI-compatible',anthropic:'Anthropic (Claude)',google:'Google (Gemini)'};
 const MODELS={
   openai:{url:'https://your-server/v1/chat/completions',urlLabel:'API address (the full chat-completions URL)',urlNeeded:true,name:'e.g. qwen3-coder',keyNeeded:false,
     hint:'Works with anything that speaks the OpenAI chat-completions format. A key is optional for servers that do not ask for one.'},
   anthropic:{url:'blank = https://api.anthropic.com',urlLabel:'API address (optional)',urlNeeded:false,name:'a Claude model id',keyNeeded:true,
     hint:'Leave the address blank to use Anthropic directly.'},
-  google:{url:'blank = https://generativelanguage.googleapis.com',urlLabel:'API address (optional)',urlNeeded:false,name:'e.g. gemini-2.5-flash',keyNeeded:true,
+  google:{url:'blank = https://generativelanguage.googleapis.com',urlLabel:'API address (optional)',urlNeeded:false,name:'e.g. gemini-3.1-flash-lite',keyNeeded:true,
     hint:'Leave the address blank to use Google directly. Use a model id from Google AI Studio.'}};
 const memo={get(){try{return JSON.parse(localStorage.getItem('wtp_model')||'{}');}catch(e){return {};}},
   set(v){try{localStorage.setItem('wtp_model',JSON.stringify(v));}catch(e){/* private window: nothing to remember */}}};
+async function reloadModels(){
+  if(!S.me){S.models=[];return;}                                     /* saving needs an account */
+  try{S.models=await api('/api/models');}catch(e){S.models=[];}
+}
+function paintModelChoices(){
+  const sel=$('mMode');if(!sel)return;
+  const mine=S.models||[];let opts=mine.map(m=>`<option value="saved:${esc(m.id)}">${esc(m.name)} &mdash; ${esc(PROV[m.provider]||m.provider)}: ${esc(m.model)}</option>`).join('');
+  if(S.serverModel)opts+="<option value=\"server\">The server's own model</option>";
+  opts+=Object.entries(PROV).map(([k,v])=>`<option value="${k}">One-off: ${esc(v)} (not saved)</option>`).join('');
+  sel.innerHTML=opts;
+  const last=memo.get().mode;
+  sel.value=[...sel.options].some(o=>o.value===last)?last:(mine[0]?'saved:'+mine[0].id:(S.serverModel?'server':'openai'));
+  $('mNone').style.display=(S.me&&!mine.length)?'block':'none';
+  paintModel();
+}
 function paintModel(){
   const mode=$('mMode').value,m=MODELS[mode];
   $('mFields').style.display=m?'block':'none';$('mErr').textContent='';
   if(!m)return;
   $('mUrl').placeholder=m.url;$('mUrlLabel').textContent=m.urlLabel;$('mName').placeholder=m.name;
   $('mKeyLabel').innerHTML='API key '+(m.keyNeeded?'':'<small>(optional)</small>');
-  $('mHint').textContent=m.hint+' The key is sent with this run only; it is never saved in the browser or the database.';
+  $('mHint').textContent=m.hint+' The key is sent with this run only and is never saved.';
   const saved=memo.get()[mode]||{};$('mUrl').value=saved.url||'';$('mName').value=saved.model||'';
 }
-$('mMode').onchange=()=>{const last=memo.get();last.mode=$('mMode').value;memo.set(last);paintModel();};
-(()=>{const last=memo.get();if(last.mode&&MODELS[last.mode])$('mMode').value=last.mode;paintModel();})();
-/* the model object for the request, or null for "use the server's default"; throws a sentence when something is missing */
+$('mMode').onchange=()=>{const all=memo.get();all.mode=$('mMode').value;memo.set(all);paintModel();};
+/* what to add to the request for this run (a saved model's id, a one-off model, or nothing = the server's own); throws a sentence when something is missing */
 function modelChoice(){
-  const mode=$('mMode').value,m=MODELS[mode];if(!m)return null;
+  const mode=$('mMode').value;
+  if(mode.startsWith('saved:')){const all=memo.get();all.mode=mode;memo.set(all);return {model_id:mode.slice(6)};}
+  const m=MODELS[mode];if(!m)return null;
   const url=$('mUrl').value.trim(),model=$('mName').value.trim(),key=$('mKey').value.trim();
   if(m.urlNeeded&&!url)throw new Error('Enter the API address of your server.');
   if(!model)throw new Error('Enter the model name.');
   if(m.keyNeeded&&!key)throw new Error('This provider needs an API key.');
   const all=memo.get();all.mode=mode;all[mode]={url,model};memo.set(all);       /* never the key */
-  return {provider:mode,model,api_url:url,api_key:key};
+  return {model:{provider:mode,model,api_url:url,api_key:key}};
 }
+
+/* ---------- the Models page ---------- */
+let editing=null;
+function paintModelForm(){
+  const p=$('mfProvider').value,m=MODELS[p];
+  $('mfUrl').placeholder=m.url;$('mfUrlLabel').textContent=m.urlLabel;$('mfModel').placeholder=m.name;
+  $('mfKeyLabel').innerHTML='API key '+(editing?'<small>(saved - leave blank to keep it)</small>':(m.keyNeeded?'':'<small>(optional)</small>'));
+  $('mfKey').placeholder=editing&&editing.key_set?'saved':'';
+  $('mfHint').textContent=m.hint;
+}
+$('mfProvider').onchange=paintModelForm;
+function resetModelForm(){
+  editing=null;$('mfTitle').textContent='Add a model';$('mfSave').textContent='Save model';$('mfCancel').style.display='none';
+  ['mfName','mfUrl','mfModel','mfKey'].forEach(i=>$(i).value='');$('mfProvider').value='openai';$('mfErr').textContent='';paintModelForm();
+}
+$('mfCancel').onclick=resetModelForm;
+$('mfSave').onclick=async()=>{
+  $('mfErr').textContent='';
+  const body={name:$('mfName').value.trim(),provider:$('mfProvider').value,model:$('mfModel').value.trim(),api_url:$('mfUrl').value.trim()};
+  const key=$('mfKey').value.trim();if(key||!editing)body.api_key=key;            /* editing and blank = keep the saved key */
+  if(!body.name){$('mfErr').textContent='Give it a name.';return;}
+  try{
+    if(editing)await api('/api/models/'+encodeURIComponent(editing.id),{method:'PATCH',body});else await api('/api/models',{method:'POST',body});
+    toast(editing?'Model updated.':'Model saved.');resetModelForm();await reloadModels();paintModelsList();paintModelChoices();
+  }catch(e){$('mfErr').textContent=e.message;}
+};
+function paintModelsList(){
+  const box=$('modelsBody'),list=S.models||[];
+  if(!S.me){box.innerHTML='<div class="empty">Create an account to save models. Until then you can still type a one-off model on New run.</div>';return;}
+  box.innerHTML=list.length?`<table><tr><th>Name</th><th>Kind</th><th>Model</th><th>Address</th><th>Key</th><th></th></tr>${list.map(m=>`<tr>
+    <td><b>${esc(m.name)}</b><div class="err" style="min-height:0;color:var(--mute)" id="mt-${esc(m.id)}"></div></td><td>${esc(PROV[m.provider]||m.provider)}</td><td>${esc(m.model)}</td>
+    <td><small>${esc(m.api_url||'provider default')}</small></td><td><span class="pill ${m.key_set?'go':'idle'}">${m.key_set?'saved':'none'}</span></td>
+    <td style="white-space:nowrap"><button class="btn sm sec" data-test="${esc(m.id)}">Test</button> <button class="btn sm sec" data-edit="${esc(m.id)}">Edit</button> <button class="btn sm sec" data-del="${esc(m.id)}">Delete</button></td></tr>`).join('')}</table>`
+    :'<div class="empty">No saved models yet. Add your first below: it will be there for every run.</div>';
+  box.querySelectorAll('[data-test]').forEach(b=>b.onclick=async()=>{
+    const out=$('mt-'+b.dataset.test);out.style.color='var(--mute)';out.textContent='Testing...';b.disabled=true;
+    try{const r=await api('/api/models/'+encodeURIComponent(b.dataset.test)+'/test',{method:'POST'});out.style.color=r.ok?'var(--go)':'var(--nogo)';out.textContent=r.message;}
+    catch(e){out.style.color='var(--nogo)';out.textContent=e.message;}
+    b.disabled=false;});
+  box.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>{
+    editing=list.find(m=>m.id===b.dataset.edit);
+    $('mfTitle').textContent='Edit '+editing.name;$('mfSave').textContent='Save changes';$('mfCancel').style.display='inline-block';
+    $('mfName').value=editing.name;$('mfProvider').value=editing.provider;$('mfUrl').value=editing.api_url;$('mfModel').value=editing.model;$('mfKey').value='';
+    paintModelForm();$('mfName').focus();$('mfName').scrollIntoView({block:'center'});});
+  box.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+    const m=list.find(x=>x.id===b.dataset.del);if(!confirm('Delete "'+m.name+'"? Runs that already used it are not affected.'))return;
+    try{await api('/api/models/'+encodeURIComponent(m.id),{method:'DELETE'});toast('Deleted.');if(editing&&editing.id===m.id)resetModelForm();await reloadModels();paintModelsList();paintModelChoices();}
+    catch(e){toast(e.message);}});
+}
+async function loadModels(){await reloadModels();paintModelsList();paintModelForm();}
 
 /* ---------- new run ---------- */
 $('nGo').onclick=async()=>{
   $('nErr').textContent='';$('mErr').textContent='';
   const url=$('nUrl').value.trim();if(!url){$('nErr').textContent='Enter the site URL.';return;}
-  let model;try{model=modelChoice();}catch(e){$('mErr').textContent=e.message;return;}
+  let choice;try{choice=modelChoice();}catch(e){$('mErr').textContent=e.message;return;}
   const options={reuse_workspace:$('nReuse').checked,ask_human:$('nHuman').value==='ask'};
   if($('nPages').value)options.max_pages=+$('nPages').value;
   if($('nProbe').value!=='')options.probe_max=+$('nProbe').value;
   $('nGo').disabled=true;
-  try{const body={url,options};if(model)body.model=model;
+  try{const body={url,options};if(choice)Object.assign(body,choice);
     const job=await api('/api/jobs',{method:'POST',body});$('mKey').value='';
     toast('Run queued.');await refreshJobs();location.hash='#/live';}
   catch(e){(/^Model address|API_KEY|chat-completions/.test(e.message)?$('mErr'):$('nErr')).textContent=e.message;}
@@ -666,7 +767,8 @@ async function loadDefects(){
 async function init(){
   let st;try{st=await api('/api/session');}catch(e){$('homeSub').textContent=e.message;return;}
   if(!st.authenticated){showAuth();return;}
-  S.me=st.user||null;paintUser();
+  S.me=st.user||null;S.serverModel=!!st.server_model;S.signup=st.signup;paintUser();
+  await reloadModels();paintModelChoices();
   try{await refreshJobs();}catch(e){$('homeSub').textContent=e.message;return;}
   route();
   if(!S.poll)S.poll=setInterval(()=>{if(!document.hidden&&S.me!==undefined&&!$('ov').dataset.lock)refreshJobs().catch(()=>{});},15000);

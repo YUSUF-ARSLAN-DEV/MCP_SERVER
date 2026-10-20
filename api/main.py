@@ -157,7 +157,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     def session(request: Request):
         me = identity(request)
         accounts = db.count_users() > 0
-        return {"authenticated": me is not None, "open": settings.allow_open, "accounts": accounts, "signup": settings.signup,
+        return {"authenticated": me is not None, "open": settings.allow_open, "accounts": accounts, "signup": settings.signup, "server_model": not settings.require_model,
                 "setup_needed": not accounts and not settings.allow_open, "needs_code": bool(settings.access_code),
                 "user": {"id": me["id"], "username": me["username"], "role": me["role"]} if me and not me["legacy"] else None}
 
