@@ -834,6 +834,16 @@ def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], 
     return None
 
 
+def _wait_for_dependents(page) -> None:
+    """After a choice, give lists that depend on it time to fill in: picking a country loads that country's
+    channels from the server (found live), and picking from the channel list before that finds it empty."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=2500)
+    except Exception:
+        pass
+    page.wait_for_timeout(400)
+
+
 def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] | None = None,
                         headings: list[dict] | None = None, log=None) -> dict | None:
     content = [c for c in controls
@@ -869,14 +879,16 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
         return None
 
     steps: list[dict] = []
+    unfilled: list[str] = []       # a choice the form offers that we could not make
     for control in selects[:4]:
         loc = _flow_locator(page, control)
-        if loc is None:
+        picked = _select_first_real(loc) if loc is not None else None
+        if picked is None:
+            unfilled.append((control.get("name") or "a list")[:40])
             continue
-        picked = _select_first_real(loc)
-        if picked is not None:
-            steps.append({"kind": "select", "selector": control.get("selector"),
-                          "name": control.get("name"), "value": picked})
+        steps.append({"kind": "select", "selector": control.get("selector"),
+                      "name": control.get("name"), "value": picked})
+        _wait_for_dependents(page)
     for control in inputs[:3]:
         loc = _flow_locator(page, control)
         if loc is None:
@@ -889,10 +901,25 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
         except Exception:
             pass
     for control in ms_buttons[:1]:
-        picked = _pick_multiselect(page, control)
+        picked = None
+        for attempt in range(3):            # its options may still be loading after the choice above
+            picked = _pick_multiselect(page, control)
+            if picked:
+                break
+            page.wait_for_timeout(1000)
         if picked:
             steps.append({"kind": "multiselect", "selector": control.get("selector"),
                           "name": control.get("name"), "value": picked})
+        else:
+            unfilled.append((control.get("name") or "a picker")[:40])
+    if steps and unfilled:
+        # Pressing Search with half the choices made tests our own incomplete input, not the site: the page
+        # rightly shows nothing, and that "nothing" became an unverified journey in every run (found live:
+        # country picked, channel list still empty -> "Search + 1 step -> no visible result").
+        if log:
+            log.info('primary-flow: "%s" - could not make every choice (%s); not recording a journey with missing inputs',
+                     action.get("name"), ", ".join(unfilled))
+        return None
     if not steps:
         if log:
             log.info('primary-flow: "%s" - could not fill any of %d select / %d input / %d multiselect control(s)',
