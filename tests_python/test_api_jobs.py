@@ -45,7 +45,7 @@ def make_client(tmp_path, monkeypatch):
     opened = []
 
     def make(**overrides):
-        settings = AppSettings(data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
+        settings = AppSettings(require_model=False, data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
                                poll_interval_s=0.05, idle_interval_s=0.05, **overrides)
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()
@@ -85,7 +85,7 @@ def test_the_api_refuses_everything_without_the_access_code(make_client):
 
 
 def test_a_server_with_no_access_code_refuses_instead_of_standing_open(tmp_path):
-    with TestClient(create_app(AppSettings(data_dir=tmp_path, access_code=""))) as client:
+    with TestClient(create_app(AppSettings(require_model=False, data_dir=tmp_path, access_code=""))) as client:
         assert client.get("/api/jobs").status_code == 503
         assert client.post("/api/login", json={"code": ""}).status_code == 503
         assert client.get("/api/health").status_code == 200

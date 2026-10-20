@@ -28,6 +28,9 @@ class AppSettings:
     session_secret: str = field(default_factory=lambda: os.getenv("SESSION_SECRET", ""))
     cookie_secure: bool = field(default_factory=lambda: _flag("COOKIE_SECURE"))
     trust_proxy: bool = field(default_factory=lambda: _flag("TRUST_PROXY"))
+    # every run must name its own model (and key). Off = a run with no model falls back to the server's own .env
+    # (REQUIRE_MODEL=0): fine for one person on their own machine, wrong for a server several people share.
+    require_model: bool = field(default_factory=lambda: os.getenv("REQUIRE_MODEL", "1").strip().lower() not in {"0", "false", "no"})
     # test sites on private networks (a staging server behind a VPN, localhost). Off by default: on a shared server a
     # visitor could otherwise make it browse its own network. Fine on a machine only you can reach.
     allow_private_targets: bool = field(default_factory=lambda: _flag("ALLOW_PRIVATE_TARGETS"))

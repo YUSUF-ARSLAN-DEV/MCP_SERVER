@@ -22,8 +22,19 @@ from website_test_pipeline.providers import get_provider
 from .db import Database
 from .settings import AppSettings
 
-# not passed on to the pipeline: it has no use for the API's own secrets
-_PRIVATE_ENV = ("ACCESS_CODE", "SESSION_SECRET")
+# What a run's process may NOT inherit from the server's own environment (its .env). The server holds credentials for
+# its own purposes - the API's secrets, its own model key, logins for test sites, other tools' keys - and a run belongs
+# to whichever person started it. Anything that looks like a secret stays behind; the run gets exactly what it is given.
+_SECRET_LIKE = re.compile(r"(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL)", re.I)
+_SERVER_ONLY = re.compile(r"^(AUTH_|GEMINI|ACCESS_CODE|SESSION_SECRET|SECONDARY_MODEL)", re.I)
+_MODEL_VARS = ("API_KEY", "API_URL", "MODEL_NAME", "MODEL_PROVIDER")      # the server's own model: only for a run with none of its own
+
+
+def run_environment(base: dict, keep_server_model: bool) -> dict:
+    """`base` (the server's environment) without anything that is the server's own secret."""
+    return {k: v for k, v in base.items()
+            if not (_SERVER_ONLY.match(k) or (_SECRET_LIKE.search(k) and not (keep_server_model and k in _MODEL_VARS))
+                    or (not keep_server_model and k in _MODEL_VARS))}
 # `all` exits 0 when every stage ran, 1 when some generated tests failed (still a finished run), 2 when a stage could not run
 _FINISHED_CODES = (0, 1)
 
@@ -117,7 +128,10 @@ class JobRunner:
 
     def environment(self, job: dict) -> dict:
         options = job["options"]
-        env = {k: v for k, v in os.environ.items() if k not in _PRIVATE_ENV}
+        env = run_environment(os.environ, keep_server_model=not options.get("model"))
+        owner = self.db.get_user(job["user_id"]) if job.get("user_id") else None
+        if owner:                              # the report names the person who ran it, not whoever set the server up
+            env["REPORT_OWNER"] = owner["username"]
         env.update({
             "SEED_URL": job["url"], "SITE": job["site"], "DATA_DIR": str(self.settings.data_dir), "HEADLESS": "true",
             "WTP_JOB": "1", "PYTHONUNBUFFERED": "1",

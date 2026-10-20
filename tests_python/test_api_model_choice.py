@@ -129,8 +129,29 @@ def test_a_local_model_server_is_allowed_only_when_the_operator_says_so(make_cli
     assert model_env(tmp_path, job.json())["API_URL"] == "http://localhost:11434/v1/chat/completions"
 
 
-def test_without_a_model_choice_the_servers_own_configuration_applies(make_client, tmp_path):
+def test_every_run_must_name_its_own_model_there_is_no_server_default(make_client, tmp_path):
     client = make_client()
+    refused = client.post("/api/jobs", json={"url": "example.com"})
+    assert refused.status_code == 422 and "Choose a model" in refused.text
+    assert client.get("/api/jobs").json() == [] and not (tmp_path / "runs").exists()
+
+
+def test_a_server_that_opts_out_lets_a_run_use_its_own_model_for_one_person_on_their_own_machine(make_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("API_URL", "https://own.example/v1/chat/completions")
+    monkeypatch.setenv("MODEL_NAME", "own-model")
+    monkeypatch.setenv("API_KEY", "own-key")
+    client = make_client(require_model=False)
     job = client.post("/api/jobs", json={"url": "example.com"}).json()
     finish(client, job["id"])
-    assert model_env(tmp_path, job) == {"MODEL_PROVIDER": None, "MODEL_NAME": None, "API_URL": None, "API_KEY": None}
+    assert model_env(tmp_path, job) == {"MODEL_PROVIDER": None, "MODEL_NAME": "own-model", "API_URL": "https://own.example/v1/chat/completions", "API_KEY": "own-key"}
+
+
+def test_a_run_with_its_own_model_never_sees_the_servers_model_key(make_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("API_KEY", "THE-SERVERS-KEY")
+    monkeypatch.setenv("API_URL", "https://server.example/v1/chat/completions")
+    monkeypatch.setenv("MODEL_NAME", "servers-model")
+    client = make_client()
+    job = client.post("/api/jobs", json={"url": "example.com", "model": {"provider": "google", "model": "gemini-x", "api_key": KEY}}).json()
+    finish(client, job["id"])
+    env = model_env(tmp_path, job)
+    assert env["API_KEY"] == KEY and env["MODEL_NAME"] == "gemini-x" and "THE-SERVERS-KEY" not in json.dumps(env)

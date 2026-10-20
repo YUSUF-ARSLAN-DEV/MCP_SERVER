@@ -44,7 +44,7 @@ def make_client(tmp_path, monkeypatch):
     opened = []
 
     def make(**overrides):
-        settings = AppSettings(data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
+        settings = AppSettings(require_model=False, data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
                                poll_interval_s=0.05, idle_interval_s=0.05, **overrides)
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()

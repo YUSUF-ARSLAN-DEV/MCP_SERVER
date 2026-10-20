@@ -265,6 +265,8 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             url = security.validate_url(body.url, resolver, settings.allow_private_targets)
         except UrlRejected as exc:
             raise HTTPException(422, str(exc)) from exc
+        if body.model is None and settings.require_model:
+            raise HTTPException(422, "Choose a model for this run: its provider, model name and your API key.")
         model = checked_model(body.model) if body.model else None
         me = request.state.user
         user = me["id"]
