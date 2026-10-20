@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smoke Tester</title>
+<style>
+:root{
+  --bg:#f6f7f9;--panel:#fff;--ink:#14181f;--mute:#5d6673;--line:#e1e5ea;--accent:#2f5bea;--accent-ink:#fff;
+  --go:#127a43;--go-bg:#e3f4ea;--cond:#9a5b00;--cond-bg:#fdf0d5;--nogo:#b3261e;--nogo-bg:#fbe4e2;
+  --info:#2f5bea;--info-bg:#e5ecfd;--idle:#5d6673;--idle-bg:#eceff3;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1217;--panel:#171b22;--ink:#e8ebf0;--mute:#98a1ae;--line:#2a313b;--accent:#6c8cff;--accent-ink:#0b0e14;
+  --go:#52d28b;--go-bg:#12301f;--cond:#f2b654;--cond-bg:#35280f;--nogo:#ff8a80;--nogo-bg:#3a1714;
+  --info:#8aa4ff;--info-bg:#1b2442;--idle:#98a1ae;--idle-bg:#222832;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+nav{background:var(--panel);border-right:1px solid var(--line);padding:16px 12px;position:sticky;top:0;height:100vh}
+nav h1{font-size:15px;margin:4px 8px 16px}
+nav h1 small{display:block;color:var(--mute);font-weight:400;font-size:11px}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--ink);padding:8px 10px;border-radius:6px;font:inherit;cursor:pointer}
+nav button:hover{background:var(--idle-bg)}
+nav button.on{background:var(--info-bg);color:var(--info);font-weight:600}
+nav .site{margin:18px 8px 6px;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
+nav select{width:calc(100% - 16px);margin:0 8px}
+main{padding:24px 28px;max-width:1150px;width:100%}
+h2{margin:0 0 4px;font-size:20px}
+.sub{color:var(--mute);margin:0 0 20px}
+h3{font-size:14px;margin:0 0 10px}
+.view{display:none}.view.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stat b{display:block;font-size:24px;line-height:1.2}
+.stat span{color:var(--mute);font-size:12px}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+.go{background:var(--go-bg);color:var(--go)}.cond{background:var(--cond-bg);color:var(--cond)}
+.nogo{background:var(--nogo-bg);color:var(--nogo)}.info{background:var(--info-bg);color:var(--info)}.idle{background:var(--idle-bg);color:var(--idle)}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--mute);font-weight:600}
+tr:last-child td{border-bottom:0}
+.btn{background:var(--accent);color:var(--accent-ink);border:0;border-radius:6px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.sec{background:var(--idle-bg);color:var(--ink)}
+.btn.sm{padding:3px 10px;font-size:12px}
+label{display:block;font-weight:600;margin:12px 0 4px}
+label small{font-weight:400;color:var(--mute)}
+input,textarea,select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+textarea{min-height:90px;resize:vertical}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.verdict{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.verdict .big{font-size:26px;font-weight:800;padding:8px 18px;border-radius:8px}
+.trigger{color:var(--mute)}
+.stages{display:flex;gap:0;flex-wrap:wrap;margin:8px 0 4px}
+.stage{flex:1 1 120px;padding:10px;border:1px solid var(--line);margin-left:-1px;background:var(--panel)}
+.stage small{display:block;color:var(--mute)}
+.stage.done{border-top:3px solid var(--go)}.stage.run{border-top:3px solid var(--accent)}.stage.wait{border-top:3px solid var(--line)}
+.bar{height:8px;background:var(--idle-bg);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.notice{border-left:4px solid var(--cond);background:var(--cond-bg);padding:10px 14px;border-radius:6px;margin-bottom:16px}
+.honest{color:var(--mute);font-size:12px;border-top:1px dashed var(--line);padding-top:10px;margin-top:20px}
+.tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button{background:none;border:1px solid var(--line);border-radius:99px;padding:3px 12px;color:var(--ink);cursor:pointer;font:inherit}
+.tabs button.on{background:var(--ink);color:var(--bg)}
+.shot{width:90px;height:56px;border-radius:4px;background:repeating-linear-gradient(45deg,var(--idle-bg),var(--idle-bg) 6px,var(--line) 6px,var(--line) 12px);display:inline-block}
+code{background:var(--idle-bg);padding:1px 5px;border-radius:4px;font-size:12px}
+.overlay{position:fixed;inset:0;background:rgba(10,14,20,.6);display:none;align-items:center;justify-content:center;padding:16px;z-index:50}
+.overlay.on{display:flex}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:460px;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.35);max-height:90vh;overflow:auto}
+.modal h3{font-size:17px;margin:0 0 4px}
+.modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.modal .err{color:var(--nogo);font-size:12px;min-height:16px;margin-top:4px}
+.captcha{background:var(--idle-bg);border:1px dashed var(--line);border-radius:8px;height:90px;display:flex;align-items:center;justify-content:center;color:var(--mute);margin:10px 0}
+.timer{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.timer.low{color:var(--nogo)}
+.steps{display:flex;gap:6px;margin:10px 0}
+.steps span{flex:1;height:4px;border-radius:2px;background:var(--line)}.steps span.on{background:var(--accent)}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.tile{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg);cursor:pointer;padding:0;text-align:left;color:var(--ink);font:inherit}
+.tile .img{height:110px;background:repeating-linear-gradient(45deg,var(--idle-bg),var(--idle-bg) 8px,var(--line) 8px,var(--line) 16px)}
+.tile div.cap{padding:8px 10px}.tile small{color:var(--mute);display:block}
+.dl{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.dl:last-child{border-bottom:0}.dl .ico{width:36px;height:36px;border-radius:8px;background:var(--info-bg);color:var(--info);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px}
+.dl .meta{flex:1}.dl .meta small{color:var(--mute);display:block}
+.lightbox .modal{max-width:900px}
+.lightbox .big-shot{height:420px;border-radius:8px;background:repeating-linear-gradient(45deg,var(--idle-bg),var(--idle-bg) 12px,var(--line) 12px,var(--line) 24px);display:flex;align-items:center;justify-content:center;color:var(--mute)}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
+.toast.on{opacity:1}
+@media (max-width:760px){.app{grid-template-columns:1fr}nav{position:static;height:auto;display:flex;flex-wrap:wrap;gap:4px}nav h1,nav .site,nav select{display:none}nav button{width:auto}main{padding:16px}}
+.note{border-left:4px solid var(--info);background:var(--info-bg);padding:10px 14px;border-radius:6px;margin:0 0 16px;font-size:13px}
+.err{color:var(--nogo);font-size:12px;min-height:16px;margin-top:4px}
+.cap-img{max-width:100%;border:1px solid var(--line);border-radius:8px;margin:10px 0;display:block}
+.log{margin:0;white-space:pre-wrap;font-size:12px;color:var(--mute);max-height:260px;overflow:auto;word-break:break-word}
+.empty{color:var(--mute);padding:8px 0}
+.stage.big{display:block;flex:1 1 100%;padding:14px}
+.stage.big b{font-size:16px}
+button:disabled{opacity:.5;cursor:not-allowed}
+a.btn{text-decoration:none;display:inline-block}
+</style>
+</head>
+<body>
+<div class="app">
+<nav>
+  <h1>Smoke Tester<small>AI-assisted web smoke testing</small></h1>
+  <button data-v="dash" class="on">Overview</button>
+  <button data-v="new">New run</button>
+  <button data-v="run">Live run</button>
+  <button data-v="report">Report</button>
+  <button data-v="flows">Journeys</button>
+  <button data-v="defects">Defect ledger</button>
+  <div class="site">Run shown</div>
+  <select id="jobPick" aria-label="Which run to show"></select>
+</nav>
+<main>
+
+<section class="view on" id="dash">
+  <h2>Overview</h2>
+  <p class="sub" id="dashSub">Loading…</p>
+  <div class="card verdict" id="dashVerdict" style="display:none"></div>
+  <div class="grid g4" id="dashStats" style="margin-bottom:16px"></div>
+  <div class="grid g2">
+    <div class="card"><h3>Recent runs</h3><div id="runsTable"></div></div>
+    <div class="card"><h3>Needs attention <small>(from the shown run's report)</small></h3><div id="attention"></div></div>
+  </div>
+</section>
+
+<section class="view" id="new">
+  <h2>New run</h2>
+  <p class="sub">Point it at a site. It discovers pages, writes smoke tests, verifies journeys in a real browser, and builds the report.</p>
+  <div class="grid g2">
+  <div class="card">
+    <h3>Target</h3>
+    <label for="nUrl">Site URL</label><input id="nUrl" type="url" placeholder="https://staging.example.com" autocomplete="url">
+    <div class="row"><div style="flex:1"><label for="nPages">Max pages to explore</label><input id="nPages" type="number" min="1" max="500" placeholder="server default"></div>
+    <div style="flex:1"><label for="nProbe">Buttons to probe per page</label><input id="nProbe" type="number" min="0" max="20" placeholder="server default"></div></div>
+    <label for="nHuman">When a CAPTCHA or sign-in appears</label>
+    <select id="nHuman"><option value="ask">Ask me here, on this page</option><option value="skip">Skip it and report "Needs a person"</option></select>
+    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400"><input id="nReuse" type="checkbox" style="width:auto;margin-top:4px"><span>Keep working in this site's folder <small>(journeys, ratings and the defect ledger carry over between runs; without this every run starts fresh)</small></span></label>
+    <div class="err" id="nErr"></div>
+    <p><button class="btn" id="nGo">Start run</button></p>
+  </div>
+  <div class="card">
+    <h3>Model</h3>
+    <label for="mMode">Which model writes and judges the tests?</label>
+    <select id="mMode">
+      <option value="server">Use the server's default</option>
+      <option value="openai">OpenAI-compatible (OpenAI, vLLM, LM Studio, Ollama, gateways)</option>
+      <option value="anthropic">Anthropic (Claude)</option>
+      <option value="google">Google (Gemini)</option>
+    </select>
+    <div id="mFields" style="display:none">
+      <label for="mUrl" id="mUrlLabel">API address</label><input id="mUrl" type="url" autocomplete="off">
+      <label for="mName">Model name</label><input id="mName" autocomplete="off" spellcheck="false">
+      <label for="mKey" id="mKeyLabel">API key</label><input id="mKey" type="password" autocomplete="off" spellcheck="false">
+      <p class="sub" id="mHint" style="margin:8px 0 0"></p>
+    </div>
+    <div class="err" id="mErr"></div>
+  </div>
+  <div class="card">
+    <h3>What this run does</h3>
+    <p>The server runs the full pipeline on the URL: crawl, explore, generate tests, verify journeys, execute, report. The page limit is capped by the server.</p>
+    <div class="note">Not available from this page yet, because the server has no endpoint for them: typing journeys or requirements, choosing a run mode, saving presets, approving or rejecting journeys, closing defects, and per-site settings. Those are still done with the command line.</div>
+    <p class="sub" style="margin:0">One run per person at a time, and a daily limit applies. A fresh run on a new site can take several minutes.</p>
+  </div>
+  </div>
+</section>
+
+<section class="view" id="run">
+  <h2>Live run <span class="pill idle" id="runPill">no run</span></h2>
+  <p class="sub" id="runSub">Start a run, or pick one from "Run shown".</p>
+  <div class="stages"><div class="stage big run" id="runStage" style="display:none"></div></div>
+  <div class="bar"><i id="runBar" style="width:0%"></i></div>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card"><h3>Log <small>(end of job.log)</small></h3><pre class="log" id="runLog">Nothing yet.</pre></div>
+    <div class="card" id="humanCard"><h3>Waiting on a person</h3><div id="humanBody" class="empty">Nothing is waiting for you.</div>
+      <p class="sub" style="margin:12px 0 0"><button class="btn sec sm" id="cancelBtn" disabled>Cancel run</button></p></div>
+  </div>
+</section>
+
+<section class="view" id="report">
+  <div class="row"><div><h2 id="repTitle">Release report</h2><p class="sub" id="repSub">Pick a finished run.</p></div></div>
+  <div class="card verdict" id="repVerdict" style="display:none"></div>
+  <div class="grid g4" id="repStats" style="margin-bottom:16px"></div>
+  <div class="tabs" id="rtabs">
+    <button class="on" data-t="r-def">Findings</button><button data-t="r-delta">Changes since last run</button><button data-t="r-cov">Coverage</button><button data-t="r-req">Requirements</button><button data-t="r-dl">Downloads</button>
+  </div>
+  <div class="card rt" id="r-def"></div>
+  <div class="card rt" id="r-delta" style="display:none"></div>
+  <div class="card rt" id="r-cov" style="display:none"></div>
+  <div class="card rt" id="r-req" style="display:none"></div>
+  <div class="card rt" id="r-dl" style="display:none"></div>
+  <p class="honest">Structural and mechanical checks only. This report does not know what the site is supposed to do beyond the supplied journeys and requirements.</p>
+</section>
+
+<section class="view" id="flows">
+  <h2>Journeys</h2>
+  <p class="sub">Read-only view of the shown run's journeys. Only verified or approved journeys get a test.</p>
+  <div class="card" id="flowsBody"><div class="empty">Pick a run.</div></div>
+  <p class="honest">Approving, rejecting and adding journeys is done with the command line for now (<code>cli flows approve|reject|add</code>).</p>
+</section>
+
+<section class="view" id="defects">
+  <h2>Defect ledger</h2>
+  <p class="sub">Read-only. Defects persist across runs of the same site folder. Severity is frozen at first confirmation. A defect auto-closes after 3 consecutive clean runs.</p>
+  <div class="card" id="defBody"><div class="empty">Pick a run.</div></div>
+  <p class="honest">A manual close needs a reason and writes an audit entry: <code>cli defects close &lt;key&gt; --reason "..."</code>. The ledger only carries over between runs started with "Keep working in this site's folder".</p>
+</section>
+
+</main>
+</div>
+<div class="overlay" id="ov"><div class="modal" id="md" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast"></div>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const TERMINAL=['done','failed','cancelled'];
+const S={jobs:[],shown:null,es:null,watching:null,logTimer:null,humanTimer:null,imgTimer:null,asked:null,countdown:null,report:{}};
+
+/* ---------- plumbing ---------- */
+function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),3200);}
+let onClose=null;
+function openModal(html,keep){$('md').innerHTML=html;$('ov').classList.add('on');const f=$('md').querySelector('input,textarea,button');if(f)f.focus();onClose=keep||null;}
+function closeModal(){$('ov').classList.remove('on');clearInterval(S.countdown);if(onClose){onClose();onClose=null;}}
+$('ov').addEventListener('mousedown',e=>{if(e.target===$('ov')&&!$('ov').dataset.lock)closeModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('ov').classList.contains('on')&&!$('ov').dataset.lock)closeModal();});
+
+class ApiError extends Error{constructor(status,msg){super(msg);this.status=status;}}
+async function api(path,opt){
+  const o=Object.assign({credentials:'same-origin',headers:{}},opt||{});
+  if(o.body&&typeof o.body!=='string'){o.body=JSON.stringify(o.body);o.headers['Content-Type']='application/json';}
+  let r;try{r=await fetch(path,o);}catch(e){throw new ApiError(0,'Cannot reach the server.');}
+  if(r.status===401){showGate();throw new ApiError(401,'Enter the access code first.');}
+  if(!r.ok){let d='';try{const j=await r.json();d=typeof j.detail==='string'?j.detail:JSON.stringify(j.detail);}catch(e){}
+    throw new ApiError(r.status,d||('Request failed ('+r.status+').'));}
+  const ct=r.headers.get('content-type')||'';
+  return ct.includes('json')?r.json():r.text();
+}
+const when=iso=>{if(!iso)return '-';const d=new Date(iso);return isNaN(d)?esc(iso):d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});};
+const host=u=>{try{return new URL(u).host;}catch(e){return u||'';}};
+const pillFor={done:'go',running:'info',needs_human:'cond',queued:'idle',failed:'nogo',cancelled:'idle'};
+const verdictClass=v=>v==='GO'?'go':v==='NO-GO'?'nogo':'cond';
+const label=s=>({needs_human:'needs you',done:'finished'}[s]||s);
+const sevClass=s=>s==='High'||s==='Critical'?'nogo':s==='Medium'?'cond':'idle';
+
+/* ---------- navigation ---------- */
+const nav=[...document.querySelectorAll('nav button')];
+function go(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===id));
+  nav.forEach(b=>b.classList.toggle('on',b.dataset.v===id));scrollTo(0,0);
+  if(id==='report')loadReport();if(id==='flows')loadFlows();if(id==='defects')loadDefects();
+}
+nav.forEach(b=>b.onclick=()=>go(b.dataset.v));
+document.querySelectorAll('#rtabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#rtabs button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.rt').forEach(c=>c.style.display=c.id===b.dataset.t?'block':'none');});
+
+/* ---------- access code ---------- */
+function showGate(msg){
+  if($('ov').dataset.lock)return;
+  $('ov').dataset.lock='1';
+  openModal(`<h3>Access code</h3><p class="sub" style="margin:0">This server asks for a code before it will run anything.</p>
+  <label for="gc">Code</label><input id="gc" type="password" autocomplete="current-password">
+  <div class="err" id="ge">${esc(msg||'')}</div>
+  <div class="actions"><button class="btn" id="gok">Enter</button></div>`);
+  const submit=async()=>{
+    const r=await fetch('/api/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('gc').value})}).catch(()=>null);
+    if(r&&r.ok){delete $('ov').dataset.lock;closeModal();init();return;}
+    let d='Cannot reach the server.';if(r){d='Not accepted.';try{d=(await r.json()).detail||d;}catch(e){}}
+    $('ge').textContent=d;};
+  $('gok').onclick=submit;$('gc').onkeydown=e=>{if(e.key==='Enter')submit();};
+}
+
+/* ---------- runs list, overview ---------- */
+async function refreshJobs(){
+  S.jobs=await api('/api/jobs?limit=50');
+  const pick=$('jobPick'),keep=S.shown;
+  pick.innerHTML=S.jobs.length?S.jobs.map(j=>`<option value="${esc(j.id)}">${esc(host(j.url))} · ${esc(label(j.status))} · ${when(j.created_at)}</option>`).join(''):'<option value="">No runs yet</option>';
+  if(!keep||!S.jobs.some(j=>j.id===keep))S.shown=(S.jobs.find(j=>j.status==='done')||S.jobs[0]||{}).id||null;
+  pick.value=S.shown||'';
+  $('runsTable').innerHTML=S.jobs.length?`<table><tr><th>Site</th><th>Started</th><th>Status</th><th></th></tr>${S.jobs.slice(0,8).map(j=>
+    `<tr><td>${esc(host(j.url))}</td><td>${when(j.created_at)}</td><td><span class="pill ${pillFor[j.status]||'idle'}">${esc(label(j.status))}</span></td>
+     <td><button class="btn sm sec" data-open="${esc(j.id)}">Open</button></td></tr>`).join('')}</table>`:'<div class="empty">No runs yet. Start one under "New run".</div>';
+  document.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openJob(b.dataset.open));
+  const active=S.jobs.find(j=>!TERMINAL.includes(j.status));
+  if(active&&S.watching!==active.id)watch(active.id);
+  renderDash();
+}
+$('jobPick').onchange=e=>{S.shown=e.target.value||null;renderDash();const v=document.querySelector('.view.on').id;
+  if(v==='run')watch(S.shown);if(v==='report')loadReport();if(v==='flows')loadFlows();if(v==='defects')loadDefects();};
+function openJob(id){S.shown=id;$('jobPick').value=id;const j=S.jobs.find(x=>x.id===id);renderDash();
+  if(j&&TERMINAL.includes(j.status))go('report');else{watch(id);go('run');}}
+
+async function getReport(id){
+  if(S.report[id]!==undefined)return S.report[id];
+  let data=null;
+  try{data=await api(`/api/jobs/${id}/files/artifacts/report/report-data.json`);}catch(e){if(e.status!==404)throw e;}
+  const job=S.jobs.find(j=>j.id===id);
+  if(data&&job&&TERMINAL.includes(job.status))S.report[id]=data;      /* a finished run's report never changes */
+  return data;
+}
+function verdictCard(el,d,job){
+  el.style.display='flex';
+  const first=(d.conditions&&d.conditions[0])||'';
+  el.innerHTML=`<span class="big ${verdictClass(d.recommendation)}">${esc(d.recommendation)}</span>
+    <div><b>${esc(d.run_id||'')} · ${esc(host(job.url))} · ${when(d.run_finished_at||job.finished_at)}</b>
+    <div class="trigger">${esc(first||'No conditions recorded.')}</div></div>`;
+}
+function statTiles(d){
+  const c=d.counts||{},rq=d.requirements||{};
+  const t=[[c.executed_tests,`tests ran (${c.page_tests||0} page + ${c.flow_tests||0} flow)`],[`${c.passed||0} / ${c.failed||0}`,'passed / failed'],
+    [(c.pass_rate_percent||0)+'%','pass rate'],[`${c.journeys_passed||0} / ${c.journeys_total||0}`,'journeys passed'],
+    [c.open_defects||0,'open defects'],[c.quarantined||0,'quarantined'],
+    [rq.total?(rq.total-(rq.not_backed||0))+' / '+rq.total:'-',rq.total?'requirements backed by a pass':'no written requirements']];
+  return t.map(([b,s])=>`<div class="stat"><b>${esc(b)}</b><span>${esc(s)}</span></div>`).join('');
+}
+async function renderDash(){
+  const job=S.jobs.find(j=>j.id===S.shown);
+  $('dashSub').textContent=job?`Showing the run for ${host(job.url)} (${label(job.status)}).`:'No runs yet.';
+  const box=$('dashVerdict');box.style.display='none';$('dashStats').innerHTML='';$('attention').innerHTML='<div class="empty">Nothing to show.</div>';
+  if(!job||job.status!=='done')return;
+  let d;try{d=await getReport(job.id);}catch(e){return;}
+  if(!d||S.shown!==job.id)return;
+  verdictCard(box,d,job);box.insertAdjacentHTML('beforeend','<button class="btn" style="margin-left:auto" onclick="go(\'report\')">Open report</button>');
+  $('dashStats').innerHTML=statTiles(d);
+  const items=(d.conditions||[]).slice(0,6);
+  $('attention').innerHTML=items.length?`<table>${items.map(x=>`<tr><td>${esc(x)}</td></tr>`).join('')}</table>`:'<div class="empty">No open conditions.</div>';
+}
+
+/* ---------- model choice (per run) ---------- */
+const MODELS={
+  openai:{url:'https://your-server/v1/chat/completions',urlLabel:'API address (the full chat-completions URL)',urlNeeded:true,name:'e.g. qwen3-coder',keyNeeded:false,
+    hint:'Works with anything that speaks the OpenAI chat-completions format. A key is optional for servers that do not ask for one.'},
+  anthropic:{url:'blank = https://api.anthropic.com',urlLabel:'API address (optional)',urlNeeded:false,name:'a Claude model id',keyNeeded:true,
+    hint:'Leave the address blank to use Anthropic directly.'},
+  google:{url:'blank = https://generativelanguage.googleapis.com',urlLabel:'API address (optional)',urlNeeded:false,name:'e.g. gemini-2.5-flash',keyNeeded:true,
+    hint:'Leave the address blank to use Google directly. Use a model id from Google AI Studio.'}};
+const memo={get(){try{return JSON.parse(localStorage.getItem('wtp_model')||'{}');}catch(e){return {};}},
+  set(v){try{localStorage.setItem('wtp_model',JSON.stringify(v));}catch(e){/* private window: nothing to remember */}}};
+function paintModel(){
+  const mode=$('mMode').value,m=MODELS[mode];
+  $('mFields').style.display=m?'block':'none';$('mErr').textContent='';
+  if(!m)return;
+  $('mUrl').placeholder=m.url;$('mUrlLabel').textContent=m.urlLabel;$('mName').placeholder=m.name;
+  $('mKeyLabel').innerHTML='API key '+(m.keyNeeded?'':'<small>(optional)</small>');
+  $('mHint').textContent=m.hint+' The key is sent with this run only; it is never saved in the browser or the database.';
+  const saved=memo.get()[mode]||{};$('mUrl').value=saved.url||'';$('mName').value=saved.model||'';
+}
+$('mMode').onchange=()=>{const last=memo.get();last.mode=$('mMode').value;memo.set(last);paintModel();};
+(()=>{const last=memo.get();if(last.mode&&MODELS[last.mode])$('mMode').value=last.mode;paintModel();})();
+/* the model object for the request, or null for "use the server's default"; throws a sentence when something is missing */
+function modelChoice(){
+  const mode=$('mMode').value,m=MODELS[mode];if(!m)return null;
+  const url=$('mUrl').value.trim(),model=$('mName').value.trim(),key=$('mKey').value.trim();
+  if(m.urlNeeded&&!url)throw new Error('Enter the API address of your server.');
+  if(!model)throw new Error('Enter the model name.');
+  if(m.keyNeeded&&!key)throw new Error('This provider needs an API key.');
+  const all=memo.get();all.mode=mode;all[mode]={url,model};memo.set(all);       /* never the key */
+  return {provider:mode,model,api_url:url,api_key:key};
+}
+
+/* ---------- new run ---------- */
+$('nGo').onclick=async()=>{
+  $('nErr').textContent='';$('mErr').textContent='';
+  const url=$('nUrl').value.trim();if(!url){$('nErr').textContent='Enter the site URL.';return;}
+  let model;try{model=modelChoice();}catch(e){$('mErr').textContent=e.message;return;}
+  const options={reuse_workspace:$('nReuse').checked,ask_human:$('nHuman').value==='ask'};
+  if($('nPages').value)options.max_pages=+$('nPages').value;
+  if($('nProbe').value!=='')options.probe_max=+$('nProbe').value;
+  $('nGo').disabled=true;
+  try{const body={url,options};if(model)body.model=model;
+    const job=await api('/api/jobs',{method:'POST',body});$('mKey').value='';
+    toast('Run queued.');S.shown=job.id;await refreshJobs();watch(job.id);go('run');}
+  catch(e){(/^Model address|API_KEY|chat-completions/.test(e.message)?$('mErr'):$('nErr')).textContent=e.message;}
+  finally{$('nGo').disabled=false;}
+};
+
+/* ---------- live run ---------- */
+function stopWatching(){if(S.es){S.es.close();S.es=null;}clearInterval(S.logTimer);clearInterval(S.humanTimer);S.watching=null;}
+function watch(id){
+  stopWatching();if(!id)return;S.watching=id;
+  const job=S.jobs.find(j=>j.id===id);if(job)paintRun(job);
+  S.es=new EventSource(`/api/jobs/${id}/events`);
+  S.es.addEventListener('job',ev=>{const j=JSON.parse(ev.data);const i=S.jobs.findIndex(x=>x.id===j.id);if(i>=0)S.jobs[i]=j;paintRun(j);
+    if(TERMINAL.includes(j.status)){stopWatching();paintRun(j);pollLog(id);refreshJobs();}});
+  S.es.onerror=()=>{if(S.es&&S.es.readyState===2)stopWatching();};
+  pollLog(id);S.logTimer=setInterval(()=>pollLog(id),3000);
+  pollHuman(id);S.humanTimer=setInterval(()=>pollHuman(id),2000);
+}
+function paintRun(j){
+  $('runPill').className='pill '+(pillFor[j.status]||'idle');$('runPill').textContent=label(j.status);
+  $('runSub').textContent=`${host(j.url)} · started ${when(j.started_at||j.created_at)}`;
+  const st=$('runStage');st.style.display='block';
+  st.innerHTML=`<b>${esc(j.stage||(j.status==='queued'?'Waiting in the queue':'Starting'))}</b><small>${esc(j.error?j.error.slice(-400):j.message||'')}</small>`;
+  st.className='stage big '+(j.status==='done'?'done':(j.status==='failed'||j.status==='cancelled')?'wait':'run');
+  $('runBar').style.width=(j.status==='done'?100:j.progress_pct||0)+'%';
+  $('cancelBtn').disabled=TERMINAL.includes(j.status);
+}
+async function pollLog(id){
+  const j=S.jobs.find(x=>x.id===id);
+  if(!j||j.status==='queued')return;                    /* job.log does not exist until the run starts */
+  try{const t=await api(`/api/jobs/${id}/files/job.log`);const el=$('runLog');el.textContent=String(t).slice(-5000)||'Nothing yet.';el.scrollTop=el.scrollHeight;}
+  catch(e){/* no log yet */}
+}
+$('cancelBtn').onclick=async()=>{
+  if(!S.watching||!confirm('Stop this run?'))return;
+  try{await api(`/api/jobs/${S.watching}/cancel`,{method:'POST'});toast('Run cancelled.');refreshJobs();}catch(e){toast(e.message);}
+};
+
+/* ---------- a person is needed (CAPTCHA / sign-in) ---------- */
+async function pollHuman(id){
+  let r;try{r=(await api(`/api/jobs/${id}/human`)).request;}catch(e){return;}
+  const body=$('humanBody');
+  if(!r||r.state!=='open'){body.className='empty';body.textContent='Nothing is waiting for you.';
+    if(S.asked!==null&&$('ov').classList.contains('on')&&$('md').dataset.seq===String(S.asked))closeModal();
+    S.asked=null;return;}
+  body.className='';
+  body.innerHTML=`<p>${esc(r.kind==='captcha'?'A form needs a CAPTCHA code.':'A sign-in is needed.')} <small>${esc(r.url||'')}</small></p>
+    ${r.notice?`<p class="sub" style="margin:0 0 8px">${esc(r.notice)}</p>`:''}<button class="btn" id="humanOpen">Answer now</button>`;
+  $('humanOpen').onclick=()=>askHuman(id,r);
+  if(S.asked!==r.seq){S.asked=r.seq;askHuman(id,r);}
+}
+function askHuman(id,r){
+  const isCap=r.kind==='captcha';
+  const fields=(r.fields||[]).map(f=>{const key=f.key||f.selector||'',type=(f.type||'text').toLowerCase();
+    return `<label>${esc(f.label||f.name||key)}${f.required?' *':''}${f.guidance?` <small>${esc(f.guidance)}</small>`:''}</label>
+      <input data-key="${esc(key)}" type="${type==='password'?'password':'text'}" value="${isCap&&f.default?esc(f.default):''}" autocomplete="off">`;}).join('');
+  openModal(`<h3>${isCap?'Human input needed':'Sign-in needed'}</h3>
+    <p class="sub" style="margin:0">${esc(r.notice||r.url||'')}</p>
+    ${r.image?`<img class="cap-img" id="hImg" alt="what the run sees" src="${esc(r.image)}?t=${Date.now()}">`:''}
+    ${fields}
+    ${isCap?'<label for="hCode">Enter the code</label><input id="hCode" autocomplete="off">':''}
+    <div class="row" style="margin-top:12px"><span class="timer" id="hTm"></span><span class="sub" style="margin:0">left. What you type is passed to the run once and never stored.</span></div>
+    <div class="err" id="hErr"></div>
+    <div class="actions">${r.can_reload?'<button class="btn sec" id="hRef">New image</button>':''}<button class="btn sec" id="hSkip">Skip</button><button class="btn" id="hOk">Submit</button></div>`,()=>{clearInterval(S.imgTimer);});
+  $('md').dataset.seq=String(r.seq);
+  const end=new Date(r.expires_at).getTime();
+  const tick=()=>{const left=Math.max(0,Math.round((end-Date.now())/1000));const t=$('hTm');if(t)t.textContent=Math.floor(left/60)+':'+String(left%60).padStart(2,'0');if(left<=0)clearInterval(S.countdown);};
+  tick();clearInterval(S.countdown);S.countdown=setInterval(tick,1000);
+  if(r.image){clearInterval(S.imgTimer);S.imgTimer=setInterval(()=>{const i=$('hImg');if(i)i.src=r.image+'?t='+Date.now();},2500);}
+  const send=async(action)=>{
+    const values={};$('md').querySelectorAll('input[data-key]').forEach(i=>{if(i.value!=='')values[i.dataset.key]=i.value;});
+    try{await api(`/api/jobs/${id}/human`,{method:'POST',body:{seq:r.seq,action,code:isCap?($('hCode').value||''):'',values}});
+      if(action==='refresh'){toast('Asked for a new image.');return;}
+      closeModal();toast(action==='skip'?'Skipped: reported as Needs a person.':'Sent. The run is resuming...');}
+    catch(e){$('hErr').textContent=e.message;}};
+  $('hOk').onclick=()=>send('submit');$('hSkip').onclick=()=>send('skip');if($('hRef'))$('hRef').onclick=()=>send('refresh');
+}
+
+/* ---------- report ---------- */
+const dl=(id,path)=>`/api/jobs/${encodeURIComponent(id)}/files/${path.split('/').map(encodeURIComponent).join('/')}`;
+async function loadReport(){
+  const job=S.jobs.find(j=>j.id===S.shown);
+  const none=m=>{$('repTitle').textContent='Release report';$('repSub').textContent=m;$('repVerdict').style.display='none';$('repStats').innerHTML='';
+    ['r-def','r-delta','r-cov','r-req','r-dl'].forEach(i=>$(i).innerHTML='');};
+  if(!job)return none('No runs yet.');
+  if(!TERMINAL.includes(job.status))return none('This run is still going. The report appears when it finishes.');
+  if(job.status!=='done')return none(`This run ${label(job.status)}${job.error?': '+job.error.slice(-300):''}.`);
+  let d;try{d=await getReport(job.id);}catch(e){return none(e.message);}
+  if(!d)return none('This run finished without a report.');
+  $('repTitle').textContent=`Release report · ${d.run_id}`;
+  $('repSub').textContent=`${host(job.url)} · ${when(d.run_finished_at)} · every figure was cross-checked before this was rendered.`;
+  verdictCard($('repVerdict'),d,job);$('repStats').innerHTML=statTiles(d);
+  const defs=d.defects||[];
+  $('r-def').innerHTML=defs.length?`<table><tr><th>ID</th><th>Kind</th><th>Severity</th><th>Title</th><th>Owner</th><th>Status</th></tr>${defs.map(x=>
+    `<tr><td>${esc(x.id)}</td><td>${esc(x.category)}</td><td><span class="pill ${sevClass(x.severity)}">${esc(x.severity)}</span>${x.severity_reason?`<br><small>${esc(x.severity_reason)}</small>`:''}</td>
+     <td>${esc(x.title)}<br><small>${esc(x.url||'')}</small></td><td>${esc(x.owner||'')}</td><td>${esc(x.status)}</td></tr>`).join('')}</table>`:'<div class="empty">No findings recorded.</div>';
+  const dd=d.delta||{};
+  if(!dd.baseline)$('r-delta').innerHTML=`<div class="empty">${esc(dd.note||'This run is the baseline for the next comparison.')}</div>`;
+  else{const rows=[...(dd.added||[]).map(x=>['Added',x.title,'New this run']),...(dd.removed||[]).map(x=>['Removed',x.title,x.reason]),
+    ...(dd.category_changes||[]).map(x=>['Category changed',x.title,x.reason]),...(dd.fixed||[]).map(x=>['Now passing',x.title,'']),...(dd.new_failures||[]).map(x=>['New failure',x.title,''])];
+    $('r-delta').innerHTML=`<p class="sub">Compared with ${esc(dd.previous_run_id)}: ${esc(dd.previous_tests_ran)} tests ran then, ${esc((d.counts||{}).executed_tests)} now.</p>`+(rows.length?`<table><tr><th>Change</th><th>Test</th><th>Reason</th></tr>${rows.map(r=>`<tr><td>${esc(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td></tr>`).join('')}</table>`:'<div class="empty">No test changes.</div>');}
+  const cov=d.coverage||{};
+  $('r-cov').innerHTML=`<p class="sub">Pages visited ${esc(cov.pages_visited)}/${esc(cov.pages_total)} · controls touched ${esc(cov.controls_touched)}/${esc(cov.controls_total)}</p>`+((cov.gaps||[]).length?`<table><tr><th>Page</th><th>Untouched controls</th></tr>${cov.gaps.map(g=>`<tr><td>${esc(g.page)}</td><td>${esc(String(g.untouched_controls||'').slice(0,300))}</td></tr>`).join('')}</table>`:'');
+  const rq=d.requirements||{};
+  $('r-req').innerHTML=(rq.rows||[]).length?`<table><tr><th>Sentence</th><th>Result</th></tr>${rq.rows.map(r=>`<tr><td>${esc(r.sentence)}</td><td><span class="pill ${r.passed?'go':'idle'}">${r.passed?'passed':'not backed'}</span><br><small>${esc(r.reason||r.result||'')}</small></td></tr>`).join('')}</table>`:'<div class="empty">No written requirements were supplied.</div>';
+  let files=[];try{files=await api(`/api/jobs/${job.id}/files`);}catch(e){}
+  $('r-dl').innerHTML=files.length?files.map(f=>`<div class="dl"><div class="ico">${esc(f.path.split('.').pop().toUpperCase().slice(0,4))}</div><div class="meta"><b>${esc(f.path.split('/').pop())}</b><small>${(f.size/1024).toFixed(0)} KB</small></div><a class="btn sec sm" href="${dl(job.id,f.path)}" download>Download</a></div>`).join(''):'<div class="empty">No files.</div>';
+}
+
+/* ---------- journeys and defects (read-only, straight from the run folder) ---------- */
+async function fileOrNull(path){const id=S.shown;if(!id)return null;try{return await api(dl(id,path));}catch(e){if(e.status===404)return null;throw e;}}
+async function loadFlows(){
+  const box=$('flowsBody');if(!S.shown){box.innerHTML='<div class="empty">No runs yet.</div>';return;}
+  let f,r;try{f=await fileOrNull('flows.json');r=await fileOrNull('flow_ratings.json');}catch(e){box.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  const flows=(f&&f.flows)||[];
+  box.innerHTML=flows.length?`<table><tr><th>Journey</th><th>Status</th><th>Last run</th><th>History</th></tr>${flows.map(x=>{
+    const hist=((r&&r.ratings&&r.ratings[x.id])||[]).filter(h=>h.source==='runner');
+    const trail=hist.slice(-6).map(h=>h.passed?'P':'F').join(' ');
+    return `<tr><td>${esc(x.goal)}</td><td><span class="pill ${x.status==='verified'||x.status==='approved'?'go':x.status==='stale'?'cond':'idle'}">${esc(x.status)}</span></td><td>${when(x.last_run_at)}</td><td>${esc(trail||'-')}</td></tr>`;}).join('')}</table>`
+    :'<div class="empty">This run has no journeys.</div>';
+}
+async function loadDefects(){
+  const box=$('defBody');if(!S.shown){box.innerHTML='<div class="empty">No runs yet.</div>';return;}
+  let l;try{l=await fileOrNull('defect_ledger.json');}catch(e){box.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  const rows=Object.entries((l&&l.defects)||{});
+  box.innerHTML=rows.length?`<table><tr><th>Test</th><th>Severity (frozen)</th><th>Status</th><th>Clean runs</th><th>Failures</th></tr>${rows.map(([k,x])=>
+    `<tr><td>${esc(x.title||k)}<br><small>${esc(k)}</small></td><td><span class="pill ${sevClass(x.severity)}">${esc(x.severity||'-')}</span>${x.severity_reason?`<br><small>${esc(x.severity_reason)}</small>`:''}</td>
+     <td><span class="pill ${x.status==='open'?'nogo':'go'}">${esc(x.status)}</span>${x.closed_reason?`<br><small>${esc(x.closed_reason)}</small>`:''}</td><td>${esc(x.consecutive_not_reproduced||0)} / 3</td><td>${esc(x.total_failures||0)}</td></tr>`).join('')}</table>`
+    :'<div class="empty">No defects recorded in this run\'s folder.</div>';
+}
+
+/* ---------- start ---------- */
+async function init(){
+  try{const s=await api('/api/session');if(!s.authenticated){showGate();return;}}
+  catch(e){if(e.status!==401)$('dashSub').textContent=e.message;return;}
+  try{await refreshJobs();}catch(e){$('dashSub').textContent=e.message;return;}
+  if(!S.poll)S.poll=setInterval(()=>{if(!document.hidden)refreshJobs().catch(()=>{});},15000);
+}
+init();
+</script>
+</body>
+</html>
