@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from website_test_pipeline import config
+from website_test_pipeline.providers import get_provider
 
 from .db import Database
 from .settings import AppSettings
@@ -48,6 +50,18 @@ def last_progress(run_dir: Path) -> dict | None:
         except ValueError:
             continue                          # a half-written or cut first line
     return None
+
+
+def forget_model_secret(run_dir) -> None:
+    """Delete the API key a person typed for this run (runs/<site>/secrets/). It lives only as long as the run does."""
+    shutil.rmtree(Path(run_dir) / "secrets", ignore_errors=True)
+
+
+def read_model_secret(run_dir) -> str:
+    try:
+        return str(json.loads((Path(run_dir) / "secrets" / "model.json").read_text(encoding="utf-8")).get("api_key") or "")
+    except (OSError, ValueError):
+        return ""
 
 
 def kill_tree(proc) -> None:
@@ -101,6 +115,11 @@ class JobRunner:
             "WTP_JOB": "1", "PYTHONUNBUFFERED": "1",
             "CRAWL_MAX_PAGES": str(min(int(options.get("max_pages") or self.settings.max_pages_limit), self.settings.max_pages_limit)),
         })
+        choice = options.get("model")
+        if choice:                               # the person picked a model for this run; otherwise the server's own .env applies
+            provider = get_provider(choice["provider"])
+            env.update({"MODEL_PROVIDER": provider.name, "MODEL_NAME": choice["model"],
+                        "API_URL": choice.get("api_url") or provider.default_url, "API_KEY": read_model_secret(job["run_dir"])})
         if options.get("probe_max") is not None:
             env["EXPLORE_PROBE_MAX"] = str(options["probe_max"])
         if options.get("ask_human", True):       # a CAPTCHA or login wall is put to the person on the web page
@@ -157,6 +176,7 @@ class JobRunner:
                 *self.settings.command, env=self.environment(job), cwd=str(config.ROOT),
                 stdout=log, stderr=asyncio.subprocess.STDOUT, stdin=asyncio.subprocess.DEVNULL, **kwargs)
             self._current = (job["id"], proc)
+            forget_model_secret(run_dir)       # the process has its environment now; the key does not need to sit on disk
             started, timed_out, shown = time.monotonic(), False, None
             try:
                 while proc.returncode is None:
@@ -172,6 +192,7 @@ class JobRunner:
                         await proc.wait()
             finally:
                 self._current = None
+                forget_model_secret(run_dir)   # the run has read its key; nothing keeps it
                 if proc.returncode is None:
                     kill_tree(proc)           # the worker itself was stopped
         self._sync_progress(job["id"], run_dir, shown)

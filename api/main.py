@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import uuid
+from types import SimpleNamespace
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,8 +17,10 @@ from fastapi.staticfiles import StaticFiles
 
 from . import security
 from .db import ACTIVE, TERMINAL, Database
-from .jobs import JobRunner, site_name
-from .models import HumanAnswerIn, JobCreate, JobOut, Login
+from website_test_pipeline.providers import get_provider
+
+from .jobs import JobRunner, forget_model_secret, site_name
+from .models import HumanAnswerIn, JobCreate, JobOut, Login, ModelChoice
 from .security import UrlRejected
 from .settings import AppSettings
 
@@ -95,6 +98,21 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             raise HTTPException(404, "No such run.")
         return job
 
+    def checked_model(choice: ModelChoice) -> dict:
+        """The non-secret part of the person's model choice to keep with the job - or a 422 saying what is wrong."""
+        provider = get_provider(choice.provider)
+        url, key = choice.api_url.strip(), choice.api_key.strip()
+        if url:
+            try:
+                url = security.validate_model_url(url, settings.allow_private_model_urls, resolver)
+            except UrlRejected as exc:
+                raise HTTPException(422, f"Model address: {exc}") from exc
+        elif not provider.default_url:
+            raise HTTPException(422, "Enter the chat-completions address of your OpenAI-compatible server.")
+        for problem in provider.problems(SimpleNamespace(api_key=key)):
+            raise HTTPException(422, problem)
+        return {"provider": provider.name, "model": choice.model.strip(), "api_url": url, "key_set": bool(key)}
+
     @app.get("/api/health")
     def health():
         return {"ok": True}
@@ -121,6 +139,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             url = security.validate_url(body.url, resolver)
         except UrlRejected as exc:
             raise HTTPException(422, str(exc)) from exc
+        model = checked_model(body.model) if body.model else None
         user = client_id(request)
         if db.active_jobs_for(user):
             raise HTTPException(409, "You already have a run in progress. Wait for it or cancel it.")
@@ -128,7 +147,17 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             raise HTTPException(429, f"Daily limit reached ({settings.max_jobs_per_day} runs per day).")
         job_id = uuid.uuid4().hex[:12]
         site = site_name(url, job_id, body.options.reuse_workspace)
-        job = db.create_job(job_id, url, site, settings.runs_dir / site, user, body.options.model_dump())
+        options = body.options.model_dump()
+        run_dir = settings.runs_dir / site
+        if model:
+            options["model"] = model            # no key in here: the database never holds it
+            if body.model.api_key.strip():       # written BEFORE the job exists, so the worker can never start without it
+                _atomic_write(run_dir / "secrets" / "model.json", json.dumps({"api_key": body.model.api_key.strip()}).encode("utf-8"), private=True)
+        try:
+            job = db.create_job(job_id, url, site, run_dir, user, options)
+        except Exception:
+            forget_model_secret(run_dir)
+            raise
         return JobOut.of(job)
 
     @app.get("/api/jobs", response_model=list[JobOut], dependencies=[Depends(require_access)])
@@ -144,6 +173,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         job_or_404(job_id)
         if db.cancel_job(job_id):
             runner.cancel(job_id)
+            forget_model_secret(job_or_404(job_id)["run_dir"])
             db.close_human_requests(job_id)
         return JobOut.of(db.get_job(job_id))
 

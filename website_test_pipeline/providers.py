@@ -25,6 +25,7 @@ class ModelError(RuntimeError):
 
 class Provider:
     name = ""
+    default_url = ""          # used when the person leaves the URL blank; "" = there is no sensible default
 
     def problems(self, s) -> list[str]:
         """Settings this API cannot work without, as sentences. Empty = fine."""
@@ -80,6 +81,7 @@ class OpenAICompatible(Provider):
 class Anthropic(Provider):
     """Claude's Messages API. API_URL may be the host, the /v1 root or the full .../v1/messages URL."""
     name = "anthropic"
+    default_url = "https://api.anthropic.com"
 
     def problems(self, s):
         return [] if s.api_key else ["MODEL_PROVIDER=anthropic needs API_KEY (an Anthropic API key)"]
@@ -126,6 +128,7 @@ class Google(Provider):
     into the URL (a leading "models/" is tolerated). The key travels in a header, never in the URL."""
     name = "google"
     DEFAULT_ROOT = "https://generativelanguage.googleapis.com"
+    default_url = DEFAULT_ROOT
 
     def problems(self, s):
         return [] if s.api_key else ["MODEL_PROVIDER=google needs API_KEY (a Google AI Studio / Gemini API key)"]

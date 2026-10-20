@@ -11,9 +11,19 @@ class JobOptions(BaseModel):
     ask_human: bool = Field(default=True, description="ask the person for a CAPTCHA code or sign-in details; false skips those steps")
 
 
+class ModelChoice(BaseModel):
+    """Which model this run uses. Omit it to use the server's own configuration. The key is never stored in the database
+    or echoed back: it goes to a private file the run reads once and the server deletes when the run ends."""
+    provider: Literal["openai", "anthropic", "google"]
+    model: str = Field(min_length=1, max_length=200, pattern=r"^[\w./:@+-]+$")
+    api_url: str = Field(default="", max_length=2048, description="blank = the provider's own address (required for openai)")
+    api_key: str = Field(default="", max_length=500, repr=False)
+
+
 class JobCreate(BaseModel):
     url: str
     options: JobOptions = JobOptions()
+    model: ModelChoice | None = None
 
 
 class Login(BaseModel):

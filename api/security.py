@@ -64,6 +64,27 @@ def validate_url(raw: str, resolver=_resolve) -> str:
     return urlunsplit((parts.scheme.lower(), netloc, parts.path or "/", parts.query, ""))
 
 
+def validate_model_url(raw: str, allow_private: bool, resolver=_resolve) -> str:
+    """A model server's address. Public addresses only, like a site to test - unless the operator allowed private ones
+    (a model running on this machine or this network)."""
+    if not allow_private:
+        return validate_url(raw, resolver)
+    raw = (raw or "").strip()
+    if not raw or len(raw) > MAX_URL_LENGTH:
+        raise UrlRejected("Enter a web address (up to 2048 characters).")
+    if "://" not in raw:
+        raw = "http://" + raw
+    try:
+        parts = urlsplit(raw)
+        port = parts.port
+    except ValueError:
+        raise UrlRejected("That is not a valid web address.") from None
+    if parts.scheme.lower() not in {"http", "https"} or not parts.hostname:
+        raise UrlRejected("Use an http or https address with a host name.")
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    return urlunsplit((parts.scheme.lower(), host + (f":{port}" if port else ""), parts.path or "/", parts.query, ""))
+
+
 # ---- who may use the API ------------------------------------------------------------------------------------------
 SESSION_TTL_S = 7 * 24 * 3600
 
