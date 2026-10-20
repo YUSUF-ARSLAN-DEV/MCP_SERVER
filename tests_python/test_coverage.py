@@ -183,7 +183,7 @@ def test_the_prompts_end_with_the_uncovered_list_only_when_there_is_one():
 
 def test_the_prompt_versions_changed_because_the_prompts_did():
     from website_test_pipeline import intents, proposer
-    assert intents.PROMPT_VERSION == "intents-v2" and proposer.PROMPT_VERSION == "propose-v3"
+    assert intents.PROMPT_VERSION == "intents-v3" and proposer.PROMPT_VERSION == "propose-v3"
 
 
 def test_intents_aims_the_model_at_what_no_tested_flow_covers(tmp_path):

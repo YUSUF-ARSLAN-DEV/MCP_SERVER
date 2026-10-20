@@ -58,6 +58,12 @@ DEFAULTS: dict[str, list] = {
          "reason": "describes widgets appearing, not something a visitor achieves"},
         {"pattern": "\\b(language|arabic version|english version|switch(es)? to (arabic|english))\\b",
          "reason": "a language switch leaves the site and cannot be tested"},
+        # found live: "I choose a country, click Search, and I see that no results are shown" - the AI turned the
+        # pipeline's own failed probe into the site's expected behaviour. A journey ends in something the site does.
+        {"pattern": "\\b(no|zero) (search )?results?\\b|\\bnothing (is |gets )?(shown|displayed|happens|appears|changes|returned)\\b"
+                    "|\\b(stays|remains) (empty|blank|the same|unchanged)\\b|\\bno (visible )?(change|effect|response)\\b"
+                    "|لا (توجد|يوجد|تظهر|يظهر) (أي )?(نتائج|شيء)",
+         "reason": "expects nothing to happen; a journey must end in something the site does for the visitor"},
     ],
 }
 

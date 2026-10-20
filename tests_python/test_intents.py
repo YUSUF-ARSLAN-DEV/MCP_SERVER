@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from website_test_pipeline import intents
+
 from website_test_pipeline.intents import (
     IntentError, accept_intents, add_intent, drop_intent, edit_intent, find_intent, load_intents,
     looks_technical, needs_expansion, parse_response, prompt_for, render_intents, run_intents, sentence_hash,
@@ -136,7 +138,7 @@ def test_ai_sentences_are_checked_before_they_are_stored():
     ]
     added, rejected = accept_intents(rows, doc, {"/en"}, "t2", model="m")
     assert [i["id"] for i in added] == ["i-002"] and added[0]["source"] == "ai" and added[0]["start_path"] == "/en"
-    assert added[0]["proposed_by"] == {"model": "m", "prompt_version": "intents-v2"}
+    assert added[0]["proposed_by"] == {"model": "m", "prompt_version": "intents-v3"}
     reasons = " | ".join(r for _, r in rejected)
     assert "duplicate" in reasons and "reads like code" in reasons and "not explored" in reasons and "too short" in reasons
 
@@ -251,3 +253,32 @@ def test_a_person_may_still_write_any_of_those_because_they_take_responsibility(
 def test_a_real_journey_is_not_caught_by_the_unsuitable_checks():
     assert add_intent(_doc(), PICK, "ai", "t")
     assert add_intent(_doc(), "A visitor presses Subscribe Now on the search results and reaches the subscribe page.", "ai", "t")
+
+
+# Found live: the AI wrote these as the site's requirements, so a working site "failed" to show nothing.
+_EXPECTS_NOTHING = [
+    "On the Arabic home page I choose a country from the list and click Search, and I see that no results are shown.",
+    "On the English frequency search page I select a country from the list and click Search, and I see that no results appear.",
+    "A visitor clicks Next on the setup guide and the page stays the same.",
+    "اختار الزائر دولة وضغط بحث فلا توجد نتائج",
+]
+
+
+@pytest.mark.parametrize("sentence", _EXPECTS_NOTHING)
+def test_the_ai_may_not_write_a_journey_whose_outcome_is_that_nothing_happens(sentence):
+    assert "expects nothing to happen" in intents.check_sentence(sentence, technical_ok=False)
+
+
+def test_a_person_may_still_write_a_no_results_check_on_purpose():
+    assert intents.check_sentence("Searching for a made-up word shows no results and a helpful message.", technical_ok=True) == ""
+
+
+def test_journeys_that_end_in_something_the_site_does_are_still_accepted():
+    for sentence in ("A visitor picks a country and a channel, clicks Search, and sees the list of frequencies.",
+                     "A visitor opens the subscription page and sees the form to enter their details."):
+        assert intents.check_sentence(sentence, technical_ok=False) == ""
+
+
+def test_the_prompt_asks_for_an_outcome_and_for_every_choice_a_form_needs():
+    prompt = intents.prompt_for("SITE MAP\n/ : Search", [])
+    assert "Never a journey whose outcome is that nothing happens" in prompt and "both the country and the channel" in prompt

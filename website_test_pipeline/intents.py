@@ -26,7 +26,7 @@ from .documents import PROMPT_VERSION as DOC_PROMPT_VERSION, quote_in_text
 from .sitemap import build_site_map, load_inventories, render_site_map
 
 INTENTS_VERSION = 1
-PROMPT_VERSION = "intents-v2"
+PROMPT_VERSION = "intents-v3"
 MAX_NEW = 8
 MIN_LEN, MAX_LEN = 15, 240
 DUPLICATE_OVERLAP = 0.8
@@ -42,6 +42,10 @@ RULES = (
     "- One sentence per journey: what the visitor does, then what they should see. Cross pages when a real link exists. Prefer journeys of two or more actions, or that reach another page; skip a single widget interaction (zoom, play, toggle) that stays on the same page.\n"
     "- NO technical words: no selectors, ids, CSS, URLs, button ids, or code. Use the names visitors see on screen.\n"
     "- Only journeys the SITE MAP supports. Do not invent pages, buttons, or results.\n"
+    "- Every journey ends in something the site DOES for the visitor: results appear, a page opens, a confirmation shows. "
+    "Never a journey whose outcome is that nothing happens or nothing is shown; if the SITE MAP does not say what a "
+    "visitor gets from a control, choose a journey whose outcome it does show. Make every choice a form asks for "
+    "before pressing its button (for example both the country and the channel).\n"
     "- Never a journey that needs an account, password, payment or a real person's data, a language switch, or one "
     "that only shows widgets appearing. Each sentence must describe something a visitor achieves.\n"
     "- Do not repeat or reword anything in EXISTING. If the input ends with a NOT YET COVERED list, prefer journeys "
