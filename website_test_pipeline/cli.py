@@ -186,7 +186,7 @@ def main() -> int:
         # crawl (when SEED_URL is set) -> generate -> flows run -> report --rerun. The report step runs the tests itself,
         # so execute is skipped in the flow chain. Exit 2 (a stage could not run) stops the chain; exit 1 (tests failed) does not.
         base = [sys.executable, '-m', 'website_test_pipeline.cli']
-        steps = ([['crawl']] if settings.seed_url else []) + [['generate'], ['flows', 'run', '--skip', ','.join(filter(None, ['execute', args.skip]))], ['report', '--rerun']]
+        steps = ([['crawl']] if settings.seed_url else []) + [['generate'], ['flows', 'run', '--skip', ','.join(filter(None, ['execute', args.skip]))], ['report', '--rerun', '--combined']]
         from . import progress
         weights = {'crawl': 1, 'generate': 4, 'flows': 3, 'report': 3}          # each step's rough share of the total time
         total_w = sum(weights[s[0]] for s in steps); t0 = datetime.now().timestamp(); done_w = 0

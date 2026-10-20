@@ -81,3 +81,19 @@ def test_a_rerun_whose_tests_wrote_no_results_stops_with_a_clear_exit_code_inste
     assert not stale.exists()                                   # the earlier run's file was cleared, never reported by mistake
     assert not (artifacts / "report").exists()                  # and no report was built from nothing
     assert any("pytest" in part for part in calls[0])
+
+
+def test_the_all_in_one_pipeline_builds_the_combined_word_report(tmp_path, monkeypatch):
+    """Found on the first real run from the web page: its Downloads held per-page documents but no full-report.docx,
+    because `all` ran `report --rerun` without --combined."""
+    monkeypatch.setattr(config, "RUNS", tmp_path / "runs")
+    monkeypatch.setenv("SITE", "allsteps")
+    monkeypatch.setenv("SEED_URL", "https://example.test/")
+    monkeypatch.setenv("WTP_JOB", "1")
+    monkeypatch.setattr(sys, "argv", ["cli", "all", "--no-window"])
+    commands = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **kw: commands.append(cmd) or subprocess.CompletedProcess(cmd, 0))
+    assert cli.main() == 0
+    steps = [c[3:] for c in commands if c[1:3] == ["-m", "website_test_pipeline.cli"]]
+    assert [s[0] for s in steps] == ["crawl", "generate", "flows", "report"]
+    assert steps[-1][:3] == ["report", "--rerun", "--combined"]
