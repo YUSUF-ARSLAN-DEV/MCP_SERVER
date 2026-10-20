@@ -7,6 +7,7 @@ import os
 import shutil
 import sqlite3
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from types import SimpleNamespace
@@ -31,8 +32,7 @@ from .settings import AppSettings
 
 COOKIE = "wtp_session"
 # files a visitor may download from a run folder: results and evidence, never saved logins or credentials
-_DOWNLOADABLE = {".docx", ".pdf", ".png", ".jpg", ".jpeg", ".json", ".log", ".txt", ".md", ".zip"}
-_PRIVATE_PARTS = {"auth", "secrets", ".env", "human"}
+from .runstore import DOWNLOADABLE as _DOWNLOADABLE, PRIVATE_PARTS as _PRIVATE_PARTS, clean_relative, read_stored
 
 
 def _atomic_write(path: Path, data: bytes, private: bool = False) -> None:
@@ -126,6 +126,17 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         if job is None or (me["role"] != "admin" and job["user_id"] != me["id"]):
             raise HTTPException(404, "No such run.")
         return job
+
+    SUMMARY_FIELDS = ("verdict", "tests_ran", "tests_passed", "tests_failed", "pass_rate", "journeys_total", "journeys_passed", "open_defects",
+                      "findings_total", "duration_s", "exit_code", "model_name", "model_profile", "code_version", "files_stored", "bytes_stored")
+
+    def summarize(info: dict | None) -> dict | None:
+        return {k: info.get(k) for k in SUMMARY_FIELDS} if info else None
+
+    def view(job: dict, info: dict | None = None) -> JobOut:
+        out = JobOut.of(job)
+        out.summary = summarize(info if info is not None else db.get_run_info(job["id"]))
+        return out
 
     def start_session(response: Response, user: dict) -> None:
         response.set_cookie(COOKIE, security.make_user_token(settings.secret, user["id"], user["session_version"]),
@@ -422,16 +433,18 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         except Exception:
             forget_model_secret(run_dir)
             raise
-        return JobOut.of(job)
+        return view(job)
 
     @app.get("/api/jobs", response_model=list[JobOut], dependencies=[Depends(require_access)])
     def list_jobs(request: Request, limit: int = 50):
         me = request.state.user
-        return [JobOut.of(j) for j in db.list_jobs(max(1, min(limit, 200)), None if me["role"] == "admin" else me["id"])]
+        jobs = db.list_jobs(max(1, min(limit, 200)), None if me["role"] == "admin" else me["id"])
+        infos = db.run_infos([j["id"] for j in jobs])
+        return [view(j, infos.get(j["id"]) or {}) if j["id"] in infos else view(j, {}) for j in jobs]
 
     @app.get("/api/jobs/{job_id}", response_model=JobOut, dependencies=[Depends(require_access)])
     def get_job(request: Request, job_id: str):
-        return JobOut.of(job_or_404(job_id, request))
+        return view(job_or_404(job_id, request))
 
     @app.post("/api/jobs/{job_id}/cancel", response_model=JobOut, dependencies=[Depends(require_access)])
     def cancel_job(request: Request, job_id: str):
@@ -440,7 +453,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             runner.cancel(job_id)
             forget_model_secret(job_or_404(job_id, request)["run_dir"])
             db.close_human_requests(job_id)
-        return JobOut.of(db.get_job(job_id))
+        return view(db.get_job(job_id))
 
     @app.get("/api/jobs/{job_id}/events", dependencies=[Depends(require_access)])
     async def events(job_id: str, request: Request):
@@ -452,26 +465,45 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
                 job = db.get_job(job_id)
                 if job is None or await request.is_disconnected():
                     return
-                view = JobOut.of(job).model_dump()
-                if view != last:
-                    yield f"event: job\ndata: {json.dumps(view)}\n\n"
-                    last = view
+                shown = view(job).model_dump()
+                if shown != last:
+                    yield f"event: job\ndata: {json.dumps(shown)}\n\n"
+                    last = shown
                 if job["status"] in TERMINAL:
                     return
                 await asyncio.sleep(settings.poll_interval_s)
 
         return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
+    @app.get("/api/jobs/{job_id}/info", dependencies=[Depends(require_access)])
+    def run_info(request: Request, job_id: str):
+        """Everything recorded about a run: its summary and details (the model, the options, the code version, how long it
+        took, what was kept in the database and what was left out and why). Never any key or what a person typed."""
+        job = job_or_404(job_id, request)
+        info = db.get_run_info(job_id)
+        return {"job": view(job, info or {}).model_dump(), "info": info, "stored_in_database": bool(job.get("stored"))}
+
     @app.get("/api/jobs/{job_id}/files", dependencies=[Depends(require_access)])
     def list_files(request: Request, job_id: str):
         """The reports a run produced (artifacts/report/*), as paths for /files/{path}."""
-        run_dir = Path(job_or_404(job_id, request)["run_dir"])
+        job = job_or_404(job_id, request)
+        if job.get("stored"):                                   # the run's files live in the database
+            return [{"path": f["path"], "size": f["size"]} for f in db.stored_files(job_id, "artifacts/report/") if clean_relative(f["path"])]
+        run_dir = Path(job["run_dir"])
         found = sorted(p for p in (run_dir / "artifacts" / "report").glob("**/*") if p.is_file()) if run_dir.is_dir() else []
         return [{"path": p.relative_to(run_dir).as_posix(), "size": p.stat().st_size} for p in found if downloadable(run_dir, p.relative_to(run_dir).as_posix())]
 
     @app.get("/api/jobs/{job_id}/files/{path:path}", dependencies=[Depends(require_access)])
     def get_file(request: Request, job_id: str, path: str):
-        target = downloadable(Path(job_or_404(job_id, request)["run_dir"]), path)
+        job = job_or_404(job_id, request)
+        if job.get("stored"):
+            found = read_stored(db, job_id, path)
+            if found is None:
+                raise HTTPException(404, "No such file.")
+            data, content_type, name = found
+            return Response(content=data, media_type=content_type,
+                            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{urllib.parse.quote(name)}"})
+        target = downloadable(Path(job["run_dir"]), path)
         if target is None:
             raise HTTPException(404, "No such file.")
         return FileResponse(target, filename=target.name)

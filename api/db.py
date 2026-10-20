@@ -17,6 +17,19 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', run_dir TEXT NOT NULL, options TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, created_at);
+CREATE TABLE IF NOT EXISTS run_info (
+    job_id TEXT PRIMARY KEY, recorded_at TEXT NOT NULL, exit_code INTEGER, duration_s INTEGER,
+    verdict TEXT, tests_ran INTEGER, tests_passed INTEGER, tests_failed INTEGER, pass_rate INTEGER,
+    journeys_total INTEGER, journeys_passed INTEGER, open_defects INTEGER, findings_total INTEGER,
+    requirements_total INTEGER, requirements_backed INTEGER, pages_explored INTEGER,
+    model_provider TEXT, model_name TEXT, model_profile TEXT, code_version TEXT, browser TEXT,
+    files_stored INTEGER NOT NULL DEFAULT 0, bytes_stored INTEGER NOT NULL DEFAULT 0, files_omitted INTEGER NOT NULL DEFAULT 0,
+    details TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS run_files (
+    job_id TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL, stored_size INTEGER NOT NULL, encoding TEXT NOT NULL DEFAULT 'raw',
+    sha256 TEXT NOT NULL, content_type TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY (job_id, path)
+);
 CREATE TABLE IF NOT EXISTS model_profiles (
     id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL COLLATE NOCASE, provider TEXT NOT NULL, model TEXT NOT NULL,
     api_url TEXT NOT NULL DEFAULT '', key_enc TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -46,6 +59,8 @@ class Database:
         with self._conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            if "stored" not in {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}:                  # a database from before files were kept in it
+                conn.execute("ALTER TABLE jobs ADD COLUMN stored INTEGER NOT NULL DEFAULT 0")
             if "outcome" not in {r[1] for r in conn.execute("PRAGMA table_info(human_requests)")}:      # a database from before outcomes were kept
                 conn.execute("ALTER TABLE human_requests ADD COLUMN outcome TEXT NOT NULL DEFAULT ''")
 
@@ -247,6 +262,55 @@ class Database:
             with self._conn() as conn:
                 conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", (*args, user_id))
 
+    # ---- what a run was (info) and what it produced (files) ------------------------------------------------------
+    INFO_COLUMNS = ("exit_code", "duration_s", "verdict", "tests_ran", "tests_passed", "tests_failed", "pass_rate", "journeys_total",
+                    "journeys_passed", "open_defects", "findings_total", "requirements_total", "requirements_backed", "pages_explored",
+                    "model_provider", "model_name", "model_profile", "code_version", "browser", "files_stored", "bytes_stored",
+                    "files_omitted")
+
+    def save_run_info(self, job_id: str, info: dict, details: dict) -> None:
+        cols = [c for c in self.INFO_COLUMNS if c in info]
+        with self._conn() as conn:
+            conn.execute(f"INSERT OR REPLACE INTO run_info (job_id, recorded_at, {', '.join(cols)}, details) VALUES (?, ?, {', '.join('?' for _ in cols)}, ?)",
+                         (job_id, now(), *[info[c] for c in cols], json.dumps(details)))
+
+    def get_run_info(self, job_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM run_info WHERE job_id = ?", (job_id,)).fetchone()
+        return _info(row)
+
+    def run_infos(self, job_ids: list[str]) -> dict[str, dict]:
+        if not job_ids:
+            return {}
+        with self._conn() as conn:
+            rows = conn.execute(f"SELECT * FROM run_info WHERE job_id IN ({','.join('?' for _ in job_ids)})", job_ids).fetchall()
+        return {r["job_id"]: _info(r) for r in rows}
+
+    def store_run_files(self, job_id: str, rows: list[dict]) -> None:
+        """All of a run's files in one transaction, then the run is marked stored - so a reader sees all of it or none of it."""
+        with self._conn() as conn:
+            conn.execute("DELETE FROM run_files WHERE job_id = ?", (job_id,))
+            conn.executemany("INSERT INTO run_files (job_id, path, size, stored_size, encoding, sha256, content_type, data) VALUES (?,?,?,?,?,?,?,?)",
+                             [(job_id, r["path"], r["size"], r["stored_size"], r["encoding"], r["sha256"], r["content_type"], r["data"]) for r in rows])
+            conn.execute("UPDATE jobs SET stored = 1 WHERE id = ?", (job_id,))
+
+    def stored_file(self, job_id: str, path: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM run_files WHERE job_id = ? AND path = ?", (job_id, path)).fetchone()
+        return dict(row) if row else None
+
+    def stored_files(self, job_id: str, prefix: str = "") -> list[dict]:
+        """Path, size and hash of a run's stored files (never the content), optionally only those under `prefix`."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT path, size, stored_size, sha256, content_type FROM run_files WHERE job_id = ? AND path LIKE ? ESCAPE '\\' ORDER BY path",
+                                (job_id, prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")).fetchall()
+        return [dict(r) for r in rows]
+
+    def unstored_finished_jobs(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM jobs WHERE stored = 0 AND status IN ('done','failed','cancelled') ORDER BY created_at").fetchall()
+        return [_job(r) for r in rows]
+
     # ---- saved model configurations (one person's own; the key is stored encrypted, never plain) ---------------------
     def create_profile(self, profile_id: str, user_id: str, name: str, provider: str, model: str, api_url: str, key_enc: str) -> dict:
         stamp = now()
@@ -290,6 +354,14 @@ class Database:
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM jobs WHERE user_id = ? AND created_at >= ?", (user_id, since)).fetchone()[0]
+
+
+def _info(row) -> dict | None:
+    if row is None:
+        return None
+    info = dict(row)
+    info["details"] = json.loads(info.get("details") or "{}")
+    return info
 
 
 def _job(row) -> dict | None:

@@ -14,3 +14,4 @@ def _default_report_owner(monkeypatch):
     plain os.environ.setdefault() done once up front. monkeypatch.setenv also means a test that wants the
     "no owner configured" failure path can still monkeypatch.delenv it for just that test, same as before."""
     monkeypatch.setenv("REPORT_OWNER", "Test Owner")
+    monkeypatch.setenv("STORE_FILES_IN_DB", "0")        # API tests read what a stand-in pipeline wrote to disk; the storage tests opt in

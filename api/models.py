@@ -132,6 +132,7 @@ class JobOut(BaseModel):
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None
+    summary: dict | None = None                    # what the run came to (verdict, tests, duration, model ...), once it has ended
 
     @classmethod
     def of(cls, job: dict) -> "JobOut":

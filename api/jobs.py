@@ -6,6 +6,7 @@ and a crashed run must never take the API down.
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -20,6 +21,7 @@ from website_test_pipeline import config
 from website_test_pipeline.providers import get_provider
 
 from .db import Database
+from .runstore import store_run
 from .settings import AppSettings
 
 # What a run's process may NOT inherit from the server's own environment (its .env). The server holds credentials for
@@ -106,8 +108,11 @@ class JobRunner:
     async def start(self) -> None:
         self.db.recover_interrupted()
         self._task = asyncio.create_task(self._loop())
+        self._migration = asyncio.create_task(self.store_existing())       # runs that finished before files lived in the database
 
     async def stop(self) -> None:
+        if getattr(self, "_migration", None):
+            self._migration.cancel()
         if self._task:
             self._task.cancel()
             try:
@@ -230,12 +235,36 @@ class JobRunner:
                     kill_tree(proc)           # the worker itself was stopped
         self._sync_progress(job["id"], run_dir, shown)
         self._finish_human(job["id"], run_dir)
+        tail = log_tail(log_path)                  # read BEFORE the folder is stored away and deleted
+        await self._keep_results(job, run_dir, proc.returncode, int(time.monotonic() - started))
         if timed_out:
             self.db.finish_job(job["id"], "failed", f"The run passed its time limit ({self.settings.job_timeout_s} seconds) and was stopped.")
         elif proc.returncode in _FINISHED_CODES:
             self.db.finish_job(job["id"], "done")
         else:
-            self.db.finish_job(job["id"], "failed", log_tail(log_path) or f"The pipeline stopped with exit code {proc.returncode}.")
+            self.db.finish_job(job["id"], "failed", tail or f"The pipeline stopped with exit code {proc.returncode}.")
+
+    async def _keep_results(self, job: dict, run_dir: Path, exit_code: int | None, duration_s: int) -> None:
+        """Record what the run was and move what it produced into the database. A failure here never fails the run: its
+        files simply stay on disk, and the next start tries again."""
+        self.db.update_job(job["id"], stage="Saving the results")
+        try:
+            await asyncio.to_thread(store_run, self.db, job, run_dir, self.settings, exit_code, duration_s)
+        except Exception:
+            logging.getLogger("api.jobs").exception("could not store the results of run %s", job["id"])
+
+    async def store_existing(self) -> None:
+        """Runs that finished before this existed: record their summary and (if enabled) move their folders into the database."""
+        if not self.settings.store_files_in_db:
+            return
+        for job in self.db.unstored_finished_jobs():
+            run_dir = Path(job["run_dir"])
+            if not run_dir.is_dir() or self.db.get_run_info(job["id"]):
+                continue
+            try:
+                await asyncio.to_thread(store_run, self.db, job, run_dir, self.settings, None, None)
+            except Exception:
+                logging.getLogger("api.jobs").exception("could not move run %s into the database", job["id"])
 
     def _sync_progress(self, job_id: str, run_dir: Path, shown: tuple | None) -> tuple | None:
         row = last_progress(run_dir)

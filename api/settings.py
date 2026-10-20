@@ -32,6 +32,12 @@ class AppSettings:
     # throttle and a daily cap; "closed" = only administrators add people. The access code is only ever for the first account.
     signup: str = field(default_factory=lambda: (os.getenv("SIGNUP", "open").strip().lower() if os.getenv("SIGNUP", "open").strip().lower() in {"open", "closed"} else "open"))
     max_signups_per_day: int = field(default_factory=lambda: _int("MAX_SIGNUPS_PER_DAY", 100))
+    # keep what a run produces (reports, evidence, logs, generated tests) in the database instead of leaving it on disk:
+    # a run works in a scratch folder, and when it ends everything worth keeping is stored and the folder deleted.
+    # STORE_FILES_IN_DB=0 keeps the old behaviour (files stay on disk). Limits keep one huge file from bloating the database.
+    store_files_in_db: bool = field(default_factory=lambda: os.getenv("STORE_FILES_IN_DB", "1").strip().lower() not in {"0", "false", "no"})
+    max_stored_file_mb: int = field(default_factory=lambda: _int("MAX_STORED_FILE_MB", 30))
+    max_stored_run_mb: int = field(default_factory=lambda: _int("MAX_STORED_RUN_MB", 250))
     # master key for saved API keys (see secretbox.py); empty = a key file is created next to the database
     secrets_key: str = field(default_factory=lambda: os.getenv("SECRETS_KEY", ""))
     # every run must name its own model (and key). Off = a run with no model falls back to the server's own .env
