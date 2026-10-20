@@ -245,6 +245,7 @@ nav{display:flex;flex-direction:column}
     <div class="card verdict" id="dashVerdict" style="display:none"></div>
     <div class="grid g4" id="dashStats" style="margin-bottom:16px"></div>
     <div class="card"><h3>Needs attention</h3><div id="attention"></div></div>
+    <div class="card" id="aboutCard" style="display:none"><h3>About this run</h3><div id="aboutBody"></div></div>
   </div>
 
   <div class="tp" id="tp-report">
@@ -310,6 +311,9 @@ const host=u=>{try{return new URL(u).host;}catch(e){return u||'';}};
 const pillFor={done:'go',running:'info',needs_human:'cond',queued:'idle',failed:'nogo',cancelled:'idle'};
 const verdictClass=v=>v==='GO'?'go':v==='NO-GO'?'nogo':'cond';
 const label=s=>({needs_human:'needs you',done:'finished'}[s]||s);
+const dur=sec=>sec==null?'-':sec<60?sec+'s':Math.floor(sec/60)+'m '+String(sec%60).padStart(2,'0')+'s';
+const bytesText=n=>n==null?'-':n<1024?n+' B':n<1048576?(n/1024).toFixed(0)+' KB':(n/1048576).toFixed(1)+' MB';
+const resultText=j=>{const m=j.summary;return m&&m.verdict?`${m.verdict} · ${m.tests_passed}/${m.tests_ran} passed`:'';};
 const sevClass=s=>s==='High'||s==='Critical'?'nogo':s==='Medium'?'cond':'idle';
 
 /* ---------- navigation: the address bar is the state (#/, #/new, #/live, #/runs/<id>/<tab>) ---------- */
@@ -462,14 +466,16 @@ async function refreshJobs(){
 const currentTab=()=>{const p=(location.hash||'').replace(/^#\/?/,'').split('/');return TABS.includes(p[2])?p[2]:'overview';};
 function paintRunList(){
   $('runList').innerHTML=S.jobs.length?S.jobs.map(j=>`<a class="runitem${j.id===S.shown?' on':''}" href="#/runs/${encodeURIComponent(j.id)}">
-    <span class="dot ${esc(j.status)}${j.status==='running'?' pulse':''}"></span><span class="rt"><b>${esc(host(j.url))}</b><small>${when(j.created_at)} · ${esc(label(j.status))}</small></span></a>`).join('')
+    <span class="dot ${esc(j.status)}${j.status==='running'?' pulse':''}"></span><span class="rt"><b>${esc(host(j.url))}</b><small>${when(j.created_at)} · ${esc(label(j.status))}</small>${resultText(j)?`<small style="display:block">${esc(resultText(j))}</small>`:''}</span></a>`).join('')
     :'<div class="empty" style="padding:8px 10px">No runs yet.</div>';
 }
 function paintHome(){
   $('homeSub').textContent=S.jobs.length?`${S.jobs.length} run${S.jobs.length===1?'':'s'}. Open one to see its overview, report and journeys.`:'No runs yet. Start one with "+ New run".';
-  $('runsTable').innerHTML=S.jobs.length?`<table><tr><th>Site</th><th>Started</th><th>Status</th><th>Run</th></tr>${S.jobs.map(j=>
-    `<tr><td><a href="#/runs/${encodeURIComponent(j.id)}">${esc(host(j.url))}</a></td><td>${when(j.created_at)}</td>
-     <td><span class="pill ${pillFor[j.status]||'idle'}">${esc(label(j.status))}</span></td><td><small>${esc(j.id)}</small></td></tr>`).join('')}</table>`
+  $('runsTable').innerHTML=S.jobs.length?`<table><tr><th>Site</th><th>Started</th><th>Status</th><th>Result</th><th>Took</th><th>Model</th></tr>${S.jobs.map(j=>{const m=j.summary||{};
+    return `<tr><td><a href="#/runs/${encodeURIComponent(j.id)}">${esc(host(j.url))}</a></td><td>${when(j.created_at)}</td>
+     <td><span class="pill ${pillFor[j.status]||'idle'}">${esc(label(j.status))}</span></td>
+     <td>${m.verdict?`<span class="pill ${verdictClass(m.verdict)}">${esc(m.verdict)}</span> <small>${esc(m.tests_passed)}/${esc(m.tests_ran)} passed</small>`:'<span class="empty">-</span>'}</td>
+     <td>${esc(dur(m.duration_s))}</td><td><small>${esc(m.model_profile||m.model_name||'-')}</small></td></tr>`;}).join('')}</table>`
     :'<div class="empty">Nothing here yet.</div>';
 }
 async function renderRunPage(tab){
@@ -488,9 +494,29 @@ async function renderRunPage(tab){
   else if(tab==='journeys')loadFlows();
   else loadDefects();
 }
+async function loadAbout(job){
+  const card=$('aboutCard');card.style.display='none';
+  if(!TERMINAL.includes(job.status))return;
+  let r;try{r=await api(`/api/jobs/${encodeURIComponent(job.id)}/info`);}catch(e){return;}
+  if(S.shown!==job.id||!r.info)return;
+  const i=r.info,o=i.details||{},opt=o.options||{},omitted=o.omitted||[];
+  const row=(k,v)=>`<tr><td style="width:190px;color:var(--mute)">${esc(k)}</td><td>${v}</td></tr>`;
+  card.style.display='block';
+  $('aboutBody').innerHTML=`<table>
+    ${row('Model',esc(i.model_profile?`${i.model_profile} (${i.model_provider}: ${i.model_name})`:(i.model_name?`${i.model_provider}: ${i.model_name}`:'the server\'s own model')))}
+    ${row('Took',esc(dur(i.duration_s)))}
+    ${row('Pages explored',esc(i.pages_explored??'-'))}
+    ${row('Settings',esc([opt.max_pages?`up to ${opt.max_pages} pages`:'',opt.probe_max!=null?`${opt.probe_max} buttons probed per page`:'',opt.ask_human===false?'CAPTCHAs skipped':'CAPTCHAs asked'].filter(Boolean).join(' · ')))}
+    ${row('Browser',esc(i.browser||'-'))}
+    ${row('Code version',`<code>${esc(i.code_version||'unknown')}</code>`)}
+    ${row('Pipeline exit code',esc(i.exit_code??'-'))}
+    ${row('Kept in the database',esc(`${i.files_stored} files, ${bytesText(i.bytes_stored)}`)+(r.stored_in_database?'':' <small>(still on disk)</small>'))}
+    </table>${omitted.length?`<details style="margin-top:10px"><summary>${omitted.length} file${omitted.length===1?' was':'s were'} left out</summary><table>${omitted.slice(0,40).map(f=>`<tr><td>${esc(f.path)}</td><td>${esc(bytesText(f.size))}</td><td>${esc(f.reason)}</td></tr>`).join('')}</table></details>`:''}`;
+}
 async function renderOverview(job){
   const note=$('ovNote'),box=$('dashVerdict');
   note.style.display='none';box.style.display='none';$('dashStats').innerHTML='';$('attention').innerHTML='<div class="empty">Nothing to show.</div>';
+  loadAbout(job);
   if(!TERMINAL.includes(job.status)){note.style.display='block';note.innerHTML=`This run is still going (${esc(job.stage||job.status)}). <a href="#/live">Watch it live</a>.`;return;}
   if(job.status!=='done'){note.style.display='block';note.textContent=`This run ${label(job.status)}${job.error?': '+job.error.slice(-400):'.'}`;return;}
   let d;try{d=await getReport(job.id);}catch(e){note.style.display='block';note.textContent=e.message;return;}
