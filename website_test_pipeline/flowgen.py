@@ -179,6 +179,9 @@ def _step_verify(step: dict, effect: str | None, path_after: str | None, var: st
     if effect == "navigates" and path_after:
         return f"expect(page).to_have_url(re.compile({_re_lit(_url_regex(path_after))}))"
     if effect != "navigates" and step.get("kind") == "select":
+        # a named option must be the one that ended up selected; "some non-empty value" would pass for the wrong pick
+        if step.get("value"):
+            return f'expect({var}.locator("option:checked")).to_have_text({_lit(str(step["value"]))})'
         return f'expect({var}).not_to_have_value("")'
     if effect != "navigates" and step.get("kind") == "fill" and is_ref(step.get("value")):
         return f'expect({var}).not_to_have_value("")'          # never compare against (or print) a secret

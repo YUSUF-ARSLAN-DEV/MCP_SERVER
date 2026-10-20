@@ -294,3 +294,17 @@ def test_a_control_that_only_appears_after_the_action_can_be_asserted_when_the_r
     flow["observed"]["new_controls"] = ["a:Cart, 1 item"]                         # a link's role is not certain from its tag
     source, reason = emit_flow_spec(flow, [_inventory(controls=[SEARCH])])
     assert source is None and "nothing stable to assert" in reason
+
+
+def test_a_select_step_asserts_the_named_option_ended_up_selected_not_just_some_value():
+    source, reason = emit_flow_spec(_flow(), [_inventory(controls=[SELECT, SEARCH])])
+    assert reason == ""
+    assert "option:checked" in source and "to_have_text('Afghanistan')" in source
+    assert 'not_to_have_value("")' not in source
+
+
+def test_a_select_step_with_no_named_option_still_asserts_a_value_was_chosen():
+    flow = _flow()
+    flow["steps"][0]["value"] = None
+    source, reason = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
+    assert reason == "" and 'not_to_have_value("")' in source
