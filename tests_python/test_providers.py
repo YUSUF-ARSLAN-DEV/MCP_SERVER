@@ -105,6 +105,9 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.seen.append(("GET", self.path, {k.lower(): v for k, v in self.headers.items()}))
+        if self.path.startswith("/v1beta/models"):
+            return self._send(200, {"models": [{"name": "models/served-1", "supportedGenerationMethods": ["generateContent"]},
+                                               {"name": "models/served-2"}, {"name": "models/embed-only", "supportedGenerationMethods": ["embedContent"]}]})
         self._send(200, {"data": [{"id": "served-1"}, {"id": "served-2"}]})
 
     def do_POST(self):
@@ -113,7 +116,9 @@ class _Handler(BaseHTTPRequestHandler):
         if _Handler.fail_first:
             _Handler.fail_first = False
             return self._send(503, {"error": "busy"})
-        if self.path.endswith("/v1/messages"):
+        if ":generateContent" in self.path:
+            self._send(200, {"candidates": [{"content": {"parts": [{"text": "pondering", "thought": True}, {"text": "gemini says hi"}]}}]})
+        elif self.path.endswith("/v1/messages"):
             self._send(200, {"type": "message", "content": [{"type": "text", "text": "claude says hi"}]})
         else:
             self._send(200, {"choices": [{"message": {"content": "openai says hi"}}]})
@@ -155,3 +160,58 @@ def test_model_check_asks_each_provider_where_it_lists_models(server):
     assert models[0][1] == "/v1/models" and "authorization" in models[0][2]
     assert models[1][1] == "/v1/models" and models[1][2].get("x-api-key") == "k"
     assert check_model(_settings(model="served-2", api_url=server + "/v1/chat/completions")) is None
+
+
+# ---------------------------------------------------------------- Google (Gemini)
+
+def _google(**over):
+    return _settings(**{"model_provider": "google", "api_url": "", "model": "gemini-2.5-flash", **over})
+
+
+def test_google_request_puts_the_model_in_the_url_the_key_in_a_header_and_system_aside():
+    url, headers, body = get_provider("google").request(_google(), "hello", "be brief", [PNG])
+    sent = json.loads(body)
+    assert url == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    assert headers["x-goog-api-key"] == "k" and "k" not in url and "Authorization" not in headers
+    assert sent["systemInstruction"] == {"parts": [{"text": "be brief"}]}
+    assert sent["contents"][0]["parts"][0] == {"text": "hello"}
+    assert sent["contents"][0]["parts"][1] == {"inlineData": {"mimeType": "image/png", "data": "iVBORw0KGgo="}}
+    assert sent["generationConfig"]["maxOutputTokens"] == 3072 and sent["generationConfig"]["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+def test_google_leaves_thinking_alone_for_models_that_cannot_turn_it_off():
+    for model, on in (("gemini-2.5-pro", False), ("models/gemini-2.5-flash-lite", True), ("gemini-2.0-flash", False)):
+        _, _, body = get_provider("google").request(_google(model=model), "p", "s", None)
+        assert ("thinkingConfig" in json.loads(body)["generationConfig"]) is on
+    _, _, body = get_provider("google").request(_google(model_thinking="default"), "p", "s", None)
+    assert "thinkingConfig" not in json.loads(body)["generationConfig"]
+
+
+@pytest.mark.parametrize("given", ["", "https://generativelanguage.googleapis.com/", "https://generativelanguage.googleapis.com/v1beta"])
+def test_google_accepts_the_default_host_or_a_v1beta_root(given):
+    url, _, _ = get_provider("google").request(_google(api_url=given, model="models/gemini-x"), "p", "s", None)
+    assert url == "https://generativelanguage.googleapis.com/v1beta/models/gemini-x:generateContent"
+
+
+def test_google_needs_a_key_skips_thought_parts_and_says_why_a_reply_is_empty():
+    google = get_provider("google")
+    assert google.problems(_google(api_key="")) and google.problems(_google()) == []
+    assert google.reply_text({"candidates": [{"content": {"parts": [{"text": "hmm", "thought": True}, {"text": "answer"}]}}]}, "") == "answer"
+    with pytest.raises(ModelError, match="reason=SAFETY"):
+        google.reply_text({"candidates": [{"finishReason": "SAFETY"}]}, "")
+    with pytest.raises(ModelError, match="reason=PROHIBITED_CONTENT"):
+        google.reply_text({"promptFeedback": {"blockReason": "PROHIBITED_CONTENT"}}, "")
+    with pytest.raises(ModelError, match="reasoning without final content"):
+        google.reply_text({"candidates": [{"content": {"parts": [{"text": "hmm", "thought": True}]}}]}, "")
+
+
+def test_model_client_talks_gemini_to_a_real_server(server):
+    client = ModelClient(_google(api_url=server), logging.getLogger("t"))
+    assert client.generate("p", "s", images=[PNG]) == "gemini says hi"
+    method, path, headers, body = _Handler.seen[0]
+    assert path == "/v1beta/models/gemini-2.5-flash:generateContent" and headers["x-goog-api-key"] == "k"
+
+
+def test_model_check_lists_gemini_models_without_the_models_prefix_and_only_those_that_generate(server):
+    assert check_model(_google(model="ghost", api_url=server)).endswith("served-1, served-2")
+    assert check_model(_google(model="models/served-1", api_url=server)) is None

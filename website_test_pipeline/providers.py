@@ -5,12 +5,14 @@ optional images), how to pull the reply text out of the response, where to ask w
 settings it cannot work without. ModelClient (llm.py) owns everything that is the same for every API - retries,
 backoff, logging, error diagnosis, stripping leaked reasoning.
 
-Choose one with MODEL_PROVIDER (default "openai", which is the chat-completions shape that OpenAI itself, vLLM,
-LM Studio, Ollama, llama.cpp and most hosted gateways speak). A new API is one subclass plus register().
+Choose one with MODEL_PROVIDER: "openai" (default; the chat-completions shape that OpenAI itself, vLLM, LM Studio,
+Ollama, llama.cpp and most hosted gateways speak), "anthropic" (Claude Messages API) or "google" (Gemini API).
+A new API is one subclass plus register().
 """
 from __future__ import annotations
 import json
 import re
+from urllib.parse import quote
 
 DEFAULT_PROVIDER = "openai"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -119,6 +121,62 @@ class Anthropic(Provider):
         return self._root(s.api_url) + "/v1/models", self._headers(s)
 
 
+class Google(Provider):
+    """Gemini's generateContent API. API_URL may be left as the default host; MODEL_NAME is the Gemini model id and goes
+    into the URL (a leading "models/" is tolerated). The key travels in a header, never in the URL."""
+    name = "google"
+    DEFAULT_ROOT = "https://generativelanguage.googleapis.com"
+
+    def problems(self, s):
+        return [] if s.api_key else ["MODEL_PROVIDER=google needs API_KEY (a Google AI Studio / Gemini API key)"]
+
+    @classmethod
+    def _root(cls, api_url: str) -> str:
+        url = (api_url or cls.DEFAULT_ROOT).rstrip("/")
+        for tail in ("/v1beta", "/v1"):
+            if url.endswith(tail):
+                return url[: -len(tail)]
+        return url
+
+    def _headers(self, s) -> dict:
+        return {"Content-Type": "application/json", "x-goog-api-key": s.api_key}
+
+    @staticmethod
+    def _part(data_url: str) -> dict:
+        match = re.match(r"data:([\w.+/-]+);base64,(.+)$", data_url or "", re.S)
+        if not match:
+            raise ModelError("an image must be a base64 data URL (data:image/png;base64,...)")
+        return {"inlineData": {"mimeType": match.group(1), "data": match.group(2)}}
+
+    def request(self, s, prompt, system, images):
+        model = (s.model or "").removeprefix("models/")
+        config = {"temperature": 0.1, "maxOutputTokens": getattr(s, "model_max_tokens", 3072)}
+        if getattr(s, "model_thinking", "off") == "off" and re.search(r"gemini-2\.5-flash", model):
+            config["thinkingConfig"] = {"thinkingBudget": 0}     # 2.5 Flash can skip thinking; Pro cannot, so it is left alone
+        body = {"systemInstruction": {"parts": [{"text": system}]},
+                "contents": [{"role": "user", "parts": [{"text": prompt}, *(self._part(u) for u in images or [])]}],
+                "generationConfig": config}
+        return f"{self._root(s.api_url)}/v1beta/models/{quote(model, safe='')}:generateContent", self._headers(s), json.dumps(body).encode()
+
+    def reply_text(self, data, raw):
+        candidates = data.get("candidates") or []
+        parts = ((candidates[0].get("content") or {}).get("parts") or []) if candidates else []
+        text = "".join(p.get("text", "") for p in parts if isinstance(p, dict) and not p.get("thought"))
+        if not text.strip():
+            why = (data.get("promptFeedback") or {}).get("blockReason") or (candidates[0].get("finishReason") if candidates else "")
+            if any(isinstance(p, dict) and p.get("thought") for p in parts):
+                raise ModelError("Model returned reasoning without final content", body=raw[:1000])
+            raise ModelError(f"Model response had no usable content; keys={','.join(data.keys())}" + (f"; reason={why}" if why else ""), body=raw[:1000])
+        return text
+
+    def models_request(self, s):
+        return self._root(s.api_url) + "/v1beta/models?pageSize=1000", self._headers(s)
+
+    def model_ids(self, data):
+        return [m["name"].removeprefix("models/") for m in data.get("models", [])
+                if isinstance(m, dict) and m.get("name") and "generateContent" in (m.get("supportedGenerationMethods") or ["generateContent"])]
+
+
 PROVIDERS: dict[str, Provider] = {}
 
 
@@ -129,6 +187,7 @@ def register(provider: Provider) -> Provider:
 
 register(OpenAICompatible())
 register(Anthropic())
+register(Google())
 
 
 def names() -> list[str]:

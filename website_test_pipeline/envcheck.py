@@ -39,6 +39,6 @@ def check_model(settings, fetch=_fetch_model_ids, timeout: float = 10.0) -> str 
         ids = fetch(url, headers, timeout, provider)
     except Exception:
         return None
-    if not ids or settings.model in ids:
+    if not ids or settings.model.removeprefix("models/") in ids:
         return None
     return f"MODEL_NAME={settings.model!r} is not served by {settings.api_url}; it serves: {', '.join(ids)}"
