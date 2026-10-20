@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smoke Tester – UI Draft</title>
+<style>
+:root{
+  --bg:#f6f7f9;--panel:#fff;--ink:#14181f;--mute:#5d6673;--line:#e1e5ea;--accent:#2f5bea;--accent-ink:#fff;
+  --go:#127a43;--go-bg:#e3f4ea;--cond:#9a5b00;--cond-bg:#fdf0d5;--nogo:#b3261e;--nogo-bg:#fbe4e2;
+  --info:#2f5bea;--info-bg:#e5ecfd;--idle:#5d6673;--idle-bg:#eceff3;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1217;--panel:#171b22;--ink:#e8ebf0;--mute:#98a1ae;--line:#2a313b;--accent:#6c8cff;--accent-ink:#0b0e14;
+  --go:#52d28b;--go-bg:#12301f;--cond:#f2b654;--cond-bg:#35280f;--nogo:#ff8a80;--nogo-bg:#3a1714;
+  --info:#8aa4ff;--info-bg:#1b2442;--idle:#98a1ae;--idle-bg:#222832;}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.app{display:grid;grid-template-columns:220px 1fr;min-height:100vh}
+nav{background:var(--panel);border-right:1px solid var(--line);padding:16px 12px;position:sticky;top:0;height:100vh}
+nav h1{font-size:15px;margin:4px 8px 16px}
+nav h1 small{display:block;color:var(--mute);font-weight:400;font-size:11px}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;color:var(--ink);padding:8px 10px;border-radius:6px;font:inherit;cursor:pointer}
+nav button:hover{background:var(--idle-bg)}
+nav button.on{background:var(--info-bg);color:var(--info);font-weight:600}
+nav .site{margin:18px 8px 6px;font-size:11px;color:var(--mute);text-transform:uppercase;letter-spacing:.05em}
+nav select{width:calc(100% - 16px);margin:0 8px}
+main{padding:24px 28px;max-width:1150px;width:100%}
+h2{margin:0 0 4px;font-size:20px}
+.sub{color:var(--mute);margin:0 0 20px}
+h3{font-size:14px;margin:0 0 10px}
+.view{display:none}.view.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.stat b{display:block;font-size:24px;line-height:1.2}
+.stat span{color:var(--mute);font-size:12px}
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600;white-space:nowrap}
+.go{background:var(--go-bg);color:var(--go)}.cond{background:var(--cond-bg);color:var(--cond)}
+.nogo{background:var(--nogo-bg);color:var(--nogo)}.info{background:var(--info-bg);color:var(--info)}.idle{background:var(--idle-bg);color:var(--idle)}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--mute);font-weight:600}
+tr:last-child td{border-bottom:0}
+.btn{background:var(--accent);color:var(--accent-ink);border:0;border-radius:6px;padding:8px 14px;font:inherit;font-weight:600;cursor:pointer}
+.btn.sec{background:var(--idle-bg);color:var(--ink)}
+.btn.sm{padding:3px 10px;font-size:12px}
+label{display:block;font-weight:600;margin:12px 0 4px}
+label small{font-weight:400;color:var(--mute)}
+input,textarea,select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+textarea{min-height:90px;resize:vertical}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.verdict{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.verdict .big{font-size:26px;font-weight:800;padding:8px 18px;border-radius:8px}
+.trigger{color:var(--mute)}
+.stages{display:flex;gap:0;flex-wrap:wrap;margin:8px 0 4px}
+.stage{flex:1 1 120px;padding:10px;border:1px solid var(--line);margin-left:-1px;background:var(--panel)}
+.stage small{display:block;color:var(--mute)}
+.stage.done{border-top:3px solid var(--go)}.stage.run{border-top:3px solid var(--accent)}.stage.wait{border-top:3px solid var(--line)}
+.bar{height:8px;background:var(--idle-bg);border-radius:4px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.notice{border-left:4px solid var(--cond);background:var(--cond-bg);padding:10px 14px;border-radius:6px;margin-bottom:16px}
+.honest{color:var(--mute);font-size:12px;border-top:1px dashed var(--line);padding-top:10px;margin-top:20px}
+.tabs{display:flex;gap:4px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button{background:none;border:1px solid var(--line);border-radius:99px;padding:3px 12px;color:var(--ink);cursor:pointer;font:inherit}
+.tabs button.on{background:var(--ink);color:var(--bg)}
+.shot{width:90px;height:56px;border-radius:4px;background:repeating-linear-gradient(45deg,var(--idle-bg),var(--idle-bg) 6px,var(--line) 6px,var(--line) 12px);display:inline-block}
+code{background:var(--idle-bg);padding:1px 5px;border-radius:4px;font-size:12px}
+.overlay{position:fixed;inset:0;background:rgba(10,14,20,.6);display:none;align-items:center;justify-content:center;padding:16px;z-index:50}
+.overlay.on{display:flex}
+.modal{background:var(--panel);border:1px solid var(--line);border-radius:12px;width:100%;max-width:460px;padding:20px;box-shadow:0 20px 50px rgba(0,0,0,.35);max-height:90vh;overflow:auto}
+.modal h3{font-size:17px;margin:0 0 4px}
+.modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+.modal .err{color:var(--nogo);font-size:12px;min-height:16px;margin-top:4px}
+.captcha{background:var(--idle-bg);border:1px dashed var(--line);border-radius:8px;height:90px;display:flex;align-items:center;justify-content:center;color:var(--mute);margin:10px 0}
+.timer{font-size:28px;font-weight:800;font-variant-numeric:tabular-nums}
+.timer.low{color:var(--nogo)}
+.steps{display:flex;gap:6px;margin:10px 0}
+.steps span{flex:1;height:4px;border-radius:2px;background:var(--line)}.steps span.on{background:var(--accent)}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}
+.tile{border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg);cursor:pointer;padding:0;text-align:left;color:var(--ink);font:inherit}
+.tile .img{height:110px;background:repeating-linear-gradient(45deg,var(--idle-bg),var(--idle-bg) 8px,var(--line) 8px,var(--line) 16px)}
+.tile div.cap{padding:8px 10px}.tile small{color:var(--mute);display:block}
+.dl{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.dl:last-child{border-bottom:0}.dl .ico{width:36px;height:36px;border-radius:8px;background:var(--info-bg);color:var(--info);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px}
+.dl .meta{flex:1}.dl .meta small{color:var(--mute);display:block}
+.lightbox .modal{max-width:900px}
+.lightbox .big-shot{height:420px;border-radius:8px;background:repeating-linear-gradient(45deg,var(--idle-bg),var(--idle-bg) 12px,var(--line) 12px,var(--line) 24px);display:flex;align-items:center;justify-content:center;color:var(--mute)}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
+.toast.on{opacity:1}
+@media (max-width:760px){.app{grid-template-columns:1fr}nav{position:static;height:auto;display:flex;flex-wrap:wrap;gap:4px}nav h1,nav .site,nav select{display:none}nav button{width:auto}main{padding:16px}}
+</style>
+</head>
+<body>
+<div class="app">
+<nav>
+  <h1>Smoke Tester<small>AI-assisted web smoke testing</small></h1>
+  <button data-v="dash" class="on">Overview</button>
+  <button data-v="new">New run</button>
+  <button data-v="run">Live run</button>
+  <button data-v="report">Report</button>
+  <button data-v="flows">Journeys</button>
+  <button data-v="defects">Defect ledger</button>
+  <button data-v="settings">Site settings</button>
+  <div class="site">Site</div>
+  <select><option>staging.example.com</option><option>shop.example.com</option><option>+ Add site…</option></select>
+</nav>
+<main>
+
+<!-- OVERVIEW -->
+<section class="view on" id="dash">
+  <h2>Overview</h2>
+  <p class="sub">Latest state of staging.example.com across runs. Sample data for layout only.</p>
+  <div class="card verdict">
+    <span class="big nogo">NO-GO</span>
+    <div><b>Run #14 · 2026-10-19 22:41</b><div class="trigger">NO-GO: 1 open defect not confirmed fixed (DEF-001)</div></div>
+    <button class="btn" style="margin-left:auto" onclick="go('report')">Open report</button>
+  </div>
+  <div class="grid g4" style="margin-bottom:16px">
+    <div class="stat"><b>41</b><span>tests ran (30 page + 11 flow)</span></div>
+    <div class="stat"><b>37 / 4</b><span>passed / failed</span></div>
+    <div class="stat"><b>2</b><span>open defects</span></div>
+    <div class="stat"><b>72%</b><span>requirements coverage (min 60%)</span></div>
+    <div class="stat"><b>3</b><span>flaky tests (sliding window)</span></div>
+    <div class="stat"><b>1</b><span>quarantined</span></div>
+  </div>
+  <div class="grid g2">
+    <div class="card"><h3>Recent runs</h3>
+      <table><tr><th>Run</th><th>When</th><th>Pass</th><th>Verdict</th></tr>
+      <tr><td>#14</td><td>Oct 19</td><td>37/41</td><td><span class="pill nogo">NO-GO</span></td></tr>
+      <tr><td>#13</td><td>Oct 17</td><td>38/40</td><td><span class="pill cond">CONDITIONAL GO</span></td></tr>
+      <tr><td>#12</td><td>Oct 14</td><td>40/40</td><td><span class="pill go">GO</span></td></tr></table></div>
+    <div class="card"><h3>Needs attention</h3>
+      <table>
+      <tr><td><span class="pill nogo">High</span></td><td>DEF-001 · Checkout button unresponsive</td></tr>
+      <tr><td><span class="pill info">Needs a person</span></td><td>Contact form requires a CAPTCHA</td></tr>
+      <tr><td><span class="pill idle">Stale</span></td><td>Journey “apply a filter” failed twice in a row</td></tr>
+      <tr><td><span class="pill cond">Candidate</span></td><td>3 journeys awaiting verification</td></tr></table></div>
+  </div>
+</section>
+
+<!-- NEW RUN -->
+<section class="view" id="new">
+  <h2>New run</h2>
+  <p class="sub">Point it at a site. It discovers pages, writes smoke tests, and verifies journeys in a real browser.</p>
+  <div class="grid g2">
+  <div class="card">
+    <h3>Target</h3>
+    <label>Site URL</label><input value="https://staging.example.com">
+    <div class="row"><div style="flex:1"><label>Max pages to crawl</label><input type="number" value="30"></div>
+    <div style="flex:1"><label>Buttons to probe per page</label><input type="number" value="5"></div></div>
+    <label>Login <small>(for pages behind a login wall)</small></label>
+    <select><option>None — public pages only</option><option>Authenticate in a pop-up (cli auth)</option></select>
+    <label>Requirements <small>(plain sentences or upload a document; enables coverage gating)</small></label>
+    <textarea placeholder="Visitors can search for a product.&#10;Visitors can add an item to the basket."></textarea>
+    <p><input type="file"></p>
+  </div>
+  <div class="card">
+    <h3>User journeys</h3>
+    <label>Describe each journey in plain English <small>(one per line)</small></label>
+    <textarea style="min-height:140px">Pick a country and a channel, then search
+Open the pricing page and switch to annual billing</textarea>
+    <p class="sub" style="margin:6px 0">Journeys start as <span class="pill idle">candidate</span>. A test is only written after a real browser run confirms every step. Nothing is invented: each control must exist on an explored page.</p>
+    <label>Run mode</label>
+    <select><option>Full pipeline (explore → generate → validate → execute → report)</option><option>Explore only</option><option>Re-run existing tests</option><option>Verify journeys only</option></select>
+    <label>Unattended?</label>
+    <select><option>Yes — skip CAPTCHA steps, report “Needs a person”</option><option>No — pause and show a window for me to solve it</option></select>
+    <p><button class="btn" onclick="go('run')">Start run</button> <button class="btn sec">Save as preset</button></p>
+  </div>
+  </div>
+</section>
+
+<!-- LIVE RUN -->
+<section class="view" id="run">
+  <h2>Run #15 <span class="pill info">in progress</span></h2>
+  <p class="sub">staging.example.com · started 14:02 · pipeline stages</p>
+  <div class="stages">
+    <div class="stage done">Crawl<small>30 pages</small></div>
+    <div class="stage done">Explore<small>30 / 30 · 1,420 controls</small></div>
+    <div class="stage done">Generate<small>28 specs, 2 errors isolated</small></div>
+    <div class="stage done">Validate<small>26 pass · 2 regenerated</small></div>
+    <div class="stage run">Execute<small>17 / 41 tests</small></div>
+    <div class="stage wait">Report<small>waiting</small></div>
+  </div>
+  <div class="bar"><i style="width:48%"></i></div>
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card"><h3>Live log</h3>
+      <pre style="margin:0;white-space:pre-wrap;font-size:12px;color:var(--mute)">14:09:11  test_checkout_flow  PASS
+14:09:14  test_search_filters  retry once (timeout) → PASS
+14:09:20  test_contact_form    SKIPPED · needs a person (CAPTCHA)
+14:09:33  test_pricing_toggle  FAIL · screenshot saved</pre></div>
+    <div class="card"><h3>Waiting on a person</h3>
+      <p>The contact form needs a CAPTCHA. A window opens with a 3-minute countdown; the code is never logged.</p>
+      <button class="btn" onclick="openCaptcha()">Open CAPTCHA window</button> <button class="btn sec" onclick="toast('Skipped: reported as Needs a person')">Skip</button>
+      <p class="sub" style="margin-top:12px"><button class="btn sec sm">Cancel run</button></p></div>
+  </div>
+</section>
+
+<!-- REPORT -->
+<section class="view" id="report">
+  <div class="row"><div><h2>Release report · Run #14</h2><p class="sub">Every figure passed ~20 cross-checks before this was rendered.</p></div>
+  <button class="btn sec" style="margin-left:auto" onclick="downloadFile('Release_Report_Run14.docx')">Download .docx</button></div>
+  <div class="card verdict">
+    <span class="big nogo">NO-GO</span>
+    <div><b>Verdict trigger</b><div class="trigger">1 open defect not confirmed fixed (DEF-001)</div>
+    <div class="trigger" style="font-size:12px">Rule: open High/Critical → NO-GO · other open defect or unverified journey → CONDITIONAL GO · coverage below 60% caps GO</div></div>
+  </div>
+  <div class="grid g4" style="margin-bottom:16px">
+    <div class="stat"><b>41</b><span>ran = 30 page + 11 flow</span></div>
+    <div class="stat"><b>90%</b><span>pass rate (excl. 1 quarantined)</span></div>
+    <div class="stat"><b>72%</b><span>requirements coverage</span></div>
+    <div class="stat"><b>9 / 11</b><span>journeys verified</span></div>
+  </div>
+  <div class="tabs" id="rtabs">
+    <button class="on" data-t="r-def">Defects</button><button data-t="r-delta">Changes since last run</button><button data-t="r-cov">Coverage</button><button data-t="r-ev">Evidence</button><button data-t="r-dl">Downloads</button>
+  </div>
+  <div class="card rt" id="r-def">
+    <table><tr><th>ID</th><th>Severity</th><th>Test</th><th>Owner</th><th>Status</th></tr>
+    <tr><td>DEF-001</td><td><span class="pill nogo">High</span><br><small>set 2026-10-12: blocks checkout</small></td><td>checkout_flow</td><td>Payments</td><td><span class="pill nogo">Open</span> · failed run 14</td></tr>
+    <tr><td>DEF-002</td><td><span class="pill cond">Medium</span><br><small>set 2026-10-14: filter ignored</small></td><td>search_filters</td><td>Default</td><td><span class="pill cond">Open</span> · clean 2 of 3</td></tr>
+    <tr><td>—</td><td>—</td><td>contact_form</td><td>—</td><td><span class="pill idle">QUARANTINED</span> · unstable</td></tr></table>
+  </div>
+  <div class="card rt" id="r-delta" style="display:none">
+    <table><tr><th>Test</th><th>Change</th><th>Reason</th></tr>
+    <tr><td>pricing_toggle</td><td>Added</td><td>New journey verified</td></tr>
+    <tr><td>old_banner</td><td>Removed</td><td>Page no longer discovered</td></tr>
+    <tr><td>search_filters</td><td>Category changed</td><td>Flaky → Application defect</td></tr></table>
+  </div>
+  <div class="card rt" id="r-cov" style="display:none">
+    <table><tr><th>Page</th><th>Controls</th><th>Untouched</th></tr>
+    <tr><td>/checkout</td><td>24</td><td>6 (promo code, gift note, …)</td></tr>
+    <tr><td>/pricing</td><td>18</td><td>2</td></tr></table>
+  </div>
+  <div class="card rt" id="r-ev" style="display:none">
+    <div class="row" style="margin-bottom:12px"><select id="evFilter" style="width:auto" onchange="renderGallery()"><option value="all">All tests</option><option value="fail">Failed only</option></select>
+    <span class="sub" style="margin:0">Click a screenshot to enlarge. Files are stored in this run's evidence folder.</span></div>
+    <div class="gallery" id="gallery"></div>
+  </div>
+  <div class="card rt" id="r-dl" style="display:none">
+    <div id="dlList"></div>
+  </div>
+  <p class="honest">Structural and mechanical checks only — this report does not know what the site is supposed to do beyond the supplied journeys and requirements.</p>
+</section>
+
+<!-- JOURNEYS -->
+<section class="view" id="flows">
+  <h2>Journeys</h2>
+  <p class="sub">Plain-English user journeys. Only verified or approved journeys get a test.</p>
+  <div class="card"><div class="row"><input style="flex:1;min-width:240px" placeholder="Add a journey, e.g. “add an item to the basket”"><button class="btn">Add</button></div></div>
+  <div class="card">
+  <table><tr><th>Journey</th><th>Status</th><th>History</th><th>Vision opinion</th><th></th></tr>
+  <tr><td>Pick a country and channel, search</td><td><span class="pill go">verified</span></td><td>Healed once (old selector kept)</td><td>Looks correct <small>(opinion only)</small></td><td><button class="btn sm sec">Approve</button> <button class="btn sm sec">Reject</button></td></tr>
+  <tr><td>Switch to annual billing</td><td><span class="pill info">approved</span></td><td>Locked: never auto-rewritten</td><td>—</td><td><button class="btn sm sec">Unlock</button></td></tr>
+  <tr><td>Apply a filter</td><td><span class="pill idle">stale</span></td><td>2 failed runs in a row</td><td>Results empty</td><td><button class="btn sm">Re-verify</button></td></tr>
+  <tr><td>Add item to basket</td><td><span class="pill cond">candidate</span></td><td>Not yet verified</td><td>—</td><td><button class="btn sm">Verify</button></td></tr></table>
+  </div>
+  <p class="honest">The vision opinion never changes a journey’s status. Status comes only from the deterministic browser run. Login/payment journeys are not generated by the AI.</p>
+</section>
+
+<!-- DEFECTS -->
+<section class="view" id="defects">
+  <h2>Defect ledger</h2>
+  <p class="sub">Defects persist across runs. Severity is frozen at first confirmation. Auto-closes after 3 consecutive clean runs.</p>
+  <div class="card">
+  <table><tr><th>ID</th><th>Title</th><th>Severity (frozen)</th><th>Clean runs</th><th>Audit trail</th><th></th></tr>
+  <tr><td>DEF-001</td><td>Checkout button unresponsive</td><td><span class="pill nogo">High</span><br><small>set 2026-10-12: blocks checkout</small></td><td>0 / 3</td><td>Opened run 11 · reproduced run 14</td><td><button class="btn sm sec" onclick="closeDef(this)">Close…</button></td></tr>
+  <tr><td>DEF-002</td><td>Filter ignored on /search</td><td><span class="pill cond">Medium</span><br><small>set 2026-10-14: workaround exists</small></td><td>2 / 3</td><td>Opened run 12</td><td><button class="btn sm sec" onclick="closeDef(this)">Close…</button></td></tr>
+  <tr><td>DEF-000</td><td>Logo link 404</td><td><span class="pill idle">Low</span></td><td>3 / 3</td><td>Auto-closed run 9 · reopened none</td><td><span class="pill go">Closed</span></td></tr></table>
+  </div>
+  <p class="honest">Manual close requires a reason and writes a dated, attributed audit entry (same as <code>cli defects close &lt;key&gt; --reason …</code>).</p>
+</section>
+
+<!-- SETTINGS -->
+<section class="view" id="settings">
+  <h2>Site settings</h2>
+  <p class="sub">Per-site adaptation without code changes.</p>
+  <div class="grid g2">
+  <div class="card"><h3>Release rule</h3>
+    <label>Minimum requirements coverage <small>(below this, GO is capped at CONDITIONAL GO)</small></label><input type="number" value="60">
+    <label>Flaky-detection window <small>(runs)</small></label><input type="number" value="5">
+    <label>LLM endpoint</label><select><option>llm-1.iceroad.net · qwen3-coder</option></select></div>
+  <div class="card"><h3>Owner routing <small>(owners.json)</small></h3>
+    <table><tr><th>Category</th><th>Owner</th></tr>
+    <tr><td>Default</td><td><input value="QA team"></td></tr>
+    <tr><td>Checkout</td><td><input value="Payments"></td></tr></table></div>
+  <div class="card"><h3>Heuristics <small>(heuristics.json)</small></h3>
+    <label>Content words</label><input value="Article, Bericht, تقرير">
+    <label>Pick verbs</label><input value="select, choose, wählen">
+    <label>Menu selectors</label><input value="nav .menu > a">
+    <label>Loader hints</label><input value=".spinner, [aria-busy=true]"></div>
+  <div class="card"><h3>Authentication</h3>
+    <p>Login-wall detection with a 2-phase pop-up for credentials.</p><button class="btn sec" onclick="openLogin()">Re-authenticate</button></div>
+  </div>
+  <p><button class="btn">Save</button></p>
+</section>
+
+</main>
+</div>
+<script>
+const nav=[...document.querySelectorAll('nav button')];
+function go(id){
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===id));
+  nav.forEach(b=>b.classList.toggle('on',b.dataset.v===id));
+  scrollTo(0,0);
+}
+nav.forEach(b=>b.onclick=()=>go(b.dataset.v));
+document.querySelectorAll('#rtabs button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('#rtabs button').forEach(x=>x.classList.toggle('on',x===b));
+  document.querySelectorAll('.rt').forEach(c=>c.style.display=c.id===b.dataset.t?'block':'none');
+});
+</script>
+<div class="overlay" id="ov"><div class="modal" id="md" role="dialog" aria-modal="true"></div></div>
+<div class="toast" id="toast"></div>
+<script>
+let timer=null,onClose=null;
+const ov=document.getElementById('ov'),md=document.getElementById('md');
+function openModal(html,wide){md.innerHTML=html;ov.classList.toggle('lightbox',!!wide);ov.classList.add('on');const f=md.querySelector('input,textarea,button');f&&f.focus();}
+function closeModal(){clearInterval(timer);ov.classList.remove('on');onClose&&onClose();onClose=null;}
+ov.addEventListener('mousedown',e=>{if(e.target===ov)closeModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ov.classList.contains('on'))closeModal();});
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),2600);}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* CAPTCHA: 3-minute countdown, code is never logged */
+function openCaptcha(){
+  let left=180;
+  openModal(`<h3>Human input needed</h3>
+  <p class="sub" style="margin:0">The contact form on /contact requires a CAPTCHA. Solve it within the time limit or the step is reported as <b>Needs a person</b> (not a failure).</p>
+  <div class="captcha">[ CAPTCHA widget shown here ]</div>
+  <label for="cap">Enter the code</label><input id="cap" autocomplete="off">
+  <div class="row" style="margin-top:12px"><span class="timer" id="tm">3:00</span><span class="sub" style="margin:0">remaining. The code is never logged.</span></div>
+  <div class="actions"><button class="btn sec" onclick="closeModal();toast('Skipped: Needs a person')">Skip</button><button class="btn" id="capok">Submit</button></div>`);
+  const tm=document.getElementById('tm');
+  const tick=()=>{const m=Math.floor(left/60),s=String(left%60).padStart(2,'0');tm.textContent=m+':'+s;tm.classList.toggle('low',left<=30);
+    if(left--<=0){closeModal();toast('Timed out: reported as Needs a person');}};
+  tick();timer=setInterval(tick,1000);
+  document.getElementById('capok').onclick=()=>{if(!document.getElementById('cap').value.trim())return;closeModal();toast('Submitted. Run resuming…');};
+}
+
+/* Login wall: 2-phase credential pop-up */
+function openLogin(){
+  const phase1=()=>{openModal(`<h3>Login required</h3><div class="steps"><span class="on"></span><span></span></div>
+  <p class="sub" style="margin:0">A login wall was detected at <code>staging.example.com/account</code>. Credentials are used only to open a browser session and are not saved in reports.</p>
+  <label for="lu">Username or email</label><input id="lu" autocomplete="username">
+  <label for="lp">Password</label><input id="lp" type="password" autocomplete="current-password">
+  <div class="err" id="le"></div>
+  <div class="actions"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" id="lnext">Sign in</button></div>`);
+  document.getElementById('lnext').onclick=()=>{
+    if(!document.getElementById('lu').value||!document.getElementById('lp').value){document.getElementById('le').textContent='Both fields are required.';return;}
+    phase2();};};
+  const phase2=()=>{openModal(`<h3>Confirm session</h3><div class="steps"><span class="on"></span><span class="on"></span></div>
+  <p class="sub" style="margin:0">Sign-in submitted. If the site asks for a one-time code, enter it now.</p>
+  <label for="lo">One-time code <small>(optional)</small></label><input id="lo" inputmode="numeric" autocomplete="one-time-code">
+  <div class="actions"><button class="btn sec" onclick="phase1()">Back</button><button class="btn" onclick="closeModal();toast('Session saved for this run')">Finish</button></div>`);};
+  phase1();
+}
+
+/* Close a defect: reason required, recorded in audit trail */
+let defBtn=null;
+function closeDef(btn){
+  defBtn=btn;const id=btn.closest('tr').children[0].textContent;
+  openModal(`<h3>Close ${esc(id)}</h3>
+  <p class="sub" style="margin:0">A reason is required. This writes a dated, attributed audit entry that shows in the report.</p>
+  <label for="rs">Reason</label><textarea id="rs" placeholder="e.g. Fixed in release 2.4, verified manually"></textarea>
+  <div class="err" id="re"></div>
+  <div class="actions"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" id="rok">Close defect</button></div>`);
+  document.getElementById('rok').onclick=()=>{
+    const r=document.getElementById('rs').value.trim();
+    if(!r){document.getElementById('re').textContent='A reason is required.';return;}
+    defBtn.outerHTML='<span class="pill go">Closed (manual)</span>';closeModal();toast('Closed with audit entry');};
+}
+
+/* Evidence gallery + lightbox */
+const evidence=[
+  {t:'checkout_flow',s:'fail',step:'Click “Place order”',note:'No navigation after click'},
+  {t:'checkout_flow',s:'fail',step:'Cart loaded',note:'Baseline before failure'},
+  {t:'search_filters',s:'pass',step:'Apply filter “Price”',note:'Results updated'},
+  {t:'pricing_toggle',s:'pass',step:'Switch to annual',note:'Price labels changed'},
+  {t:'contact_form',s:'pass',step:'Page loaded',note:'Quarantined test'},
+];
+function renderGallery(){
+  const f=document.getElementById('evFilter').value;
+  document.getElementById('gallery').innerHTML=evidence.map((e,i)=>({e,i})).filter(x=>f==='all'||x.e.s==='fail').map(({e,i})=>
+   `<button class="tile" onclick="openShot(${i})"><div class="img"></div><div class="cap"><b>${esc(e.t)}</b><small>${esc(e.step)}</small>
+   <span class="pill ${e.s==='fail'?'nogo':'go'}">${e.s==='fail'?'FAIL':'PASS'}</span></div></button>`).join('')||'<p class="sub">No failed tests.</p>';
+}
+function openShot(i){
+  const e=evidence[i];
+  openModal(`<div class="row"><h3 style="margin:0">${esc(e.t)} · ${esc(e.step)}</h3><button class="btn sec sm" style="margin-left:auto" onclick="closeModal()">Close</button></div>
+  <div class="big-shot" style="margin:12px 0">[ full-page screenshot ]</div>
+  <p class="sub" style="margin:0 0 10px">${esc(e.note)}</p>
+  <div class="row"><button class="btn sm" onclick="downloadFile('${esc(e.t)}_step${i+1}.png')">Download PNG</button>
+  <button class="btn sec sm" onclick="downloadFile('${esc(e.t)}_trace.zip')">Download trace</button>
+  <button class="btn sec sm" onclick="downloadFile('${esc(e.t)}_video.webm')">Download video</button>
+  <span style="margin-left:auto"><button class="btn sec sm" ${i===0?'disabled':''} onclick="openShot(${i-1})">Prev</button> <button class="btn sec sm" ${i===evidence.length-1?'disabled':''} onclick="openShot(${i+1})">Next</button></span></div>`,true);
+}
+
+/* Downloads panel */
+const files=[
+  ['DOCX','Release_Report_Run14.docx','Release report','186 KB'],
+  ['ZIP','evidence_run14.zip','All screenshots, traces, videos','42 MB'],
+  ['JSON','defect_ledger.json','Persistent defect ledger','12 KB'],
+  ['JSON','flow_ratings.json','Journey history (append-only)','8 KB'],
+  ['PY','generated_specs_run14.zip','Generated pytest specs','64 KB'],
+];
+document.getElementById('dlList').innerHTML=files.map(f=>
+ `<div class="dl"><div class="ico">${f[0]}</div><div class="meta"><b>${f[1]}</b><small>${f[2]} · ${f[3]}</small></div>
+ <button class="btn sec sm" onclick="downloadFile('${f[1]}')">Download</button></div>`).join('');
+function downloadFile(n){toast('Downloading '+n+' (demo: no file attached)');}
+renderGallery();
+</script>
+</body>
+</html>
