@@ -152,7 +152,9 @@ def validate_flow(raw: dict, index: dict, pages: set[str], linked: frozenset = f
         if to == _page_key(str(raw.get("start_path"))):
             return None, None, "outcome is the page the flow started on"
         if to not in pages and to not in linked:
-            return None, None, f"outcome page {to} is neither explored nor linked from an explored page"
+            return None, None, (f"outcome page {to} is neither explored nor linked from an explored page "
+                                f"(add its URL to the URL list and re-run explore; if it sits behind a sign-in, run `auth <url>` "
+                                f"once so the landing page is known)")
         outcome["to"] = to
     return steps, outcome, ""
 

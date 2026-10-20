@@ -54,6 +54,7 @@ def test_unexplored_page_and_outcome_are_rejected():
     assert "not explored" in r1[0][1]
     _, r2 = propose([_flow(outcome={"type": "navigates", "to_path": "/en/map"})], INVS, [])
     assert "neither explored nor linked" in r2[0][1]
+    assert "auth <url>" in r2[0][1]       # the refusal says what to do next, not just what is missing
     _, r3 = propose([_flow(outcome={"type": "explodes"})], INVS, [])
     assert "unknown outcome" in r3[0][1]
 
