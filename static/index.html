@@ -160,13 +160,8 @@ nav{display:flex;flex-direction:column}
     <h3>Model</h3>
     <label for="mMode">Which model writes and judges the tests?</label>
     <select id="mMode"></select>
-    <p class="sub" id="mNone" style="display:none;margin:8px 0 0">You have no saved models yet. <a href="#/models">Save one</a> to reuse it, or type a one-off below.</p>
-    <div id="mFields" style="display:none">
-      <label for="mUrl" id="mUrlLabel">API address</label><input id="mUrl" type="url" autocomplete="off">
-      <label for="mName">Model name</label><input id="mName" autocomplete="off" spellcheck="false">
-      <label for="mKey" id="mKeyLabel">API key</label><input id="mKey" type="password" autocomplete="off" spellcheck="false">
-      <p class="sub" id="mHint" style="margin:8px 0 0"></p>
-    </div>
+    <p class="sub" id="mNone" style="display:none;margin:8px 0 0"></p>
+    <p class="sub" id="mManage" style="margin:8px 0 0"><a href="#/models">Add or manage your models</a></p>
     <div class="err" id="mErr"></div>
   </div>
   <div class="card">
@@ -533,36 +528,25 @@ async function reloadModels(){
 }
 function paintModelChoices(){
   const sel=$('mMode');if(!sel)return;
-  const mine=S.models||[];let opts=mine.map(m=>`<option value="saved:${esc(m.id)}">${esc(m.name)} &mdash; ${esc(PROV[m.provider]||m.provider)}: ${esc(m.model)}</option>`).join('');
+  const mine=S.models||[];
+  let opts=mine.map(m=>`<option value="saved:${esc(m.id)}">${esc(m.name)} &mdash; ${esc(PROV[m.provider]||m.provider)}: ${esc(m.model)}</option>`).join('');
   if(S.serverModel)opts+="<option value=\"server\">The server's own model</option>";
-  opts+=Object.entries(PROV).map(([k,v])=>`<option value="${k}">One-off: ${esc(v)} (not saved)</option>`).join('');
-  sel.innerHTML=opts;
-  const last=memo.get().mode;
-  sel.value=[...sel.options].some(o=>o.value===last)?last:(mine[0]?'saved:'+mine[0].id:(S.serverModel?'server':'openai'));
-  $('mNone').style.display=(S.me&&!mine.length)?'block':'none';
-  paintModel();
+  sel.innerHTML=opts||'<option value="">No saved models</option>';
+  sel.disabled=!opts;
+  if(opts){const last=memo.get().mode;sel.value=[...sel.options].some(o=>o.value===last)?last:(mine[0]?'saved:'+mine[0].id:'server');}
+  const none=$('mNone');
+  none.style.display=opts?'none':'block';
+  none.innerHTML=S.me?'You have no saved models yet. <a href="#/models">Add one on the Models page</a>, then pick it here.'
+                     :'Models belong to an account. Sign out and create one, then add your model on the Models page.';
+  $('mErr').textContent='';
 }
-function paintModel(){
-  const mode=$('mMode').value,m=MODELS[mode];
-  $('mFields').style.display=m?'block':'none';$('mErr').textContent='';
-  if(!m)return;
-  $('mUrl').placeholder=m.url;$('mUrlLabel').textContent=m.urlLabel;$('mName').placeholder=m.name;
-  $('mKeyLabel').innerHTML='API key '+(m.keyNeeded?'':'<small>(optional)</small>');
-  $('mHint').textContent=m.hint+' The key is sent with this run only and is never saved.';
-  const saved=memo.get()[mode]||{};$('mUrl').value=saved.url||'';$('mName').value=saved.model||'';
-}
-$('mMode').onchange=()=>{const all=memo.get();all.mode=$('mMode').value;memo.set(all);paintModel();};
-/* what to add to the request for this run (a saved model's id, a one-off model, or nothing = the server's own); throws a sentence when something is missing */
+$('mMode').onchange=()=>{const all=memo.get();all.mode=$('mMode').value;memo.set(all);$('mErr').textContent='';};
+/* what to add to the request for this run: a saved model's id (or nothing, for the server's own when the operator allows it) */
 function modelChoice(){
   const mode=$('mMode').value;
   if(mode.startsWith('saved:')){const all=memo.get();all.mode=mode;memo.set(all);return {model_id:mode.slice(6)};}
-  const m=MODELS[mode];if(!m)return null;
-  const url=$('mUrl').value.trim(),model=$('mName').value.trim(),key=$('mKey').value.trim();
-  if(m.urlNeeded&&!url)throw new Error('Enter the API address of your server.');
-  if(!model)throw new Error('Enter the model name.');
-  if(m.keyNeeded&&!key)throw new Error('This provider needs an API key.');
-  const all=memo.get();all.mode=mode;all[mode]={url,model};memo.set(all);       /* never the key */
-  return {model:{provider:mode,model,api_url:url,api_key:key}};
+  if(mode==='server')return null;
+  throw new Error('Pick a saved model first. Add one on the Models page.');
 }
 
 /* ---------- the Models page ---------- */
@@ -625,7 +609,7 @@ $('nGo').onclick=async()=>{
   if($('nProbe').value!=='')options.probe_max=+$('nProbe').value;
   $('nGo').disabled=true;
   try{const body={url,options};if(choice)Object.assign(body,choice);
-    const job=await api('/api/jobs',{method:'POST',body});$('mKey').value='';
+    const job=await api('/api/jobs',{method:'POST',body});
     toast('Run queued.');await refreshJobs();location.hash='#/live';}
   catch(e){(/^Model address|API_KEY|chat-completions/.test(e.message)?$('mErr'):$('nErr')).textContent=e.message;}
   finally{$('nGo').disabled=false;}
