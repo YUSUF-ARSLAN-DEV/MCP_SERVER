@@ -2178,9 +2178,63 @@ def _warnings_section(document, warnings: list[str]) -> None:
         para.runs[0].font.color.rgb = RGBColor(0xB3, 0x26, 0x1A)
 
 
+_VERDICT_MEANING = {
+    "GO": "Nothing this run found stops a release.",
+    "CONDITIONAL GO": "No serious defect was found, but the open defect(s) below need fixing or the owner's acceptance.",
+    "NO-GO": "At least one serious defect was confirmed. Do not release on the strength of this run.",
+    policy.NO_VERDICT: "No test ran, so this run says nothing either way.",
+}
+_MAX_CONFIRMED = 8
+
+
+def _at_a_glance(document, run: RunReport, data: dict[str, Any]) -> None:
+    """The first page of the short report: what a manager needs, in plain words, and nothing else."""
+    counts = data["counts"]
+    recommendation = data["recommendation"]
+    trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=policy.requirements_backed_percent(data["requirements"]),
+                                     executed_tests=counts["executed_tests"])
+    document.add_paragraph(policy.defect_headline(counts["defects_found_this_run"], counts["defects_carried"]))
+    verdict = document.add_paragraph()
+    verdict.add_run(f"Release decision: {recommendation}").bold = True
+    verdict.add_run((f" ({trigger})" if trigger else "") + f". {_VERDICT_MEANING.get(recommendation, '')}")
+
+    document.add_heading("What was confirmed working", 2)
+    pages = [r for r in run.url_reports if r.total]
+    document.add_paragraph(f'{counts["passed"]} of {counts["executed_tests"]} checks passed, across {len(pages)} page(s).'
+                           if counts["executed_tests"] else "No check ran in this run.")
+    journeys = [_plain_flow_title(f.title) for f in run.tested_flows if f.passed]
+    for title in journeys[:_MAX_CONFIRMED]:
+        document.add_paragraph(title, style="List Bullet")
+    if len(journeys) > _MAX_CONFIRMED:
+        document.add_paragraph(f"... and {len(journeys) - _MAX_CONFIRMED} more journey(s), listed in the appendix.")
+    if not journeys:
+        document.add_paragraph("No user journey was confirmed from start to finish in this run.")
+
+    document.add_heading("What a person should look at", 2)
+    for condition in data["conditions"]:
+        document.add_paragraph(condition, style="List Bullet")
+    if not data["conditions"]:
+        document.add_paragraph("Nothing.")
+
+    document.add_heading("What this run did not cover", 2)
+    cov = data["coverage"]
+    gaps = []
+    if cov.get("controls_total"):
+        gaps.append(f'Journeys used {cov["controls_touched"]} of the {cov["controls_total"]} controls found on the pages; '
+                    "the rest were only checked for being present, not used.")
+    gaps.append("Other browsers and phone-size screens were not tested, and neither were speed or security.")
+    for gap in gaps:
+        document.add_paragraph(gap, style="List Bullet")
+    document.add_paragraph(policy.taxonomy_sentence(data["taxonomy"]) + " Every item is in the tables that follow; the evidence "
+                           f"(screenshots, test details, coverage) is in {APPENDIX_FILE}.")
+
+
 def _executive_summary_section(document, run: RunReport, report_data: dict[str, Any] | None = None, *, lean: bool = False) -> None:
     document.add_heading("Executive Summary", 1)
     data = report_data or _report_data(run, Path.cwd())
+    if lean:
+        _at_a_glance(document, run, data)
+        return
     counts = data["counts"]
     tax = data["taxonomy"]
     recommendation = data["recommendation"]
@@ -2329,6 +2383,20 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
     document.add_paragraph("Exit criteria: the conditions that move the current verdict to GO.")
     for criterion in data["exit_criteria"]:
         document.add_paragraph(criterion, style="List Bullet")
+    if lean:
+        to_do = [d for d in data["defects"] if d["category"] in {"defect", "triage"}]
+        if to_do:
+            document.add_paragraph("Actions, each with a named owner and a due date (ISO):")
+            table = _grid(document, ("Item", "Action", "Owner", "Due"))
+            _set_table_widths(table, (0.8, 3.4, 1.4, 0.9))
+            for d in to_do:
+                cells = table.add_row().cells
+                cells[0].text, cells[1].text, cells[2].text, cells[3].text = _display_id(d["id"]), _action_text(d), d["owner"], d["due"]
+        rest = len(data["defects"]) - len(to_do)
+        if rest:
+            document.add_paragraph(f"The other {rest} item(s) - journeys to look at, limitations and tooling issues - are in the "
+                                   f"tables above, each with an owner and a due date in {APPENDIX_FILE}.")
+        return
     if (run.app_build or {}).get("id") == "NOT CAPTURED":
         document.add_paragraph(
             "Recommendation to the site team: publish a build identifier (a response header, a <meta> tag, or a "
@@ -2376,7 +2444,7 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
                 "different person owns a given kind of work.")
 
 
-def _verify_document(document, data: dict[str, Any]) -> None:
+def _verify_document(document, data: dict[str, Any], *, coverage_in_appendix: bool = False) -> None:
     """Fail rather than emit a document whose IDs or counts do not reconcile.
 
     Walks the finished document in order: every ID cited in section 1, 8 or 9 must have a row in section 5 or 6; the
@@ -2420,7 +2488,7 @@ def _verify_document(document, data: dict[str, Any]) -> None:
         if rows_by_prefix.get(policy.PREFIX[category], 0) != n:
             raise policy.ReportConsistencyError(
                 f"section 5 lists {rows_by_prefix.get(policy.PREFIX[category], 0)} {policy.CATEGORY_LABEL[category]} row(s) but the report counts {n}")
-    if rows_by_prefix.get("COV", 0) != len(data["coverage"]["gaps"]):
+    if not coverage_in_appendix and rows_by_prefix.get("COV", 0) != len(data["coverage"]["gaps"]):
         raise policy.ReportConsistencyError("section 6 COV rows do not match the coverage gaps counted")
     sentence = policy.taxonomy_sentence(data["taxonomy"])
     for name in ("Executive Summary", "Risks & Issues", "Conclusions & Recommendations", "Defect Report (Bugs Found)"):
@@ -2506,6 +2574,9 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
     "separate" writes it to full-report-appendix.docx and leaves this file short enough to read in one sitting."""
     lean = appendix == "separate"
     report_data = report_data or _report_data(run, destination.parent)
+    if lean:
+        _build_summary_docx(run, destination, report_data)
+        return
     document = Document()
     document.add_heading("Website Test Report Full Run", 0)
     _metadata(document, run, scope="all URLs")
@@ -2549,11 +2620,38 @@ def build_combined_docx(run: RunReport, destination: Path, report_data: dict[str
         _build_appendix_docx(run, destination.with_name(APPENDIX_FILE), link_base, report_data)
 
 
+def _build_summary_docx(run: RunReport, destination: Path, report_data: dict[str, Any]) -> None:
+    """The short report: the one-page front, then the decision tables (defects, triage, journeys to look at,
+    limitations, tooling), risks and actions. Scope, environment, every test, coverage and evidence are in the appendix."""
+    document = Document()
+    document.add_heading("Website Test Report - Summary", 0)
+    _metadata(document, run, scope="all URLs")
+    _executive_summary_section(document, run, report_data, lean=True)
+    document.add_page_break()
+    document.add_heading("Defect Report (Bugs Found)", 1)
+    _findings_section(document, run, report_data, compact=True)
+    _risks_section(document, run, report_data, lean=True)
+    _conclusion_section(document, run, report_data, lean=True)
+    _verify_document(document, report_data, coverage_in_appendix=True)
+    _bookmark_headings(document)
+    _save_document(document, destination, run)
+    _build_appendix_docx(run, destination.with_name(APPENDIX_FILE), destination.parent, report_data)
+
+
 def _build_appendix_docx(run: RunReport, destination: Path, link_base: Path, report_data: dict[str, Any]) -> None:
-    """The evidence that would otherwise make the decision report hundreds of pages long."""
+    """Everything behind the summary: scope, environment, every test with its evidence, coverage and the run log."""
     document = Document()
     document.add_heading("Website Test Report - Appendix", 0)
     _metadata(document, run, scope="all URLs")
+    _scope_section(document, run)
+    _environment_section(document, run, report_data)
+    _test_summary_section(document, run, report_data)
+    chart = _write_execution_chart(destination.parent, report_data["counts"])
+    if chart:
+        document.add_paragraph("Result breakdown")
+        document.add_picture(str(chart), width=Inches(5.7))
+    _coverage_section(document, run, report_data)
+    _evidence_store_section(document, run)
     if report_data["defects"]:
         document.add_heading("Defect details", 1)
         _defect_detail_tables(document, report_data["defects"])

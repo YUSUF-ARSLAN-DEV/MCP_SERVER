@@ -343,7 +343,8 @@ def build_conditions(records: list[dict[str, Any]], cov_ids: list[str], verdict:
     if look:
         fixed.append(f"A person should look at {' and '.join(look)}, section 5.")
     if cov_ids:
-        fixed.append(f"{len(cov_ids)} page(s) have controls that no journey exercised ({id_range(cov_ids)}, section 6).")
+        # no IDs here: the coverage table lives in the appendix of the short report, and the count is what matters
+        fixed.append(f"{len(cov_ids)} page(s) have controls that no journey used; each page and control is in the coverage table.")
     harness = ids("tooling") + ids("test_defect")
     if harness:
         fixed.append(f"{len(harness)} tooling issue(s) left tests unrun or invalid; they hide real results ({id_range(harness)}, section 5).")

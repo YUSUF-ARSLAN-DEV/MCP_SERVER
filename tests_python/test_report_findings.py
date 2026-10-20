@@ -629,3 +629,41 @@ def test_a_run_where_no_test_ran_has_no_verdict(tmp_path):
     assert data["recommendation"] == "NO VERDICT"
     assert "Final verdict: NO VERDICT: no test ran, so this run has no evidence either way." in joined
     assert "NOT ASSESSED" in joined and "CONDITIONAL GO" not in joined.split("Release rule:")[0]
+
+
+# ------------------------------------------------------------------ the short report and its appendix (the default)
+
+def _summary_and_appendix(tmp_path):
+    create_report(*_workspace(tmp_path), tmp_path / "report", combined=True, appendix="separate")
+    return _text(tmp_path / "report" / "full-report.docx"), _text(tmp_path / "report" / "full-report-appendix.docx")
+
+
+def test_the_summary_leads_with_the_verdict_in_plain_words_and_what_was_confirmed_working(tmp_path):
+    summary, _ = _summary_and_appendix(tmp_path)
+    joined = chr(10).join(summary)
+    assert summary[0] == "Website Test Report - Summary"
+    for part in ("Release decision: GO. Nothing this run found stops a release.", "What was confirmed working",
+                 "A visitor picks a country and sees the results.", "What a person should look at", "What this run did not cover"):
+        assert part in joined, part
+
+
+def test_the_summary_leaves_the_detail_to_the_appendix(tmp_path):
+    summary, appendix = _summary_and_appendix(tmp_path)
+    for heading in ("Table of Contents", "Test Scope", "Test Environment", "Test Execution Summary",
+                    "Test Coverage / Requirements Traceability"):
+        assert heading not in summary, heading
+        assert heading == "Table of Contents" or heading in appendix, heading
+    assert len(chr(10).join(summary)) < len(chr(10).join(appendix))
+
+
+def test_a_no_go_summary_still_reconciles_and_names_the_defect_with_its_action(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    for row in results["tests"]:
+        if "test_flow_good" in row["nodeid"]:
+            row.update(status="failed", error="E   AssertionError: Page URL expected to be 'https://x.test/en/find'\nE   Actual value: https://x.test/en")
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True, appendix="separate")
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "Release decision: NO-GO" in joined and "Do not release on the strength of this run." in joined
+    assert "Fix and retest:" in joined and "DEF‑001" in joined
