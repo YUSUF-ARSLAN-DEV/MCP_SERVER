@@ -127,6 +127,7 @@ nav{display:flex;flex-direction:column}
   <h1>Smoke Tester<small>AI-assisted web smoke testing</small></h1>
   <a class="navi" href="#/new" data-r="new">+ New run</a>
   <a class="navi" href="#/live" data-r="live">Live run <span class="dot running pulse" id="liveDot" style="display:none;margin-left:6px"></span></a>
+  <a class="navi" href="#/compare" data-r="compare" id="navCompare">Compare</a>
   <a class="navi" href="#/models" data-r="models" id="navModels" style="display:none">Models</a>
   <a class="navi" href="#/users" data-r="users" id="navUsers" style="display:none">Users</a>
   <div class="site"><a href="#/" style="color:inherit;text-decoration:none">Runs</a></div>
@@ -185,6 +186,16 @@ nav{display:flex;flex-direction:column}
   </div>
 </section>
 
+<section class="view" id="compare">
+  <h2>Compare runs</h2>
+  <p class="sub">Pick two finished runs to see what changed between them. Each run stays exactly as it was.</p>
+  <div class="card"><div class="row">
+    <div style="flex:1;min-width:240px"><label for="cmpA">Baseline (earlier)</label><select id="cmpA"></select></div>
+    <div style="flex:1;min-width:240px"><label for="cmpB">Compared with (later)</label><select id="cmpB"></select></div>
+  </div></div>
+  <div id="cmpBody"></div>
+</section>
+
 <section class="view" id="models">
   <h2>Models</h2>
   <p class="sub">Your saved model configurations. Only you can see or use them, the keys are stored encrypted, and a key is never shown again once saved.</p>
@@ -224,7 +235,7 @@ nav{display:flex;flex-direction:column}
 </section>
 
 <section class="view" id="runpage">
-  <div class="rphead"><div><h2 id="rpTitle">Run</h2><p class="sub" id="rpSub"></p></div><span class="pill idle" id="rpPill"></span></div>
+  <div class="rphead"><div><h2 id="rpTitle">Run</h2><p class="sub" id="rpSub"></p></div><span class="pill idle" id="rpPill"></span><a class="btn sm sec" id="rpCompare" style="margin-left:auto;display:none">Compare with an earlier run</a></div>
   <div class="tabs2" id="rpTabs">
     <a data-t="overview">Overview</a><a data-t="report">Report</a><a data-t="journeys">Journeys</a><a data-t="defects">Defect ledger</a>
   </div>
@@ -305,7 +316,7 @@ const sevClass=s=>s==='High'||s==='Critical'?'nogo':s==='Medium'?'cond':'idle';
 const TABS=['overview','report','journeys','defects'];
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===view));
-  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')||(a.dataset.r==='users'&&view==='users')||(a.dataset.r==='models'&&view==='models')));
+  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')||(a.dataset.r==='users'&&view==='users')||(a.dataset.r==='models'&&view==='models')||(a.dataset.r==='compare'&&view==='compare')));
   scrollTo(0,0);
 }
 function route(){
@@ -313,6 +324,7 @@ function route(){
   if(parts[0]==='new'){S.shown=null;show('new');paintRunList();reloadModels().then(paintModelChoices);return;}
   if(parts[0]==='models'){S.shown=null;show('models');paintRunList();loadModels();return;}
   if(parts[0]==='live'){S.shown=null;show('run');paintRunList();openLive();return;}
+  if(parts[0]==='compare'){S.shown=null;show('compare');paintRunList();renderCompare(parts[1],parts[2]);return;}
   if(parts[0]==='users'){S.shown=null;show('users');paintRunList();loadUsers();return;}
   if(parts[0]==='runs'&&parts[1]){S.shown=decodeURIComponent(parts[1]);show('runpage');renderRunPage(TABS.includes(parts[2])?parts[2]:'overview');return;}
   S.shown=null;show('home');paintRunList();paintHome();
@@ -470,6 +482,7 @@ async function renderRunPage(tab){
   $('rpTitle').textContent=host(job.url);
   $('rpSub').textContent=`${job.id} · started ${when(job.started_at||job.created_at)}${job.finished_at?' · finished '+when(job.finished_at):''}`;
   $('rpPill').className='pill '+(pillFor[job.status]||'idle');$('rpPill').textContent=label(job.status);
+  $('rpCompare').style.display=job.status==='done'?'inline-block':'none';$('rpCompare').href=`#/compare/-/${encodeURIComponent(job.id)}`;
   if(tab==='overview')await renderOverview(job);
   else if(tab==='report')loadReport();
   else if(tab==='journeys')loadFlows();
@@ -785,6 +798,89 @@ async function loadDefects(){
     `<tr><td>${esc(x.title||k)}<br><small>${esc(k)}</small></td><td><span class="pill ${sevClass(x.severity)}">${esc(x.severity||'-')}</span>${x.severity_reason?`<br><small>${esc(x.severity_reason)}</small>`:''}</td>
      <td><span class="pill ${x.status==='open'?'nogo':'go'}">${esc(x.status)}</span>${x.closed_reason?`<br><small>${esc(x.closed_reason)}</small>`:''}</td><td>${esc(x.consecutive_not_reproduced||0)} / 3</td><td>${esc(x.total_failures||0)}</td></tr>`).join('')}</table>`
     :'<div class="empty">No defects recorded in this run\'s folder.</div>';
+}
+
+/* ---------- compare two runs ---------- */
+const VERDICT_RANK={'NO-GO':0,'CONDITIONAL GO':1,'GO':2};
+const stripSlash=u=>String(u||'').replace(/[?#].*$/,'').replace(/\/+$/,'')||'/';
+const pathOf=u=>{try{return new URL(u).pathname.replace(/\/+$/,'')||'/';}catch(e){return u||'';}};
+const runLabel=j=>`${host(j.url)} · ${when(j.created_at)} · ${j.id.slice(0,6)}`;
+function metricRow(label,a,b,better,shownA,shownB){     /* better: 'up' | 'down' | null (neutral); shownA/B: the text to display, when not just the number */
+  const delta=(typeof a==='number'&&typeof b==='number')?b-a:null;
+  let mark='<span class="pill idle">same</span>';
+  if(delta!==null&&delta!==0){const good=better===null?null:(better==='up'?delta>0:delta<0);
+    mark=`<span class="pill ${good===null?'info':good?'go':'nogo'}">${delta>0?'+':''}${Math.round(delta*10)/10}${good===null?'':good?' better':' worse'}</span>`;}
+  return `<tr><td>${esc(label)}</td><td>${esc(shownA??a)}</td><td>${esc(shownB??b)}</td><td>${mark}</td></tr>`;
+}
+function tally(d){
+  const pages={};
+  Object.values((d.snapshot&&d.snapshot.tests)||{}).forEach(t=>{
+    const key=stripSlash(t.url),p=pages[key]||(pages[key]={passed:0,failed:0,other:0});
+    if(t.status==='passed'&&!t.invalid)p.passed++;else if((t.status==='failed'||t.status==='error')&&!t.invalid)p.failed++;else p.other++;});
+  return pages;
+}
+function testsByTitle(d){const m={};Object.values((d.snapshot&&d.snapshot.tests)||{}).forEach(t=>{m[String(t.title||'').trim().toLowerCase()]={title:t.title,status:t.status,invalid:t.invalid,url:t.url};});return m;}
+function listBlock(title,items,empty){
+  if(!items.length)return `<details><summary>${esc(title)} <span class="pill idle">0</span></summary><div class="empty">${esc(empty)}</div></details>`;
+  return `<details open><summary>${esc(title)} <span class="pill info">${items.length}</span></summary><table>${items.slice(0,60).map(x=>`<tr><td>${x}</td></tr>`).join('')}</table>${items.length>60?`<small>and ${items.length-60} more</small>`:''}</details>`;
+}
+async function renderCompare(a,b){
+  const known=id=>!id||id==='-'||S.jobs.some(j=>j.id===id);
+  if(!known(a)||!known(b)){try{await refreshJobs();}catch(e){/* shown below as a missing run */}}      /* a run that finished since the list was last loaded */
+  const done=S.jobs.filter(j=>j.status==='done'),body=$('cmpBody');
+  const opt=j=>`<option value="${esc(j.id)}">${esc(runLabel(j))}</option>`;
+  $('cmpA').innerHTML=done.map(opt).join('');$('cmpB').innerHTML=done.map(opt).join('');
+  if(done.length<2){body.innerHTML=`<div class="card"><div class="empty">${done.length?'You need a second finished run to compare.':'No finished runs yet.'} Start another run of the same site, then come back.</div></div>`;return;}
+  const idx=id=>done.findIndex(j=>j.id===id);
+  let B=b&&b!=='-'&&idx(b)>=0?b:done[0].id;
+  let A=a&&a!=='-'&&idx(a)>=0?a:null;
+  if(!A){const bj=done[idx(B)],older=done.slice(idx(B)+1);A=(older.find(j=>host(j.url)===host(bj.url))||older[0]||done.find(j=>j.id!==B)).id;}
+  $('cmpA').value=A;$('cmpB').value=B;
+  const go=()=>{location.hash=`#/compare/${encodeURIComponent($('cmpA').value)}/${encodeURIComponent($('cmpB').value)}`;};
+  $('cmpA').onchange=go;$('cmpB').onchange=go;
+  if(a!==A||b!==B)history.replaceState(null,'',`#/compare/${encodeURIComponent(A)}/${encodeURIComponent(B)}`);
+  if(A===B){body.innerHTML='<div class="card"><div class="empty">Pick two different runs.</div></div>';return;}
+  body.innerHTML='<div class="card"><div class="empty">Loading both reports...</div></div>';
+  let ra,rb;try{[ra,rb]=await Promise.all([getReport(A),getReport(B)]);}catch(e){body.innerHTML=`<div class="card"><div class="empty">${esc(e.message)}</div></div>`;return;}
+  if(!ra||!rb){body.innerHTML=`<div class="card"><div class="empty">${!ra&&!rb?'Neither run':!ra?'The baseline run':'The later run'} has no report to compare.</div></div>`;return;}
+  const ca=ra.counts||{},cb=rb.counts||{},qa=ra.requirements||{},qb=rb.requirements||{};
+  const backed=q=>q.total?(q.total-(q.not_backed||0)):0;
+  const verdict=v=>`<span class="pill ${verdictClass(v)}">${esc(v)}</span>`;
+  const vr=(VERDICT_RANK[rb.recommendation]??1)-(VERDICT_RANK[ra.recommendation]??1);
+  const summary=`<table><tr><th></th><th>Baseline</th><th>Later</th><th>Change</th></tr>
+    <tr><td>Verdict</td><td>${verdict(ra.recommendation)}</td><td>${verdict(rb.recommendation)}</td><td><span class="pill ${vr>0?'go':vr<0?'nogo':'idle'}">${vr>0?'better':vr<0?'worse':'same'}</span></td></tr>
+    ${metricRow('Tests that ran',ca.executed_tests,cb.executed_tests,null)}
+    ${metricRow('Passed',ca.passed,cb.passed,'up')}
+    ${metricRow('Failed',ca.failed,cb.failed,'down')}
+    ${metricRow('Pass rate',ca.pass_rate_percent,cb.pass_rate_percent,'up',ca.pass_rate_percent+'%',cb.pass_rate_percent+'%')}
+    ${metricRow('Journeys passed',ca.journeys_passed,cb.journeys_passed,'up',`${ca.journeys_passed} of ${ca.journeys_total}`,`${cb.journeys_passed} of ${cb.journeys_total}`)}
+    ${metricRow('Open defects',ca.open_defects,cb.open_defects,'down')}
+    ${metricRow('Requirements backed by a pass',backed(qa),backed(qb),'up',`${backed(qa)} of ${qa.total}`,`${backed(qb)} of ${qb.total}`)}</table>`;
+  const ta=tally(ra),tb=tally(rb),urls=[...new Set([...Object.keys(ta),...Object.keys(tb)])].sort();
+  const pageRows=urls.map(u=>{const x=ta[u],y=tb[u];
+    const cell=p=>p?`${p.passed} passed${p.failed?`, <b style="color:var(--nogo)">${p.failed} failed</b>`:''}${p.other?`, ${p.other} other`:''}`:'<span class="empty">not tested</span>';
+    let mark='<span class="pill idle">same</span>';
+    if(!x)mark='<span class="pill info">new page</span>';else if(!y)mark='<span class="pill idle">not in later run</span>';
+    else if(y.failed>x.failed)mark='<span class="pill nogo">regressed</span>';else if(y.failed<x.failed)mark='<span class="pill go">improved</span>';
+    return `<tr><td>${esc(pathOf(u))}</td><td>${cell(x)}</td><td>${cell(y)}</td><td>${mark}</td></tr>`;}).join('');
+  const ma=testsByTitle(ra),mb=testsByTitle(rb),bad=s=>s==='failed'||s==='error',lines=[];
+  const newlyFailing=[],nowPassing=[],onlyLater=[],onlyBaseline=[];
+  Object.entries(mb).forEach(([k,t])=>{const o=ma[k];
+    if(!o)onlyLater.push(`${esc(t.title)} <small>(${esc(t.status)})</small>`);
+    else if(!bad(o.status)&&bad(t.status))newlyFailing.push(esc(t.title));
+    else if(bad(o.status)&&t.status==='passed')nowPassing.push(esc(t.title));});
+  Object.entries(ma).forEach(([k,t])=>{if(!mb[k])onlyBaseline.push(`${esc(t.title)} <small>(${esc(t.status)})</small>`);});
+  const fa=Object.fromEntries((ra.defects||[]).map(x=>[String(x.title).trim().toLowerCase(),x])),fb=Object.fromEntries((rb.defects||[]).map(x=>[String(x.title).trim().toLowerCase(),x]));
+  const fmtF=x=>`${esc(x.id)} <span class="pill ${sevClass(x.severity)}">${esc(x.severity)}</span> ${esc(x.title)} <small>(${esc(x.category)})</small>`;
+  const newF=Object.entries(fb).filter(([k])=>!fa[k]).map(([,x])=>fmtF(x)),goneF=Object.entries(fa).filter(([k])=>!fb[k]).map(([,x])=>fmtF(x)),stillF=Object.entries(fb).filter(([k])=>fa[k]).map(([,x])=>fmtF(x));
+  body.innerHTML=`<div class="card"><h3>Summary</h3>${summary}</div>
+    <div class="card"><h3>Page by page</h3><p class="sub" style="margin:0 0 8px">The dependable comparison: tests are written fresh for every run, so their names can differ even when they check the same thing.</p>
+      <table><tr><th>Page</th><th>Baseline</th><th>Later</th><th></th></tr>${pageRows||'<tr><td colspan="4" class="empty">No per-test data in these reports.</td></tr>'}</table></div>
+    <div class="card"><h3>Tests that changed <small>(matched by name)</small></h3>
+      ${listBlock('Newly failing',newlyFailing,'Nothing that passed before fails now.')}
+      ${listBlock('Now passing',nowPassing,'Nothing that failed before passes now.')}
+      ${listBlock('Only in the later run',onlyLater,'None.')}${listBlock('Only in the baseline',onlyBaseline,'None.')}</div>
+    <div class="card"><h3>Findings</h3>${listBlock('New in the later run',newF,'No new findings.')}${listBlock('No longer found',goneF,'Nothing disappeared.')}${listBlock('In both',stillF,'None in common.')}</div>`;
 }
 
 /* ---------- start ---------- */
