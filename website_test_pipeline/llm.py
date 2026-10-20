@@ -3,7 +3,7 @@ import json, logging, time, uuid, re
 from typing import Any
 import urllib.error, urllib.request
 from .config import Settings
-from .providers import ModelError, get_provider      # ModelError lives with the providers; re-exported here for callers
+from .providers import REJECTED_FIELDS, ModelError, get_provider      # ModelError lives with the providers; re-exported here for callers
 
 TRANSIENT = {408, 409, 425, 429, 500, 502, 503, 504, 524, 530}
 
@@ -64,6 +64,10 @@ class ModelClient:
                 body = exc.read().decode("utf-8", "replace")[:1000]
                 error = ModelError(f"API error: {exc.code}; {diagnose_error(exc.code, body)}", status=exc.code, body=body)
                 self.log.warning("model failure request=%s attempt=%s status=%s diagnosis=%s detail=%s", request_id, attempt, exc.code, diagnose_error(exc.code, body), body.replace("\n", " ")[:300])
+                if exc.code in (400, 422) and "chat_template_kwargs" in body and "chat_template_kwargs" not in REJECTED_FIELDS.get(self.s.api_url, ()):
+                    REJECTED_FIELDS.setdefault(self.s.api_url, set()).add("chat_template_kwargs")
+                    self.log.info("model endpoint does not accept chat_template_kwargs; sending without it from now on")
+                    return self.generate(prompt, system, images)
                 if exc.code not in TRANSIENT or attempt > self.s.model_retries: raise error
             except (urllib.error.URLError, TimeoutError, ModelError) as exc:
                 status = getattr(exc, "status", None); transient = isinstance(exc, ModelError) and status in TRANSIENT or not isinstance(exc, ModelError)

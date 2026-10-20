@@ -47,6 +47,11 @@ class Provider:
         return [m["id"] for m in data.get("data", []) if isinstance(m, dict) and m.get("id")]
 
 
+# Optional request fields an endpoint turned out not to accept, by API address: strict servers (OpenAI, Cerebras, Groq, ...)
+# answer 400 to a field only vLLM-style servers know. Filled in by ModelClient when it sees that answer.
+REJECTED_FIELDS: dict[str, set[str]] = {}
+
+
 class OpenAICompatible(Provider):
     """POST <API_URL> with {model, messages, ...}; API_URL is the full chat-completions URL."""
     name = "openai"
@@ -56,7 +61,7 @@ class OpenAICompatible(Provider):
                                           *({"type": "image_url", "image_url": {"url": u}} for u in images)]
         body = {"model": s.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "temperature": 0.1, "max_tokens": getattr(s, "model_max_tokens", 3072), "stream": False}
-        if getattr(s, "model_thinking", "off") == "off":
+        if getattr(s, "model_thinking", "off") == "off" and "chat_template_kwargs" not in REJECTED_FIELDS.get(s.api_url, ()):
             body["chat_template_kwargs"] = {"enable_thinking": False}     # non-reasoning models; a reasoning one leaves it unset
         headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {s.api_key}"} if s.api_key else {})}
         return s.api_url, headers, json.dumps(body).encode()
