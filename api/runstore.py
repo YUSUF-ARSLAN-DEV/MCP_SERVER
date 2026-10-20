@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mimetypes
+import os
 import posixpath
 import shutil
 import subprocess
@@ -100,7 +101,11 @@ def read_stored(db, job_id: str, relative: str) -> tuple[bytes, str, str] | None
 
 @lru_cache(maxsize=1)
 def code_version() -> str:
-    """The commit of the code that ran the pipeline, so a run can be tied to the version that produced it."""
+    """The commit of the code that ran the pipeline, so a run can be tied to the version that produced it. A container has no
+    git history, so the image is built with CODE_VERSION (see the Dockerfile); otherwise it is asked of git."""
+    baked = os.environ.get("CODE_VERSION", "").strip()
+    if baked and baked != "unknown":
+        return baked
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=config.ROOT, capture_output=True, text=True, timeout=5)
         return out.stdout.strip() if out.returncode == 0 and out.stdout.strip() else "unknown"

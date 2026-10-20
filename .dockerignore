@@ -1,0 +1,18 @@
+# An allowlist: nothing goes into the image unless it is named here. That keeps .env (real keys), saved logins,
+# runs/, the virtualenv, tests and drafts out of it by construction, not by remembering to exclude each one.
+*
+
+!api/
+!website_test_pipeline/
+!static/
+!conftest.py
+!pyproject.toml
+!AI-TEST-GUIDE.md
+!persona.txt
+!requirements-prod.txt
+
+# even inside the allowed folders
+**/__pycache__
+**/*.pyc
+**/.env
+**/*.key

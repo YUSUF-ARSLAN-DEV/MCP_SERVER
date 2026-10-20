@@ -40,3 +40,6 @@ graphify-out/
 # Personal learning notes
 EXPLAIN.md
 REPORT_FIXES.md
+
+# Docker: your filled-in settings (secrets); the .example next to it is committed
+docker.env

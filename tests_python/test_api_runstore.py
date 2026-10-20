@@ -301,3 +301,13 @@ def test_with_storage_turned_off_files_stay_on_disk_exactly_as_before(make_app, 
     assert (tmp_path / "runs" / job["site"] / "artifacts" / "report" / "full-report.docx").is_file()
     assert stored_paths(tmp_path, job["id"]) == [] and job["summary"]["verdict"] == "CONDITIONAL GO"        # the summary is still recorded
     assert client.get(f"/api/jobs/{job['id']}/files/artifacts/report/full-report.docx").content == b"PK-docx-bytes"
+
+
+def test_a_container_with_no_git_history_reports_the_version_it_was_built_from(monkeypatch):
+    runstore.code_version.cache_clear()
+    monkeypatch.setenv("CODE_VERSION", "abc1234")
+    assert runstore.code_version() == "abc1234"
+    runstore.code_version.cache_clear()
+    monkeypatch.setenv("CODE_VERSION", "unknown")                       # the Dockerfile's default when nothing was passed
+    assert runstore.code_version() != "abc1234"                         # falls back to asking git
+    runstore.code_version.cache_clear()
