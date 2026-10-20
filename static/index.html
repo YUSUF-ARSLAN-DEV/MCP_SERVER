@@ -100,32 +100,39 @@ code{background:var(--idle-bg);padding:1px 5px;border-radius:4px;font-size:12px}
 .stage.big b{font-size:16px}
 button:disabled{opacity:.5;cursor:not-allowed}
 a.btn{text-decoration:none;display:inline-block}
+nav a.navi{display:block;width:100%;text-align:left;color:var(--ink);padding:8px 10px;border-radius:6px;text-decoration:none;font-weight:600}
+nav a.navi:hover{background:var(--idle-bg)}nav a.navi.on{background:var(--info-bg);color:var(--info)}
+nav{display:flex;flex-direction:column}
+.runlist{overflow:auto;flex:1;min-height:0;margin:0 -4px;padding:0 4px}
+.runitem{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:6px;color:var(--ink);text-decoration:none}
+.runitem:hover{background:var(--idle-bg)}.runitem.on{background:var(--info-bg)}
+.runitem .rt b{display:block;font-size:13px;word-break:break-all;font-weight:600}.runitem small{color:var(--mute);font-size:11px}
+.dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:none;background:var(--idle);display:inline-block}
+.dot.done{background:var(--go)}.dot.running{background:var(--info)}.dot.needs_human{background:var(--cond)}.dot.failed{background:var(--nogo)}
+.dot.pulse{animation:pulse 1.4s ease-in-out infinite}@keyframes pulse{50%{opacity:.3}}
+.tabs2{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:0 0 16px;flex-wrap:wrap}
+.tabs2 a{padding:8px 14px;color:var(--mute);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px;font-weight:600}
+.tabs2 a:hover{color:var(--ink)}.tabs2 a.on{color:var(--info);border-bottom-color:var(--info)}
+.rphead{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:4px}.rphead .pill{margin-top:4px}
+.tp{display:none}.tp.on{display:block}
+@media (max-width:760px){.runlist{display:none}nav a.navi{width:auto}}
 </style>
 </head>
 <body>
 <div class="app">
 <nav>
   <h1>Smoke Tester<small>AI-assisted web smoke testing</small></h1>
-  <button data-v="dash" class="on">Overview</button>
-  <button data-v="new">New run</button>
-  <button data-v="run">Live run</button>
-  <button data-v="report">Report</button>
-  <button data-v="flows">Journeys</button>
-  <button data-v="defects">Defect ledger</button>
-  <div class="site">Run shown</div>
-  <select id="jobPick" aria-label="Which run to show"></select>
+  <a class="navi" href="#/new" data-r="new">+ New run</a>
+  <a class="navi" href="#/live" data-r="live">Live run <span class="dot running pulse" id="liveDot" style="display:none;margin-left:6px"></span></a>
+  <div class="site"><a href="#/" style="color:inherit;text-decoration:none">Runs</a></div>
+  <div class="runlist" id="runList"></div>
 </nav>
 <main>
 
-<section class="view on" id="dash">
-  <h2>Overview</h2>
-  <p class="sub" id="dashSub">Loading…</p>
-  <div class="card verdict" id="dashVerdict" style="display:none"></div>
-  <div class="grid g4" id="dashStats" style="margin-bottom:16px"></div>
-  <div class="grid g2">
-    <div class="card"><h3>Recent runs</h3><div id="runsTable"></div></div>
-    <div class="card"><h3>Needs attention <small>(from the shown run's report)</small></h3><div id="attention"></div></div>
-  </div>
+<section class="view on" id="home">
+  <h2>Runs</h2>
+  <p class="sub" id="homeSub">Loading...</p>
+  <div class="card" id="runsTable"></div>
 </section>
 
 <section class="view" id="new">
@@ -181,33 +188,45 @@ a.btn{text-decoration:none;display:inline-block}
   </div>
 </section>
 
-<section class="view" id="report">
-  <div class="row"><div><h2 id="repTitle">Release report</h2><p class="sub" id="repSub">Pick a finished run.</p></div></div>
-  <div class="card verdict" id="repVerdict" style="display:none"></div>
-  <div class="grid g4" id="repStats" style="margin-bottom:16px"></div>
-  <div class="tabs" id="rtabs">
-    <button class="on" data-t="r-def">Findings</button><button data-t="r-delta">Changes since last run</button><button data-t="r-cov">Coverage</button><button data-t="r-req">Requirements</button><button data-t="r-dl">Downloads</button>
+<section class="view" id="runpage">
+  <div class="rphead"><div><h2 id="rpTitle">Run</h2><p class="sub" id="rpSub"></p></div><span class="pill idle" id="rpPill"></span></div>
+  <div class="tabs2" id="rpTabs">
+    <a data-t="overview">Overview</a><a data-t="report">Report</a><a data-t="journeys">Journeys</a><a data-t="defects">Defect ledger</a>
   </div>
-  <div class="card rt" id="r-def"></div>
-  <div class="card rt" id="r-delta" style="display:none"></div>
-  <div class="card rt" id="r-cov" style="display:none"></div>
-  <div class="card rt" id="r-req" style="display:none"></div>
-  <div class="card rt" id="r-dl" style="display:none"></div>
-  <p class="honest">Structural and mechanical checks only. This report does not know what the site is supposed to do beyond the supplied journeys and requirements.</p>
-</section>
 
-<section class="view" id="flows">
-  <h2>Journeys</h2>
-  <p class="sub">Read-only view of the shown run's journeys. Only verified or approved journeys get a test.</p>
-  <div class="card" id="flowsBody"><div class="empty">Pick a run.</div></div>
-  <p class="honest">Approving, rejecting and adding journeys is done with the command line for now (<code>cli flows approve|reject|add</code>).</p>
-</section>
+  <div class="tp" id="tp-overview">
+    <div class="note" id="ovNote" style="display:none"></div>
+    <div class="card verdict" id="dashVerdict" style="display:none"></div>
+    <div class="grid g4" id="dashStats" style="margin-bottom:16px"></div>
+    <div class="card"><h3>Needs attention</h3><div id="attention"></div></div>
+  </div>
 
-<section class="view" id="defects">
-  <h2>Defect ledger</h2>
-  <p class="sub">Read-only. Defects persist across runs of the same site folder. Severity is frozen at first confirmation. A defect auto-closes after 3 consecutive clean runs.</p>
-  <div class="card" id="defBody"><div class="empty">Pick a run.</div></div>
-  <p class="honest">A manual close needs a reason and writes an audit entry: <code>cli defects close &lt;key&gt; --reason "..."</code>. The ledger only carries over between runs started with "Keep working in this site's folder".</p>
+  <div class="tp" id="tp-report">
+    <div class="row"><div><h2 id="repTitle" style="font-size:17px">Release report</h2><p class="sub" id="repSub">Pick a finished run.</p></div></div>
+    <div class="card verdict" id="repVerdict" style="display:none"></div>
+    <div class="grid g4" id="repStats" style="margin-bottom:16px"></div>
+    <div class="tabs" id="rtabs">
+      <button class="on" data-t="r-def">Findings</button><button data-t="r-delta">Changes since last run</button><button data-t="r-cov">Coverage</button><button data-t="r-req">Requirements</button><button data-t="r-dl">Downloads</button>
+    </div>
+    <div class="card rt" id="r-def"></div>
+    <div class="card rt" id="r-delta" style="display:none"></div>
+    <div class="card rt" id="r-cov" style="display:none"></div>
+    <div class="card rt" id="r-req" style="display:none"></div>
+    <div class="card rt" id="r-dl" style="display:none"></div>
+    <p class="honest">Structural and mechanical checks only. This report does not know what the site is supposed to do beyond the supplied journeys and requirements.</p>
+  </div>
+
+  <div class="tp" id="tp-journeys">
+    <p class="sub">Read-only view of this run's journeys. Only verified or approved journeys get a test.</p>
+    <div class="card" id="flowsBody"><div class="empty">Pick a run.</div></div>
+    <p class="honest">Approving, rejecting and adding journeys is done with the command line for now (<code>cli flows approve|reject|add</code>).</p>
+  </div>
+
+  <div class="tp" id="tp-defects">
+    <p class="sub">Read-only. Defects persist across runs of the same site folder. Severity is frozen at first confirmation. A defect auto-closes after 3 consecutive clean runs.</p>
+    <div class="card" id="defBody"><div class="empty">Pick a run.</div></div>
+    <p class="honest">A manual close needs a reason and writes an audit entry: <code>cli defects close &lt;key&gt; --reason "..."</code>. The ledger only carries over between runs started with "Keep working in this site's folder".</p>
+  </div>
 </section>
 
 </main>
@@ -219,7 +238,7 @@ a.btn{text-decoration:none;display:inline-block}
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const TERMINAL=['done','failed','cancelled'];
-const S={jobs:[],shown:null,es:null,watching:null,logTimer:null,humanTimer:null,imgTimer:null,asked:null,countdown:null,report:{}};
+const S={jobs:[],shown:null,painted:null,liveId:null,es:null,watching:null,logTimer:null,humanTimer:null,imgTimer:null,asked:null,countdown:null,report:{}};
 
 /* ---------- plumbing ---------- */
 function toast(m){const t=$('toast');t.textContent=m;t.classList.add('on');setTimeout(()=>t.classList.remove('on'),3200);}
@@ -247,14 +266,21 @@ const verdictClass=v=>v==='GO'?'go':v==='NO-GO'?'nogo':'cond';
 const label=s=>({needs_human:'needs you',done:'finished'}[s]||s);
 const sevClass=s=>s==='High'||s==='Critical'?'nogo':s==='Medium'?'cond':'idle';
 
-/* ---------- navigation ---------- */
-const nav=[...document.querySelectorAll('nav button')];
-function go(id){
-  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===id));
-  nav.forEach(b=>b.classList.toggle('on',b.dataset.v===id));scrollTo(0,0);
-  if(id==='report')loadReport();if(id==='flows')loadFlows();if(id==='defects')loadDefects();
+/* ---------- navigation: the address bar is the state (#/, #/new, #/live, #/runs/<id>/<tab>) ---------- */
+const TABS=['overview','report','journeys','defects'];
+function show(view){
+  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===view));
+  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')));
+  scrollTo(0,0);
 }
-nav.forEach(b=>b.onclick=()=>go(b.dataset.v));
+function route(){
+  const parts=(location.hash||'#/').replace(/^#\/?/,'').split('/').filter(Boolean);
+  if(parts[0]==='new'){S.shown=null;show('new');paintRunList();return;}
+  if(parts[0]==='live'){S.shown=null;show('run');paintRunList();openLive();return;}
+  if(parts[0]==='runs'&&parts[1]){S.shown=decodeURIComponent(parts[1]);show('runpage');renderRunPage(TABS.includes(parts[2])?parts[2]:'overview');return;}
+  S.shown=null;show('home');paintRunList();paintHome();
+}
+addEventListener('hashchange',route);
 document.querySelectorAll('#rtabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#rtabs button').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('.rt').forEach(c=>c.style.display=c.id===b.dataset.t?'block':'none');});
@@ -275,25 +301,56 @@ function showGate(msg){
   $('gok').onclick=submit;$('gc').onkeydown=e=>{if(e.key==='Enter')submit();};
 }
 
-/* ---------- runs list, overview ---------- */
+/* ---------- runs list, home, run page ---------- */
 async function refreshJobs(){
   S.jobs=await api('/api/jobs?limit=50');
-  const pick=$('jobPick'),keep=S.shown;
-  pick.innerHTML=S.jobs.length?S.jobs.map(j=>`<option value="${esc(j.id)}">${esc(host(j.url))} · ${esc(label(j.status))} · ${when(j.created_at)}</option>`).join(''):'<option value="">No runs yet</option>';
-  if(!keep||!S.jobs.some(j=>j.id===keep))S.shown=(S.jobs.find(j=>j.status==='done')||S.jobs[0]||{}).id||null;
-  pick.value=S.shown||'';
-  $('runsTable').innerHTML=S.jobs.length?`<table><tr><th>Site</th><th>Started</th><th>Status</th><th></th></tr>${S.jobs.slice(0,8).map(j=>
-    `<tr><td>${esc(host(j.url))}</td><td>${when(j.created_at)}</td><td><span class="pill ${pillFor[j.status]||'idle'}">${esc(label(j.status))}</span></td>
-     <td><button class="btn sm sec" data-open="${esc(j.id)}">Open</button></td></tr>`).join('')}</table>`:'<div class="empty">No runs yet. Start one under "New run".</div>';
-  document.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>openJob(b.dataset.open));
   const active=S.jobs.find(j=>!TERMINAL.includes(j.status));
+  $('liveDot').style.display=active?'inline-block':'none';
   if(active&&S.watching!==active.id)watch(active.id);
-  renderDash();
+  paintRunList();paintHome();
+  const job=S.jobs.find(j=>j.id===S.shown);                      /* a run page repaints only when its run changed state */
+  if(job&&document.querySelector('.view.on').id==='runpage'&&S.painted!==job.id+':'+job.status)renderRunPage(currentTab());
 }
-$('jobPick').onchange=e=>{S.shown=e.target.value||null;renderDash();const v=document.querySelector('.view.on').id;
-  if(v==='run')watch(S.shown);if(v==='report')loadReport();if(v==='flows')loadFlows();if(v==='defects')loadDefects();};
-function openJob(id){S.shown=id;$('jobPick').value=id;const j=S.jobs.find(x=>x.id===id);renderDash();
-  if(j&&TERMINAL.includes(j.status))go('report');else{watch(id);go('run');}}
+const currentTab=()=>{const p=(location.hash||'').replace(/^#\/?/,'').split('/');return TABS.includes(p[2])?p[2]:'overview';};
+function paintRunList(){
+  $('runList').innerHTML=S.jobs.length?S.jobs.map(j=>`<a class="runitem${j.id===S.shown?' on':''}" href="#/runs/${encodeURIComponent(j.id)}">
+    <span class="dot ${esc(j.status)}${j.status==='running'?' pulse':''}"></span><span class="rt"><b>${esc(host(j.url))}</b><small>${when(j.created_at)} · ${esc(label(j.status))}</small></span></a>`).join('')
+    :'<div class="empty" style="padding:8px 10px">No runs yet.</div>';
+}
+function paintHome(){
+  $('homeSub').textContent=S.jobs.length?`${S.jobs.length} run${S.jobs.length===1?'':'s'}. Open one to see its overview, report and journeys.`:'No runs yet. Start one with "+ New run".';
+  $('runsTable').innerHTML=S.jobs.length?`<table><tr><th>Site</th><th>Started</th><th>Status</th><th>Run</th></tr>${S.jobs.map(j=>
+    `<tr><td><a href="#/runs/${encodeURIComponent(j.id)}">${esc(host(j.url))}</a></td><td>${when(j.created_at)}</td>
+     <td><span class="pill ${pillFor[j.status]||'idle'}">${esc(label(j.status))}</span></td><td><small>${esc(j.id)}</small></td></tr>`).join('')}</table>`
+    :'<div class="empty">Nothing here yet.</div>';
+}
+async function renderRunPage(tab){
+  paintRunList();
+  const job=S.jobs.find(j=>j.id===S.shown);
+  S.painted=job?job.id+':'+job.status:null;
+  TABS.forEach(t=>$('tp-'+t).classList.toggle('on',t===tab));
+  document.querySelectorAll('#rpTabs a').forEach(a=>{a.href=`#/runs/${encodeURIComponent(S.shown)}/${a.dataset.t}`;a.classList.toggle('on',a.dataset.t===tab);});
+  if(!job){$('rpTitle').textContent='Run not found';$('rpSub').innerHTML='It may have been removed. <a href="#/">Back to all runs</a>.';$('rpPill').textContent='';TABS.forEach(t=>$('tp-'+t).classList.remove('on'));return;}
+  $('rpTitle').textContent=host(job.url);
+  $('rpSub').textContent=`${job.id} · started ${when(job.started_at||job.created_at)}${job.finished_at?' · finished '+when(job.finished_at):''}`;
+  $('rpPill').className='pill '+(pillFor[job.status]||'idle');$('rpPill').textContent=label(job.status);
+  if(tab==='overview')await renderOverview(job);
+  else if(tab==='report')loadReport();
+  else if(tab==='journeys')loadFlows();
+  else loadDefects();
+}
+async function renderOverview(job){
+  const note=$('ovNote'),box=$('dashVerdict');
+  note.style.display='none';box.style.display='none';$('dashStats').innerHTML='';$('attention').innerHTML='<div class="empty">Nothing to show.</div>';
+  if(!TERMINAL.includes(job.status)){note.style.display='block';note.innerHTML=`This run is still going (${esc(job.stage||job.status)}). <a href="#/live">Watch it live</a>.`;return;}
+  if(job.status!=='done'){note.style.display='block';note.textContent=`This run ${label(job.status)}${job.error?': '+job.error.slice(-400):'.'}`;return;}
+  let d;try{d=await getReport(job.id);}catch(e){note.style.display='block';note.textContent=e.message;return;}
+  if(!d||S.shown!==job.id){if(!d){note.style.display='block';note.textContent='This run finished without a report.';}return;}
+  verdictCard(box,d,job);box.insertAdjacentHTML('beforeend',`<a class="btn" style="margin-left:auto" href="#/runs/${encodeURIComponent(job.id)}/report">Open report</a>`);
+  $('dashStats').innerHTML=statTiles(d);
+  const items=(d.conditions||[]).slice(0,6);
+  $('attention').innerHTML=items.length?`<table>${items.map(x=>`<tr><td>${esc(x)}</td></tr>`).join('')}</table>`:'<div class="empty">No open conditions.</div>';
+}
 
 async function getReport(id){
   if(S.report[id]!==undefined)return S.report[id];
@@ -318,19 +375,6 @@ function statTiles(d){
     [rq.total?(rq.total-(rq.not_backed||0))+' / '+rq.total:'-',rq.total?'requirements backed by a pass':'no written requirements']];
   return t.map(([b,s])=>`<div class="stat"><b>${esc(b)}</b><span>${esc(s)}</span></div>`).join('');
 }
-async function renderDash(){
-  const job=S.jobs.find(j=>j.id===S.shown);
-  $('dashSub').textContent=job?`Showing the run for ${host(job.url)} (${label(job.status)}).`:'No runs yet.';
-  const box=$('dashVerdict');box.style.display='none';$('dashStats').innerHTML='';$('attention').innerHTML='<div class="empty">Nothing to show.</div>';
-  if(!job||job.status!=='done')return;
-  let d;try{d=await getReport(job.id);}catch(e){return;}
-  if(!d||S.shown!==job.id)return;
-  verdictCard(box,d,job);box.insertAdjacentHTML('beforeend','<button class="btn" style="margin-left:auto" onclick="go(\'report\')">Open report</button>');
-  $('dashStats').innerHTML=statTiles(d);
-  const items=(d.conditions||[]).slice(0,6);
-  $('attention').innerHTML=items.length?`<table>${items.map(x=>`<tr><td>${esc(x)}</td></tr>`).join('')}</table>`:'<div class="empty">No open conditions.</div>';
-}
-
 /* ---------- model choice (per run) ---------- */
 const MODELS={
   openai:{url:'https://your-server/v1/chat/completions',urlLabel:'API address (the full chat-completions URL)',urlNeeded:true,name:'e.g. qwen3-coder',keyNeeded:false,
@@ -374,13 +418,21 @@ $('nGo').onclick=async()=>{
   $('nGo').disabled=true;
   try{const body={url,options};if(model)body.model=model;
     const job=await api('/api/jobs',{method:'POST',body});$('mKey').value='';
-    toast('Run queued.');S.shown=job.id;await refreshJobs();watch(job.id);go('run');}
+    toast('Run queued.');await refreshJobs();location.hash='#/live';}
   catch(e){(/^Model address|API_KEY|chat-completions/.test(e.message)?$('mErr'):$('nErr')).textContent=e.message;}
   finally{$('nGo').disabled=false;}
 };
 
 /* ---------- live run ---------- */
 function stopWatching(){if(S.es){S.es.close();S.es=null;}clearInterval(S.logTimer);clearInterval(S.humanTimer);S.watching=null;}
+function openLive(){
+  const active=S.jobs.find(j=>!TERMINAL.includes(j.status));
+  const job=active||S.jobs.find(j=>j.id===S.liveId);
+  if(!job){stopWatching();$('runPill').className='pill idle';$('runPill').textContent='no run';
+    $('runSub').innerHTML='No run is active. <a href="#/new">Start one</a>, or open a finished run from the list.';
+    $('runStage').style.display='none';$('runBar').style.width='0%';$('runLog').textContent='Nothing yet.';$('cancelBtn').disabled=true;return;}
+  S.liveId=job.id;if(S.watching!==job.id||!S.es)watch(job.id);else paintRun(job);
+}
 function watch(id){
   stopWatching();if(!id)return;S.watching=id;
   const job=S.jobs.find(j=>j.id===id);if(job)paintRun(job);
@@ -393,7 +445,7 @@ function watch(id){
 }
 function paintRun(j){
   $('runPill').className='pill '+(pillFor[j.status]||'idle');$('runPill').textContent=label(j.status);
-  $('runSub').textContent=`${host(j.url)} · started ${when(j.started_at||j.created_at)}`;
+  $('runSub').innerHTML=`${esc(host(j.url))} · started ${when(j.started_at||j.created_at)}`+(TERMINAL.includes(j.status)?` · <a href="#/runs/${encodeURIComponent(j.id)}">Open this run</a>`:'');
   const st=$('runStage');st.style.display='block';
   st.innerHTML=`<b>${esc(j.stage||(j.status==='queued'?'Waiting in the queue':'Starting'))}</b><small>${esc(j.error?j.error.slice(-400):j.message||'')}</small>`;
   st.className='stage big '+(j.status==='done'?'done':(j.status==='failed'||j.status==='cancelled')?'wait':'run');
@@ -464,7 +516,6 @@ async function loadReport(){
   if(!d)return none('This run finished without a report.');
   $('repTitle').textContent=`Release report · ${d.run_id}`;
   $('repSub').textContent=`${host(job.url)} · ${when(d.run_finished_at)} · every figure was cross-checked before this was rendered.`;
-  verdictCard($('repVerdict'),d,job);$('repStats').innerHTML=statTiles(d);
   const defs=d.defects||[];
   $('r-def').innerHTML=defs.length?`<table><tr><th>ID</th><th>Kind</th><th>Severity</th><th>Title</th><th>Owner</th><th>Status</th></tr>${defs.map(x=>
     `<tr><td>${esc(x.id)}</td><td>${esc(x.category)}</td><td><span class="pill ${sevClass(x.severity)}">${esc(x.severity)}</span>${x.severity_reason?`<br><small>${esc(x.severity_reason)}</small>`:''}</td>
@@ -507,8 +558,9 @@ async function loadDefects(){
 /* ---------- start ---------- */
 async function init(){
   try{const s=await api('/api/session');if(!s.authenticated){showGate();return;}}
-  catch(e){if(e.status!==401)$('dashSub').textContent=e.message;return;}
-  try{await refreshJobs();}catch(e){$('dashSub').textContent=e.message;return;}
+  catch(e){if(e.status!==401)$('homeSub').textContent=e.message;return;}
+  try{await refreshJobs();}catch(e){$('homeSub').textContent=e.message;return;}
+  route();
   if(!S.poll)S.poll=setInterval(()=>{if(!document.hidden)refreshJobs().catch(()=>{});},15000);
 }
 init();
