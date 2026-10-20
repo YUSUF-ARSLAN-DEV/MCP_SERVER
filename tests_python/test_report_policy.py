@@ -50,6 +50,16 @@ def test_a_check_that_saw_the_site_do_the_wrong_thing_is_still_a_defect():
     assert policy.triage_category("inconclusive", SKIP_LINK) == "unverified"
 
 
+def test_a_run_with_no_executed_test_has_no_verdict_whatever_else_it_recorded():
+    records = [_rec("UNV-001", "unverified"), _rec("TOOL-001", "tooling", "Low")]
+    assert policy.release_decision(records, executed_tests=0) == "NO VERDICT"
+    assert policy.release_decision(records, requirements_backed_percent=10, executed_tests=0) == "NO VERDICT"
+    assert policy.release_decision(records, executed_tests=3) == "GO"
+    assert policy.verdict_trigger(records, executed_tests=0) == "no test ran, so this run has no evidence either way"
+    criteria = policy.exit_criteria(records, [], "NO VERDICT")
+    assert len(criteria) == 1 and "TOOL-001" in criteria[0] and "run again" in criteria[0]
+
+
 def test_triage_is_never_p1_and_never_blocks():
     assert policy.priority_for("triage", "High") == "P2 - next fix cycle"
     assert policy.release_decision([_rec("TRI-001", "triage", "High")]) != "NO-GO"

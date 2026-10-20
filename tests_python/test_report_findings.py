@@ -599,3 +599,33 @@ def test_two_real_defects_of_equal_weight_still_produce_a_report_that_says_so(tm
     assert len(scored) == 2 and len({d["priority"] for d in scored}) == 1
     text = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     assert "Scoring check" in text and "All 2 scored items" in text and "judged from its own user impact" in text
+
+
+def test_a_check_that_could_not_click_is_triage_not_a_defect_and_the_verdict_stays_go(tmp_path):
+    """Found live on a production site: a hidden skip link (covered by the header) was reported as a High defect -> NO-GO."""
+    artifacts, tests = _workspace(tmp_path)
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    for row in results["tests"]:
+        if "test_flow_good" in row["nodeid"]:
+            row.update(status="failed", error="E   playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.\n"
+                                              "E   Call log:\nE     - <div class=\"header\"></div> intercepts pointer events")
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    assert "0 application defects found this run." in joined
+    assert "TRI‑001" in joined and "Needs triage" in joined
+    assert "Release decision: GO" in joined
+    data = json.loads((tmp_path / "report" / "report-data.json").read_text(encoding="utf-8"))
+    assert data["recommendation"] == "GO" and data["taxonomy"]["triage"] == 1 and data["counts"]["failed"] == 1
+
+
+def test_a_run_where_no_test_ran_has_no_verdict(tmp_path):
+    """Found live: every model call was refused, nothing was generated, and the report still said CONDITIONAL GO."""
+    artifacts, tests = _workspace(tmp_path)
+    (artifacts / "test_results.json").write_text(json.dumps({"finished_at": "t", "tests": []}), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    data = json.loads((tmp_path / "report" / "report-data.json").read_text(encoding="utf-8"))
+    assert data["recommendation"] == "NO VERDICT"
+    assert "Final verdict: NO VERDICT: no test ran, so this run has no evidence either way." in joined
+    assert "NOT ASSESSED" in joined and "CONDITIONAL GO" not in joined.split("Release rule:")[0]

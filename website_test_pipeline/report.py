@@ -1438,7 +1438,8 @@ def _report_data(run: "RunReport", report_dir: Path,
     # C4: requirements coverage is a second, independent verdict input, not an inert number next to a verdict
     # it never influences - a report can show zero open defects while most requirements are unbacked.
     backed_percent = policy.requirements_backed_percent(requirements)
-    recommendation = policy.release_decision(records, requirements_backed_percent=backed_percent)
+    recommendation = policy.release_decision(records, requirements_backed_percent=backed_percent,
+                                             executed_tests=counts["executed_tests"])
     conditions = policy.build_conditions(records, [g["id"] for g in gaps], recommendation)
     env = environment_block(run)
     snap = _run_snapshot(run, counts, records, env, requirements["total"])
@@ -2183,7 +2184,7 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
     counts = data["counts"]
     tax = data["taxonomy"]
     recommendation = data["recommendation"]
-    status = "FAIL" if recommendation == "NO-GO" else ("PASS WITH ISSUES" if recommendation == "CONDITIONAL GO" else "PASS")
+    status = {"NO-GO": "FAIL", "CONDITIONAL GO": "PASS WITH ISSUES", policy.NO_VERDICT: "NOT ASSESSED"}.get(recommendation, "PASS")
     quarantine_note = _quarantine_note(counts)
     # C3: "found this run" and "carried from a previous run" are different claims about a defect - a
     # not-reproduced ledger item was not found this run, it failed to reproduce.
@@ -2195,7 +2196,8 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
                                     else '0 application defects'))
     reqs = data["requirements"]
     backed_percent = policy.requirements_backed_percent(reqs)
-    trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent)
+    trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent,
+                                     executed_tests=counts["executed_tests"])
     trigger_note = f" ({trigger})" if trigger else ""
     document.add_paragraph(
         f'Release decision: {recommendation}{trigger_note}, derived from the Defects table. {counts["passed"]} of {counts["executed_tests"]} tests passed '
@@ -2311,9 +2313,13 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
     # C2/C4: name the trigger next to the verdict, so nobody has to reverse-engineer it from a severity field.
     reqs = data["requirements"]
     backed_percent = policy.requirements_backed_percent(reqs)
-    trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent)
+    trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent,
+                                     executed_tests=data["counts"]["executed_tests"])
     trigger_note = f": {trigger}" if trigger else ""
-    if recommendation == "GO":
+    if recommendation == policy.NO_VERDICT:
+        document.add_paragraph(f"Final verdict: NO VERDICT{trigger_note}. This run says nothing about whether the site can be "
+                               "released - neither for nor against. See the tooling issues in section 5 for what stopped the tests.")
+    elif recommendation == "GO":
         document.add_paragraph("Final verdict: GO. The tested scope is suitable for release. Review the documented out-of-scope items before signing off.")
     elif recommendation == "CONDITIONAL GO":
         document.add_paragraph(f"Final verdict: CONDITIONAL GO{trigger_note}. No application defect blocks the release, but it is not unconditional until the exit criteria below are met.")

@@ -346,7 +346,7 @@ async function api(path,opt){
 const when=iso=>{if(!iso)return '-';const d=new Date(iso);return isNaN(d)?esc(iso):d.toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});};
 const host=u=>{try{return new URL(u).host;}catch(e){return u||'';}};
 const pillFor={done:'go',running:'info',needs_human:'cond',queued:'idle',failed:'nogo',cancelled:'idle'};
-const verdictClass=v=>v==='GO'?'go':v==='NO-GO'?'nogo':'cond';
+const verdictClass=v=>v==='GO'?'go':v==='NO-GO'?'nogo':v==='NO VERDICT'?'idle':'cond';
 const label=s=>({needs_human:'needs you',done:'finished'}[s]||s);
 const dur=sec=>sec==null?'-':sec<60?sec+'s':Math.floor(sec/60)+'m '+String(sec%60).padStart(2,'0')+'s';
 const bytesText=n=>n==null?'-':n<1024?n+' B':n<1048576?(n/1024).toFixed(0)+' KB':(n/1048576).toFixed(1)+' MB';
@@ -860,7 +860,7 @@ async function renderCompare(a,b){
   const ca=ra.counts||{},cb=rb.counts||{},qa=ra.requirements||{},qb=rb.requirements||{};
   const backed=q=>q.total?(q.total-(q.not_backed||0)):0;
   const verdict=v=>`<span class="pill ${verdictClass(v)}">${esc(v)}</span>`;
-  const vr=(VERDICT_RANK[rb.recommendation]??1)-(VERDICT_RANK[ra.recommendation]??1);
+  const vr=(ra.recommendation in VERDICT_RANK&&rb.recommendation in VERDICT_RANK)?VERDICT_RANK[rb.recommendation]-VERDICT_RANK[ra.recommendation]:0;   /* NO VERDICT is neither better nor worse */
   const summary=`<table><tr><th></th><th>Baseline</th><th>Later</th><th>Change</th></tr>
     <tr><td>Verdict</td><td>${verdict(ra.recommendation)}</td><td>${verdict(rb.recommendation)}</td><td><span class="pill ${vr>0?'go':vr<0?'nogo':'idle'}">${vr>0?'better':vr<0?'worse':'same'}</span></td></tr>
     ${metricRow('Tests that ran',ca.executed_tests,cb.executed_tests,null)}

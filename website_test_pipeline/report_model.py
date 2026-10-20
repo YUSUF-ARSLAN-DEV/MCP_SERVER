@@ -21,7 +21,7 @@ REQUIRED_DEFECT_FIELDS = (
 )
 VALID_SEVERITIES = {"Critical", "High", "Medium", "Low"}
 VALID_STATUSES = {"New", "Open", "Fixed", "Retest", "Closed"}
-VALID_RECOMMENDATIONS = {"GO", "NO-GO", "CONDITIONAL GO"}
+VALID_RECOMMENDATIONS = {"GO", "NO-GO", "CONDITIONAL GO", "NO VERDICT"}
 
 
 def canonical_counts(run: Any) -> dict[str, int | float]:
@@ -364,7 +364,8 @@ def _validate_taxonomy(data: dict[str, Any]) -> None:
                          "this count, never the test-level pass/fail tally")
     from .report_policy import release_decision, requirements_backed_percent
     backed_percent = requirements_backed_percent(data.get("requirements"))
-    expected = release_decision(records, requirements_backed_percent=backed_percent)
+    expected = release_decision(records, requirements_backed_percent=backed_percent,
+                                executed_tests=(data.get("counts") or {}).get("executed_tests"))
     if data["recommendation"] != expected:
         raise ValueError(f"recommendation {data['recommendation']} does not follow from the Defects table and "
                          f"requirements coverage ({expected})")

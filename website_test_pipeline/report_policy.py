@@ -239,8 +239,11 @@ def requirements_backed_percent(reqs: dict[str, Any] | None) -> float | None:
     return round(100 * (total - not_backed) / total) if total else None
 
 
+NO_VERDICT = "NO VERDICT"
+
+
 def release_decision(records: list[dict[str, Any]], requirements_backed_percent: float | None = None,
-                     threshold: float = REQUIREMENTS_BACKED_THRESHOLD) -> str:
+                     threshold: float = REQUIREMENTS_BACKED_THRESHOLD, executed_tests: int | None = None) -> str:
     """Derived from the Defects table first. Any open High/Critical Defect is NO-GO; with none, any other open
     Defect is CONDITIONAL GO. Unverified journeys, failed checks that need triage, limitations, test defects and
     tooling issues never change the verdict: each is something the RUN could not establish, and a run's blind spot
@@ -251,6 +254,10 @@ def release_decision(records: list[dict[str, Any]], requirements_backed_percent:
     still have most of its written requirements unbacked by any passing result, which an inert coverage number
     does not stop from reading as GO. Below the threshold, a would-be GO is capped at CONDITIONAL GO; it never
     overrides a verdict a Defect already made worse (NO-GO stays NO-GO)."""
+    if executed_tests == 0:
+        # Not one test ran (found live: every model call was refused, so nothing was generated): there is no evidence
+        # for or against the site, and any GO-family word would be a claim this run cannot make.
+        return NO_VERDICT
     open_defects = [r for r in records if r["category"] == "defect" and r["status"] == "Open"]
     if any(r["severity"] in {"Critical", "High"} for r in open_defects):
         return "NO-GO"
@@ -272,15 +279,18 @@ def release_rule_text() -> str:
         "could not establish - unverified journeys, failed checks that need triage, limitations, test defects and tooling "
         "issues - is listed for a person to look at but never changes the verdict. With none of the above, a would-be GO "
         f"is capped at CONDITIONAL GO if fewer than {REQUIREMENTS_BACKED_THRESHOLD:.0f}% of the requirements people wrote "
-        "(not ones the model guessed) are backed by a passing result (section 6)."
+        "(not ones the model guessed) are backed by a passing result (section 6). A run in which no test executed gets "
+        "NO VERDICT: it has no evidence either way."
     )
 
 
 def verdict_trigger(records: list[dict[str, Any]], requirements_backed_percent: float | None = None,
-                    threshold: float = REQUIREMENTS_BACKED_THRESHOLD) -> str:
+                    threshold: float = REQUIREMENTS_BACKED_THRESHOLD, executed_tests: int | None = None) -> str:
     """C2/C4: name what actually triggered a non-GO verdict, so nobody has to reverse-engineer it from a
     severity field or an inert coverage number - "NO-GO: 1 open defect not confirmed fixed (DEF-001)",
     not a bare "NO-GO"."""
+    if executed_tests == 0:
+        return "no test ran, so this run has no evidence either way"
     open_defects = [r for r in records if r["category"] == "defect" and r["status"] == "Open"]
     blocking = [r for r in open_defects if r["severity"] in {"Critical", "High"}]
     if blocking:
@@ -370,6 +380,10 @@ def exit_criteria(records: list[dict[str, Any]], cov_ids: list[str], verdict: st
     defects = [plain_id(r["id"]) for r in records if r["category"] == "defect" and r.get("status") == "Open"]
 
     out = []
+    if verdict == NO_VERDICT:
+        tooling = [plain_id(r["id"]) for r in records if r["category"] in {"tooling", "test_defect"}]
+        out.append("Tests actually run: fix what stopped them" + (f" ({id_range(tooling)}, section 5)" if tooling else "")
+                   + " and run again. Until then there is no verdict to improve on.")
     if defects:
         out.append(f"Every application defect ({id_range(defects)}) is fixed, retested and closed.")
     # P4: every clause capable of CAPPING the verdict must appear here, not just the ones that produced an
