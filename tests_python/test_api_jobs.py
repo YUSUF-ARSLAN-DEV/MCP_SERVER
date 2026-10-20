@@ -145,6 +145,16 @@ def test_addresses_on_the_servers_own_network_are_refused_with_a_reason(make_cli
     assert client.get("/api/jobs").json() == []
 
 
+def test_a_private_staging_site_runs_only_when_the_operator_allowed_it(make_client):
+    refused = signed_in(make_client()).post("/api/jobs", json={"url": "http://10.1.2.3/"})
+    assert refused.status_code == 422 and "10.1.2.3" in refused.json()["detail"] and "ALLOW_PRIVATE_TARGETS" in refused.json()["detail"]
+    client = signed_in(make_client(allow_private_targets=True))
+    created = client.post("/api/jobs", json={"url": "http://10.1.2.3/"})
+    assert created.status_code == 201 and created.json()["url"] == "http://10.1.2.3/"
+    wait_for(client, created.json()["id"])
+    assert client.post("/api/jobs", json={"url": "ftp://10.1.2.3/"}).status_code == 422        # the scheme check stays
+
+
 def test_one_run_at_a_time_per_person_and_cancel_frees_them(make_client):
     client = signed_in(make_client())
     slow = client.post("/api/jobs", json={"url": "slow.example.com"}).json()

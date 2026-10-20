@@ -136,7 +136,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     @app.post("/api/jobs", response_model=JobOut, status_code=201, dependencies=[Depends(require_access)])
     def create_job(body: JobCreate, request: Request):
         try:
-            url = security.validate_url(body.url, resolver)
+            url = security.validate_url(body.url, resolver, settings.allow_private_targets)
         except UrlRejected as exc:
             raise HTTPException(422, str(exc)) from exc
         model = checked_model(body.model) if body.model else None

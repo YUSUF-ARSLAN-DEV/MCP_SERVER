@@ -28,6 +28,9 @@ class AppSettings:
     session_secret: str = field(default_factory=lambda: os.getenv("SESSION_SECRET", ""))
     cookie_secure: bool = field(default_factory=lambda: _flag("COOKIE_SECURE"))
     trust_proxy: bool = field(default_factory=lambda: _flag("TRUST_PROXY"))
+    # test sites on private networks (a staging server behind a VPN, localhost). Off by default: on a shared server a
+    # visitor could otherwise make it browse its own network. Fine on a machine only you can reach.
+    allow_private_targets: bool = field(default_factory=lambda: _flag("ALLOW_PRIVATE_TARGETS"))
     # a person may point a run at their own model server (Ollama, LM Studio ...) on a private address; off by default,
     # because on a shared server that would let a visitor make it call into its own network
     allow_private_model_urls: bool = field(default_factory=lambda: _flag("ALLOW_PRIVATE_MODEL_URLS"))

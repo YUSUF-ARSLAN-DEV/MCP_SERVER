@@ -12,6 +12,9 @@ MAX_URL_LENGTH = 2048
 _BLOCKED_NAMES = ("localhost", ".localhost", ".local", ".internal", ".localdomain", ".home.arpa")
 
 
+_HINT = "If this is a staging site on your own network, the person running the server can allow it with ALLOW_PRIVATE_TARGETS=1."
+
+
 class UrlRejected(ValueError):
     """The URL may not be tested; the message is safe to show the person."""
 
@@ -30,9 +33,11 @@ def _is_public(address: str) -> bool:
     return ip.is_global and not ip.is_multicast
 
 
-def validate_url(raw: str, resolver=_resolve) -> str:
+def validate_url(raw: str, resolver=_resolve, allow_private: bool = False) -> str:
     """The URL to test, cleaned - or UrlRejected. Only public web addresses pass: a visitor-supplied URL must never make
-    the server browse its own network (localhost, private ranges, the cloud metadata address 169.254.169.254)."""
+    the server browse its own network (localhost, private ranges, the cloud metadata address 169.254.169.254).
+    allow_private is for an operator testing staging sites on their own network (ALLOW_PRIVATE_TARGETS): the address
+    check is skipped, the scheme and host checks are not."""
     raw = (raw or "").strip()
     if not raw or len(raw) > MAX_URL_LENGTH:
         raise UrlRejected("Enter a web address (up to 2048 characters).")
@@ -48,16 +53,18 @@ def validate_url(raw: str, resolver=_resolve) -> str:
     host = (parts.hostname or "").lower().rstrip(".")
     if not host:
         raise UrlRejected("That web address has no site name.")
-    if host == "localhost" or host.endswith(_BLOCKED_NAMES):
-        raise UrlRejected("Addresses on this server's own network cannot be tested.")
+    if not allow_private and (host == "localhost" or host.endswith(_BLOCKED_NAMES)):
+        raise UrlRejected(f"Addresses on this server's own network cannot be tested ({host}). {_HINT}")
     try:
         addresses = [str(ipaddress.ip_address(host))]       # the host is itself an IP address
     except ValueError:
         addresses = resolver(host)
     if not addresses:
         raise UrlRejected(f"The address '{host}' could not be found.")
-    if not all(_is_public(a) for a in addresses):
-        raise UrlRejected("Addresses on a private or internal network cannot be tested.")
+    private = [a for a in addresses if not _is_public(a)]
+    if private and not allow_private:
+        raise UrlRejected(f"Addresses on a private or internal network cannot be tested. {host} resolves to "
+                          f"{', '.join(private)}. {_HINT}")
     netloc = f"[{host}]" if ":" in host else host         # credentials in the URL are dropped
     if port:
         netloc += f":{port}"

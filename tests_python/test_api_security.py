@@ -36,6 +36,25 @@ def test_a_name_that_resolves_to_a_private_address_is_refused_even_when_another_
         validate_url("https://rebind.example/", lambda host: ["93.184.216.34", "10.0.0.7"])
 
 
+def test_the_refusal_says_which_host_resolved_to_which_private_address_and_what_to_do():
+    with pytest.raises(UrlRejected) as refused:
+        validate_url("https://sat-stg.example.tv/ar", lambda host: ["172.27.25.2"])
+    message = str(refused.value)
+    assert "sat-stg.example.tv resolves to 172.27.25.2" in message and "ALLOW_PRIVATE_TARGETS" in message
+    with pytest.raises(UrlRejected, match=r"localhost.*ALLOW_PRIVATE_TARGETS"):
+        validate_url("http://localhost:8000/", PUBLIC)
+
+
+def test_an_operator_can_allow_private_addresses_but_a_bad_scheme_is_still_refused():
+    private = lambda host: ["172.27.25.2"]
+    assert validate_url("https://sat-stg.example.tv/ar", private, allow_private=True) == "https://sat-stg.example.tv/ar"
+    assert validate_url("http://localhost:8000", PUBLIC, allow_private=True) == "http://localhost:8000/"
+    assert validate_url("http://169.254.169.254/latest", PUBLIC, allow_private=True).startswith("http://169.254.169.254")
+    for bad in ("ftp://sat-stg.example.tv/", "file:///etc/passwd", "http://"):
+        with pytest.raises(UrlRejected):
+            validate_url(bad, private, allow_private=True)
+
+
 def test_a_name_that_does_not_resolve_is_refused():
     def nowhere(host):
         raise UrlRejected("not found")
