@@ -152,7 +152,6 @@ nav{display:flex;flex-direction:column}
     <div style="flex:1"><label for="nProbe">Buttons to probe per page</label><input id="nProbe" type="number" min="0" max="20" placeholder="server default"></div></div>
     <label for="nHuman">When a CAPTCHA or sign-in appears</label>
     <select id="nHuman"><option value="ask">Ask me here, on this page</option><option value="skip">Skip it and report "Needs a person"</option></select>
-    <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400"><input id="nReuse" type="checkbox" style="width:auto;margin-top:4px"><span>Keep working in this site's folder <small>(journeys, ratings and the defect ledger carry over between runs; without this every run starts fresh)</small></span></label>
     <div class="err" id="nErr"></div>
     <p><button class="btn" id="nGo">Start run</button></p>
   </div>
@@ -258,9 +257,9 @@ nav{display:flex;flex-direction:column}
   </div>
 
   <div class="tp" id="tp-defects">
-    <p class="sub">Read-only. Defects persist across runs of the same site folder. Severity is frozen at first confirmation. A defect auto-closes after 3 consecutive clean runs.</p>
+    <p class="sub">Read-only. The defects this run recorded, with the severity set when each was first confirmed. Every run is independent, so nothing here carries over from another run.</p>
     <div class="card" id="defBody"><div class="empty">Pick a run.</div></div>
-    <p class="honest">A manual close needs a reason and writes an audit entry: <code>cli defects close &lt;key&gt; --reason "..."</code>. The ledger only carries over between runs started with "Keep working in this site's folder".</p>
+    <p class="honest">Closing a defect with a reason is done with the command line for now (<code>cli defects close &lt;key&gt; --reason "..."</code>).</p>
   </div>
 </section>
 
@@ -604,7 +603,7 @@ $('nGo').onclick=async()=>{
   $('nErr').textContent='';$('mErr').textContent='';
   const url=$('nUrl').value.trim();if(!url){$('nErr').textContent='Enter the site URL.';return;}
   let choice;try{choice=modelChoice();}catch(e){$('mErr').textContent=e.message;return;}
-  const options={reuse_workspace:$('nReuse').checked,ask_human:$('nHuman').value==='ask'};
+  const options={reuse_workspace:false,ask_human:$('nHuman').value==='ask'};         /* every run is its own, independent record */
   if($('nPages').value)options.max_pages=+$('nPages').value;
   if($('nProbe').value!=='')options.probe_max=+$('nProbe').value;
   $('nGo').disabled=true;
