@@ -1,0 +1,23 @@
+# Start it:   docker compose up --build        then open http://127.0.0.1:8000
+# The first visit asks you to create the first account (the administrator); the setup code (default: change-me) proves you may.
+# To change any setting, copy docker.env.example to docker.env and edit it (optional); see DOCKER.md.
+services:
+  app:
+    build:
+      context: .
+      args:
+        CODE_VERSION: ${CODE_VERSION:-unknown}      # optional: CODE_VERSION=$(git rev-parse --short HEAD) so runs record which version made them
+    image: website-test-pipeline:latest
+    restart: unless-stopped
+    init: true                      # reaps the browser processes a run leaves behind
+    shm_size: "1gb"                 # Chromium needs a real /dev/shm; the default 64 MB makes pages crash
+    ports:
+      - "127.0.0.1:8000:8000"       # only this machine; put a reverse proxy with HTTPS in front to share it (see DOCKER.md)
+    env_file:
+      - path: docker.env            # optional: your settings (see docker.env.example); never put into the image
+        required: false
+    volumes:
+      - wtp-data:/data              # the database, the saved-keys key file, and each run's scratch folder
+
+volumes:
+  wtp-data:

@@ -6,16 +6,17 @@ restart lives in one volume, `/data`: the database (`app.db`), and a scratch fol
 ## Start it
 
 ```bash
-cd deploy
-cp docker.env.example docker.env      # then edit docker.env: at least ACCESS_CODE, and SESSION_SECRET / SECRETS_KEY
-export CODE_VERSION=$(git rev-parse --short HEAD)   # optional: every run records which version of the code made it
-docker compose up -d --build
+docker compose up --build
 ```
 
-Run every `docker compose` command from the `deploy` folder.
+That is all. Add `-d` to run it in the background. It needs no other setup: the first account's setup code defaults to
+`change-me`, which is safe because the app only listens on this machine.
+
+To change settings, copy `docker.env.example` to `docker.env` and edit it (optional). **Before sharing the app with anyone,
+set your own `ACCESS_CODE`, and `SESSION_SECRET` / `SECRETS_KEY`, there.**
 
 Open <http://127.0.0.1:8000>. The first visit asks you to **create the first account** (the administrator); the
-`ACCESS_CODE` from `docker.env` proves you may. After that, people create their own accounts (or you add them under
+setup code (`ACCESS_CODE`, default `change-me`) proves you may. After that, people create their own accounts (or you add them under
 **Users**, if you set `SIGNUP=closed`).
 
 Each person then saves their own model on the **Models** page (provider, model name, API key). There is no model key in
@@ -28,7 +29,7 @@ the container's settings; saved keys are stored encrypted in the database.
 | Accounts, runs, run summaries, **report and evidence files**, saved models | `/data/app.db` | the one file to back up |
 | Key that encrypts saved API keys | `SECRETS_KEY` in `docker.env`, else `/data/secrets.key` | set `SECRETS_KEY` to keep it apart from the database |
 | A run's working files | `/data/runs/<run>/` | scratch: moved into the database and deleted when the run ends |
-| Settings | `docker.env` | never baked into the image |
+| Settings | `docker.env` (optional) | never baked into the image |
 
 ## Back it up
 
@@ -47,8 +48,6 @@ Restore: stop the app, copy the backup over `app.db` in the volume, start it.
 
 ```bash
 git pull
-cd deploy
-export CODE_VERSION=$(git rev-parse --short HEAD)
 docker compose up -d --build
 ```
 

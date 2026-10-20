@@ -16,6 +16,10 @@ ENV CODE_VERSION=${CODE_VERSION} \
     DATA_DIR=/data \
     HEADLESS=true
 
+# Proves you may create the FIRST account. A default, so the app starts with no setup (safe while the port is bound to this
+# machine only); set your own in docker.env before sharing it. It opens nothing once an account exists.
+ENV ACCESS_CODE=change-me
+
 WORKDIR /app
 
 # dependencies first, so a change to the code does not reinstall them
