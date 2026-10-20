@@ -115,7 +115,10 @@ nav{display:flex;flex-direction:column}
 .tabs2 a:hover{color:var(--ink)}.tabs2 a.on{color:var(--info);border-bottom-color:var(--info)}
 .rphead{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;margin-bottom:4px}.rphead .pill{margin-top:4px}
 .tp{display:none}.tp.on{display:block}
-@media (max-width:760px){.runlist{display:none}nav a.navi{width:auto}}
+.userbox{border-top:1px solid var(--line);padding:10px 4px 0;margin-top:8px;font-size:12px;color:var(--mute)}
+.userbox b{display:block;color:var(--ink);font-size:13px}.userbox a{color:var(--info);text-decoration:none}.userbox a:hover{text-decoration:underline}
+.linkbtn{background:none;border:0;color:var(--info);cursor:pointer;font:inherit;padding:0}.linkbtn:hover{text-decoration:underline}
+@media (max-width:760px){.runlist{display:none}.userbox{display:none}nav a.navi{width:auto}}
 </style>
 </head>
 <body>
@@ -124,8 +127,10 @@ nav{display:flex;flex-direction:column}
   <h1>Smoke Tester<small>AI-assisted web smoke testing</small></h1>
   <a class="navi" href="#/new" data-r="new">+ New run</a>
   <a class="navi" href="#/live" data-r="live">Live run <span class="dot running pulse" id="liveDot" style="display:none;margin-left:6px"></span></a>
+  <a class="navi" href="#/users" data-r="users" id="navUsers" style="display:none">Users</a>
   <div class="site"><a href="#/" style="color:inherit;text-decoration:none">Runs</a></div>
   <div class="runlist" id="runList"></div>
+  <div class="userbox" id="userBox"></div>
 </nav>
 <main>
 
@@ -186,6 +191,23 @@ nav{display:flex;flex-direction:column}
     <div class="card" id="humanCard"><h3>Waiting on a person</h3><div id="humanBody" class="empty">Nothing is waiting for you.</div>
       <p class="sub" style="margin:12px 0 0"><button class="btn sec sm" id="cancelBtn" disabled>Cancel run</button></p></div>
   </div>
+</section>
+
+<section class="view" id="users">
+  <h2>Users</h2>
+  <p class="sub">Everyone who can sign in. Each person only sees and controls their own runs; administrators see every run.</p>
+  <div class="card" id="usersBody"><div class="empty">Loading...</div></div>
+  <div class="card">
+    <h3>Add a person</h3>
+    <div class="row">
+      <div style="flex:1;min-width:160px"><label for="uName">Username</label><input id="uName" autocomplete="off" placeholder="e.g. alice"></div>
+      <div style="flex:1;min-width:160px"><label for="uPass">Temporary password</label><input id="uPass" type="password" autocomplete="new-password" placeholder="at least 10 characters"></div>
+      <div style="width:140px"><label for="uRole">Role</label><select id="uRole"><option value="member">Member</option><option value="admin">Administrator</option></select></div>
+    </div>
+    <div class="err" id="uErr"></div>
+    <p><button class="btn" id="uAdd">Add person</button></p>
+  </div>
+  <p class="honest">Disabling someone, or resetting their password, signs them out everywhere straight away. The last active administrator cannot be removed.</p>
 </section>
 
 <section class="view" id="runpage">
@@ -253,7 +275,7 @@ async function api(path,opt){
   const o=Object.assign({credentials:'same-origin',headers:{}},opt||{});
   if(o.body&&typeof o.body!=='string'){o.body=JSON.stringify(o.body);o.headers['Content-Type']='application/json';}
   let r;try{r=await fetch(path,o);}catch(e){throw new ApiError(0,'Cannot reach the server.');}
-  if(r.status===401){showGate();throw new ApiError(401,'Enter the access code first.');}
+  if(r.status===401){showAuth();throw new ApiError(401,'Sign in first.');}
   if(!r.ok){let d='';try{const j=await r.json();d=typeof j.detail==='string'?j.detail:JSON.stringify(j.detail);}catch(e){}
     throw new ApiError(r.status,d||('Request failed ('+r.status+').'));}
   const ct=r.headers.get('content-type')||'';
@@ -270,13 +292,14 @@ const sevClass=s=>s==='High'||s==='Critical'?'nogo':s==='Medium'?'cond':'idle';
 const TABS=['overview','report','journeys','defects'];
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.toggle('on',v.id===view));
-  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')));
+  document.querySelectorAll('nav a.navi').forEach(a=>a.classList.toggle('on',(a.dataset.r==='new'&&view==='new')||(a.dataset.r==='live'&&view==='run')||(a.dataset.r==='users'&&view==='users')));
   scrollTo(0,0);
 }
 function route(){
   const parts=(location.hash||'#/').replace(/^#\/?/,'').split('/').filter(Boolean);
   if(parts[0]==='new'){S.shown=null;show('new');paintRunList();return;}
   if(parts[0]==='live'){S.shown=null;show('run');paintRunList();openLive();return;}
+  if(parts[0]==='users'){S.shown=null;show('users');paintRunList();loadUsers();return;}
   if(parts[0]==='runs'&&parts[1]){S.shown=decodeURIComponent(parts[1]);show('runpage');renderRunPage(TABS.includes(parts[2])?parts[2]:'overview');return;}
   S.shown=null;show('home');paintRunList();paintHome();
 }
@@ -285,21 +308,105 @@ document.querySelectorAll('#rtabs button').forEach(b=>b.onclick=()=>{
   document.querySelectorAll('#rtabs button').forEach(x=>x.classList.toggle('on',x===b));
   document.querySelectorAll('.rt').forEach(c=>c.style.display=c.id===b.dataset.t?'block':'none');});
 
-/* ---------- access code ---------- */
-function showGate(msg){
-  if($('ov').dataset.lock)return;
-  $('ov').dataset.lock='1';
-  openModal(`<h3>Access code</h3><p class="sub" style="margin:0">This server asks for a code before it will run anything.</p>
-  <label for="gc">Code</label><input id="gc" type="password" autocomplete="current-password">
-  <div class="err" id="ge">${esc(msg||'')}</div>
-  <div class="actions"><button class="btn" id="gok">Enter</button></div>`);
-  const submit=async()=>{
-    const r=await fetch('/api/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('gc').value})}).catch(()=>null);
-    if(r&&r.ok){delete $('ov').dataset.lock;closeModal();init();return;}
-    let d='Cannot reach the server.';if(r){d='Not accepted.';try{d=(await r.json()).detail||d;}catch(e){}}
-    $('ge').textContent=d;};
-  $('gok').onclick=submit;$('gc').onkeydown=e=>{if(e.key==='Enter')submit();};
+/* ---------- who is using this: first account, sign in, sign out ---------- */
+function lockModal(html,focus){$('ov').dataset.lock='1';openModal(html);if(focus){const f=$(focus);if(f)f.focus();}}
+function unlockModal(){delete $('ov').dataset.lock;closeModal();}
+async function postJson(path,body){
+  const r=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).catch(()=>null);
+  if(r&&r.ok)return {ok:true};
+  let d='Cannot reach the server.';if(r){d='Not accepted.';try{const j=await r.json();d=typeof j.detail==='string'?j.detail:d;}catch(e){}}
+  return {ok:false,error:d};
 }
+async function showAuth(){
+  if($('ov').dataset.lock)return;
+  let st={};try{st=await (await fetch('/api/session',{credentials:'same-origin'})).json();}catch(e){}
+  if(st.authenticated)return;
+  if(st.setup_needed)return setupForm(st);
+  if(st.accounts)return signInForm();
+  return codeForm(false);
+}
+function signInForm(msg){
+  lockModal(`<h3>Sign in</h3><p class="sub" style="margin:0">Use your account to see and start your runs.</p>
+  <label for="siU">Username</label><input id="siU" autocomplete="username">
+  <label for="siP">Password</label><input id="siP" type="password" autocomplete="current-password">
+  <div class="err" id="siE">${esc(msg||'')}</div>
+  <div class="actions"><button class="btn" id="siGo">Sign in</button></div>`,'siU');
+  const go=async()=>{const r=await postJson('/api/login',{username:$('siU').value,password:$('siP').value});
+    if(r.ok){unlockModal();resetState();init();}else $('siE').textContent=r.error;};
+  $('siGo').onclick=go;$('siP').onkeydown=e=>{if(e.key==='Enter')go();};
+}
+function setupForm(st){
+  lockModal(`<h3>Create the first account</h3><p class="sub" style="margin:0">This becomes the administrator. You can add everyone else afterwards.</p>
+  <label for="suU">Username</label><input id="suU" autocomplete="username">
+  <label for="suP">Password <small>(at least 10 characters)</small></label><input id="suP" type="password" autocomplete="new-password">
+  <label for="suP2">Repeat the password</label><input id="suP2" type="password" autocomplete="new-password">
+  ${st.needs_code?'<label for="suC">Server access code <small>(proves you may set this server up)</small></label><input id="suC" type="password" autocomplete="off">':''}
+  <div class="err" id="suE"></div>
+  <div class="actions">${st.needs_code?'<button class="btn sec" id="suCode">Use the shared access code instead</button>':''}<button class="btn" id="suGo">Create account</button></div>`,'suU');
+  $('suGo').onclick=async()=>{
+    if($('suP').value!==$('suP2').value){$('suE').textContent='The two passwords are not the same.';return;}
+    const r=await postJson('/api/setup',{username:$('suU').value,password:$('suP').value,code:st.needs_code?$('suC').value:''});
+    if(r.ok){unlockModal();resetState();init();}else $('suE').textContent=r.error;};
+  if($('suCode'))$('suCode').onclick=()=>{unlockModal();codeForm(true,st);};
+}
+function codeForm(canGoBack,st){
+  lockModal(`<h3>Access code</h3><p class="sub" style="margin:0">This server has no accounts yet, so it asks for its shared code.</p>
+  <label for="gc">Code</label><input id="gc" type="password" autocomplete="current-password">
+  <div class="err" id="ge"></div>
+  <div class="actions">${canGoBack?'<button class="btn sec" id="gBack">Create an account instead</button>':''}<button class="btn" id="gok">Enter</button></div>`,'gc');
+  const go=async()=>{const r=await postJson('/api/login',{code:$('gc').value});
+    if(r.ok){unlockModal();resetState();init();}else $('ge').textContent=r.error;};
+  $('gok').onclick=go;$('gc').onkeydown=e=>{if(e.key==='Enter')go();};
+  if($('gBack'))$('gBack').onclick=()=>{unlockModal();setupForm(st);};
+}
+function resetState(){stopWatching();Object.assign(S,{jobs:[],shown:null,painted:null,liveId:null,report:{},me:null,asked:null});}
+function paintUser(){
+  const me=S.me;
+  $('navUsers').style.display=(me&&me.role==='admin')?'block':'none';
+  $('userBox').innerHTML=`<b>${esc(me?me.username:'Shared access')}</b>${me?esc(me.role==='admin'?'administrator':'member'):'one shared code, no accounts'}
+    <div style="margin-top:6px">${me?'<div><button class="linkbtn" id="chgPw">Change password</button></div>':''}<div><button class="linkbtn" id="signOut">Sign out</button></div></div>`;
+  if($('chgPw'))$('chgPw').onclick=changePasswordForm;
+  $('signOut').onclick=async()=>{await postJson('/api/logout',{});location.hash='#/';resetState();paintUser();paintRunList();paintHome();showAuth();};
+}
+function changePasswordForm(){
+  openModal(`<h3>Change your password</h3><p class="sub" style="margin:0">Every other place you are signed in will be signed out.</p>
+  <label for="cpC">Current password</label><input id="cpC" type="password" autocomplete="current-password">
+  <label for="cpN">New password <small>(at least 10 characters)</small></label><input id="cpN" type="password" autocomplete="new-password">
+  <label for="cpN2">Repeat the new password</label><input id="cpN2" type="password" autocomplete="new-password">
+  <div class="err" id="cpE"></div>
+  <div class="actions"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" id="cpGo">Change password</button></div>`);
+  $('cpGo').onclick=async()=>{
+    if($('cpN').value!==$('cpN2').value){$('cpE').textContent='The two new passwords are not the same.';return;}
+    try{await api('/api/password',{method:'POST',body:{current:$('cpC').value,new:$('cpN').value}});closeModal();toast('Password changed.');}
+    catch(e){$('cpE').textContent=e.message;}};
+}
+
+/* ---------- users (administrators) ---------- */
+async function loadUsers(){
+  const box=$('usersBody');
+  let list;try{list=await api('/api/users');}catch(e){box.innerHTML=`<div class="empty">${esc(e.message)}</div>`;return;}
+  box.innerHTML=`<table><tr><th>Username</th><th>Role</th><th>Status</th><th>Last sign-in</th><th></th></tr>${list.map(u=>`<tr>
+    <td><b>${esc(u.username)}</b>${S.me&&S.me.id===u.id?' <small>(you)</small>':''}</td>
+    <td><select data-role="${esc(u.id)}" style="width:auto"><option value="member"${u.role==='member'?' selected':''}>Member</option><option value="admin"${u.role==='admin'?' selected':''}>Administrator</option></select></td>
+    <td><span class="pill ${u.disabled?'idle':'go'}">${u.disabled?'disabled':'active'}</span></td><td>${when(u.last_login_at)}</td>
+    <td><button class="btn sm sec" data-toggle="${esc(u.id)}" data-disabled="${u.disabled?1:0}">${u.disabled?'Enable':'Disable'}</button>
+        <button class="btn sm sec" data-reset="${esc(u.id)}" data-name="${esc(u.username)}">Reset password</button></td></tr>`).join('')}</table>`;
+  const patch=async(id,body,ok)=>{try{await api('/api/users/'+encodeURIComponent(id),{method:'PATCH',body});toast(ok);}catch(e){toast(e.message);}loadUsers();};
+  box.querySelectorAll('[data-role]').forEach(el=>el.onchange=()=>patch(el.dataset.role,{role:el.value},'Role changed.'));
+  box.querySelectorAll('[data-toggle]').forEach(el=>el.onclick=()=>patch(el.dataset.toggle,{disabled:el.dataset.disabled!=='1'},el.dataset.disabled==='1'?'Account enabled.':'Account disabled and signed out.'));
+  box.querySelectorAll('[data-reset]').forEach(el=>el.onclick=()=>{
+    openModal(`<h3>Reset password for ${esc(el.dataset.name)}</h3><p class="sub" style="margin:0">They are signed out everywhere and must use this one next.</p>
+    <label for="rpN">New password <small>(at least 10 characters)</small></label><input id="rpN" type="password" autocomplete="new-password">
+    <div class="err" id="rpE"></div><div class="actions"><button class="btn sec" onclick="closeModal()">Cancel</button><button class="btn" id="rpGo">Reset</button></div>`);
+    $('rpGo').onclick=async()=>{try{await api('/api/users/'+encodeURIComponent(el.dataset.reset),{method:'PATCH',body:{password:$('rpN').value}});closeModal();toast('Password reset.');}
+      catch(e){$('rpE').textContent=e.message;}};});
+}
+$('uAdd').onclick=async()=>{
+  $('uErr').textContent='';
+  try{await api('/api/users',{method:'POST',body:{username:$('uName').value,password:$('uPass').value,role:$('uRole').value}});
+    $('uName').value='';$('uPass').value='';toast('Person added.');loadUsers();}
+  catch(e){$('uErr').textContent=e.message;}
+};
 
 /* ---------- runs list, home, run page ---------- */
 async function refreshJobs(){
@@ -557,11 +664,12 @@ async function loadDefects(){
 
 /* ---------- start ---------- */
 async function init(){
-  try{const s=await api('/api/session');if(!s.authenticated){showGate();return;}}
-  catch(e){if(e.status!==401)$('homeSub').textContent=e.message;return;}
+  let st;try{st=await api('/api/session');}catch(e){$('homeSub').textContent=e.message;return;}
+  if(!st.authenticated){showAuth();return;}
+  S.me=st.user||null;paintUser();
   try{await refreshJobs();}catch(e){$('homeSub').textContent=e.message;return;}
   route();
-  if(!S.poll)S.poll=setInterval(()=>{if(!document.hidden)refreshJobs().catch(()=>{});},15000);
+  if(!S.poll)S.poll=setInterval(()=>{if(!document.hidden&&S.me!==undefined&&!$('ov').dataset.lock)refreshJobs().catch(()=>{});},15000);
 }
 init();
 </script>
