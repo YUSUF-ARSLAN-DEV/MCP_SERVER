@@ -60,9 +60,21 @@ def test_an_open_high_or_critical_defect_is_no_go():
     assert policy.release_decision([_rec("DEF-001", "defect", "Critical"), _rec("UNV-001", "unverified")]) == "NO-GO"
 
 
-def test_no_defects_but_unverified_journeys_is_conditional_go():
-    assert policy.release_decision([_rec("UNV-001", "unverified", "High")]) == "CONDITIONAL GO"
+def test_a_medium_defect_is_conditional_go_but_what_the_run_could_not_observe_is_not_held_against_the_site():
     assert policy.release_decision([_rec("DEF-001", "defect", "Medium")]) == "CONDITIONAL GO"
+    # a production site whose map page and CAPTCHA form always leave journeys unverified could never reach GO
+    assert policy.release_decision([_rec("UNV-001", "unverified", "High"), _rec("UNV-002", "unverified")]) == "GO"
+    assert policy.verdict_trigger([_rec("UNV-001", "unverified", "High")]) == ""
+
+
+def test_only_requirements_people_wrote_can_cap_the_verdict_not_ones_the_model_guessed():
+    guessed_only = {"total": 6, "not_backed": 2, "percent": 33, "written_total": 0, "written_not_backed": 0}
+    assert policy.requirements_backed_percent(guessed_only) is None
+    mixed = {"total": 6, "not_backed": 4, "percent": 67, "written_total": 2, "written_not_backed": 1}
+    assert policy.requirements_backed_percent(mixed) == 50
+    assert policy.release_decision([], requirements_backed_percent=policy.requirements_backed_percent(mixed)) == "CONDITIONAL GO"
+    older = {"total": 4, "not_backed": 1, "percent": 25}                     # data from before the split counts everything
+    assert policy.requirements_backed_percent(older) == 75
 
 
 def test_limitations_tooling_and_test_defects_never_change_the_verdict():
@@ -193,9 +205,12 @@ def test_the_conditions_never_exceed_five_bullets():
 
 
 def test_exit_criteria_state_what_flips_the_verdict_not_a_copy_of_the_summary():
-    records = [_rec("UNV-001", "unverified"), _rec("UNV-002", "unverified"), _rec("UNV-003", "unverified")]
-    criteria = policy.exit_criteria(records, [], "CONDITIONAL GO")
-    assert criteria == ["Every unverified journey (UNV-001 to UNV-003) is manually signed off, with an owner named on each."]
+    records = [_rec("DEF-001", "defect"), _rec("UNV-001", "unverified"), _rec("TRI-001", "triage"),
+               _rec("LIM-001", "limitation"), _rec("TOOL-001", "tooling")]
+    criteria = policy.exit_criteria(records, ["COV-001"], "CONDITIONAL GO")
+    # only what can hold the verdict back is a hurdle; everything else is "a person should look" in the conditions
+    assert criteria == ["Every application defect (DEF-001) is fixed, retested and closed."]
+    assert policy.exit_criteria(records[1:], ["COV-001"], "GO") == ["No further condition applies; rerun on the next build to keep this verdict."]
 
 
 # ------------------------------------------------------------------ owners and due dates

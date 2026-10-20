@@ -1294,7 +1294,9 @@ def _requirement_stats(run: "RunReport") -> dict[str, Any]:
                      "passed": result == "Passed"})
     total = len(rows)
     not_backed = sum(not r["passed"] for r in rows)
-    return {"total": total, "not_backed": not_backed, "percent": round(100 * not_backed / total) if total else 0, "rows": rows}
+    written = [r for r in rows if r["source"] != "ai"]          # what people asked for; the model's guesses do not cap the verdict
+    return {"total": total, "not_backed": not_backed, "percent": round(100 * not_backed / total) if total else 0, "rows": rows,
+            "written_total": len(written), "written_not_backed": sum(not r["passed"] for r in written)}
 
 
 def _warning_items(run: "RunReport") -> list[tuple[str, str]]:
@@ -1435,7 +1437,7 @@ def _report_data(run: "RunReport", report_dir: Path,
     requirements = _requirement_stats(run)
     # C4: requirements coverage is a second, independent verdict input, not an inert number next to a verdict
     # it never influences - a report can show zero open defects while most requirements are unbacked.
-    backed_percent = 100 - requirements["percent"] if requirements["total"] else None
+    backed_percent = policy.requirements_backed_percent(requirements)
     recommendation = policy.release_decision(records, requirements_backed_percent=backed_percent)
     conditions = policy.build_conditions(records, [g["id"] for g in gaps], recommendation)
     env = environment_block(run)
@@ -2192,7 +2194,7 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
                      if found else (f'{carried} open application defect(s) carried from previous runs (not reproduced this run)' if carried
                                     else '0 application defects'))
     reqs = data["requirements"]
-    backed_percent = 100 - reqs["percent"] if reqs["total"] else None
+    backed_percent = policy.requirements_backed_percent(reqs)
     trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent)
     trigger_note = f" ({trigger})" if trigger else ""
     document.add_paragraph(
@@ -2202,7 +2204,10 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
         + policy.taxonomy_sentence(tax))
     document.add_paragraph(
         f'Requirements coverage: {reqs["not_backed"]} of {reqs["total"]} requirements ({reqs["percent"]}%) are not backed by a passing result '
-        f'(section 6), next to a {counts["pass_rate_percent"]}% pass rate among the tests that ran.' if reqs["total"] else
+        f'(section 6), next to a {counts["pass_rate_percent"]}% pass rate among the tests that ran.'
+        + (f' {reqs["total"] - reqs.get("written_total", reqs["total"])} of them were guessed by the model from the pages; '
+           'those are shown but do not affect the verdict.' if reqs.get("written_total", reqs["total"]) < reqs["total"] else '')
+        if reqs["total"] else
         "Requirements coverage: no written requirements were supplied, so it cannot be computed; the pass rate covers only the tests that ran.")
     # B1/B2: "Failed this run" is an arithmetic term (passed + failed this run == tests run, always); "Open
     # defects" is a ledger quantity and must never be collapsed into the same column - that collapse is what
@@ -2305,7 +2310,7 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
     recommendation = data["recommendation"]
     # C2/C4: name the trigger next to the verdict, so nobody has to reverse-engineer it from a severity field.
     reqs = data["requirements"]
-    backed_percent = 100 - reqs["percent"] if reqs["total"] else None
+    backed_percent = policy.requirements_backed_percent(reqs)
     trigger = policy.verdict_trigger(data["defects"], requirements_backed_percent=backed_percent)
     trigger_note = f": {trigger}" if trigger else ""
     if recommendation == "GO":

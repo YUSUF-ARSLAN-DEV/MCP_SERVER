@@ -278,11 +278,10 @@ def _validate_exit_criteria_cover_every_capping_clause(data: dict[str, Any]) -> 
     """P4: all four other exit criteria could be satisfied and GO would still be unreachable if requirements
     coverage stays below the threshold - the exit criteria list must say so, or a reader has no way to know
     that clause exists at all."""
-    reqs = data.get("requirements") or {}
-    if not reqs.get("total"):
+    from .report_policy import REQUIREMENTS_BACKED_THRESHOLD, requirements_backed_percent
+    backed_percent = requirements_backed_percent(data.get("requirements"))
+    if backed_percent is None:
         return
-    backed_percent = 100 - reqs["percent"]
-    from .report_policy import REQUIREMENTS_BACKED_THRESHOLD
     if backed_percent < REQUIREMENTS_BACKED_THRESHOLD and not any(
             "requirements" in c.lower() for c in data.get("exit_criteria", [])):
         raise ValueError(f"requirements coverage ({backed_percent:.0f}%) is below the "
@@ -363,9 +362,8 @@ def _validate_taxonomy(data: dict[str, Any]) -> None:
         raise ValueError(f"counts.open_defects ({data['counts']['open_defects']}) != open DEF-* "
                          f"records this run ({open_defects}) - every 'application defects' figure must read "
                          "this count, never the test-level pass/fail tally")
-    from .report_policy import release_decision
-    reqs = data.get("requirements") or {}
-    backed_percent = 100 - reqs["percent"] if reqs.get("total") else None
+    from .report_policy import release_decision, requirements_backed_percent
+    backed_percent = requirements_backed_percent(data.get("requirements"))
     expected = release_decision(records, requirements_backed_percent=backed_percent)
     if data["recommendation"] != expected:
         raise ValueError(f"recommendation {data['recommendation']} does not follow from the Defects table and "

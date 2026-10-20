@@ -226,11 +226,26 @@ def priority_uniformity_note(records: list[dict[str, Any]]) -> str | None:
 REQUIREMENTS_BACKED_THRESHOLD = 60.0
 
 
+def requirements_backed_percent(reqs: dict[str, Any] | None) -> float | None:
+    """The share of PEOPLE's requirements (typed in, or taken from a document) backed by a passing result, or None
+    when there are none. Requirements the model guessed by itself (source "ai") are shown in the report but never
+    cap the verdict: a guess such as "I click Search and see that no results are shown" is the tool's idea of the
+    site, not the site's promise, and failing to confirm it says nothing against the site."""
+    reqs = reqs or {}
+    if "written_total" in reqs:
+        total, not_backed = reqs["written_total"], reqs["written_not_backed"]
+    else:                                   # data written before the split: every requirement counted
+        total, not_backed = reqs.get("total", 0), reqs.get("not_backed", 0)
+    return round(100 * (total - not_backed) / total) if total else None
+
+
 def release_decision(records: list[dict[str, Any]], requirements_backed_percent: float | None = None,
                      threshold: float = REQUIREMENTS_BACKED_THRESHOLD) -> str:
     """Derived from the Defects table first. Any open High/Critical Defect is NO-GO; with none, any other open
-    Defect or any open Unverified journey is CONDITIONAL GO. Limitations, test defects and tooling issues never
-    change the verdict, and none of them is ever a release blocker.
+    Defect is CONDITIONAL GO. Unverified journeys, failed checks that need triage, limitations, test defects and
+    tooling issues never change the verdict: each is something the RUN could not establish, and a run's blind spot
+    is not evidence against the site (found live: a production site could never be better than CONDITIONAL GO,
+    because its map page and CAPTCHA form always left a few journeys unverified).
 
     C4: requirements coverage is a second, independent verdict input - a report may show zero open defects and
     still have most of its written requirements unbacked by any passing result, which an inert coverage number
@@ -239,7 +254,7 @@ def release_decision(records: list[dict[str, Any]], requirements_backed_percent:
     open_defects = [r for r in records if r["category"] == "defect" and r["status"] == "Open"]
     if any(r["severity"] in {"Critical", "High"} for r in open_defects):
         return "NO-GO"
-    if open_defects or any(r["category"] == "unverified" and r["status"] == "Open" for r in records):
+    if open_defects:
         return "CONDITIONAL GO"
     if requirements_backed_percent is not None and requirements_backed_percent < threshold:
         return "CONDITIONAL GO"
@@ -253,11 +268,11 @@ def release_rule_text() -> str:
         "Any open High or Critical Defect is NO-GO. A defect's severity reflects user impact and is fixed when the "
         "defect is confirmed; a run that does not reproduce it changes neither its severity nor its open status. An open "
         "defect keeps its blocking status until a person closes it, which requires 3 consecutive clean runs or a "
-        "deliberate close. With no open High or Critical Defect, any other open Defect or any open Unverified journey "
-        "is CONDITIONAL GO. Limitations, test defects and tooling issues never change the verdict, and none of them is "
-        f"ever a release blocker. With none of the above, a would-be GO is capped at CONDITIONAL GO if fewer than "
-        f"{REQUIREMENTS_BACKED_THRESHOLD:.0f}% of written requirements are backed by a passing result (section 6) - "
-        "zero open defects does not mean most requirements are confirmed working."
+        "deliberate close. With no open High or Critical Defect, any other open Defect is CONDITIONAL GO. What the run "
+        "could not establish - unverified journeys, failed checks that need triage, limitations, test defects and tooling "
+        "issues - is listed for a person to look at but never changes the verdict. With none of the above, a would-be GO "
+        f"is capped at CONDITIONAL GO if fewer than {REQUIREMENTS_BACKED_THRESHOLD:.0f}% of the requirements people wrote "
+        "(not ones the model guessed) are backed by a passing result (section 6)."
     )
 
 
@@ -274,10 +289,6 @@ def verdict_trigger(records: list[dict[str, Any]], requirements_backed_percent: 
     if open_defects:
         ids = id_range([r["id"] for r in open_defects])
         return f"{len(open_defects)} open defect(s) not confirmed fixed ({ids})"
-    unverified = [r for r in records if r["category"] == "unverified" and r["status"] == "Open"]
-    if unverified:
-        ids = id_range([r["id"] for r in unverified])
-        return f"{len(unverified)} unverified journey(s) ({ids})"
     if requirements_backed_percent is not None and requirements_backed_percent < threshold:
         return f"only {requirements_backed_percent:.0f}% of requirements backed by a passing result, below the {threshold:.0f}% threshold"
     return ""
@@ -353,21 +364,14 @@ def build_conditions(records: list[dict[str, Any]], cov_ids: list[str], verdict:
 def exit_criteria(records: list[dict[str, Any]], cov_ids: list[str], verdict: str, *,
                   requirements_backed_percent: float | None = None,
                   threshold: float = REQUIREMENTS_BACKED_THRESHOLD) -> list[str]:
-    """What flips the CURRENT verdict to GO - conditions, not a restatement of the executive summary."""
-    def ids(cat: str) -> list[str]:
-        return [plain_id(r["id"]) for r in records if r["category"] == cat]
+    """What flips the CURRENT verdict to GO, and nothing else: only an open Defect or the requirements threshold can
+    hold it back, so only those are listed. The things a person should still look at (triage, unverified journeys,
+    limitations, tooling issues, coverage gaps) are in the conditions and in section 5, not presented as hurdles."""
+    defects = [plain_id(r["id"]) for r in records if r["category"] == "defect" and r.get("status") == "Open"]
 
     out = []
-    if ids("defect"):
-        out.append(f"Every application defect ({id_range(ids('defect'))}) is fixed, retested and closed.")
-    if ids("unverified"):
-        out.append(f"Every unverified journey ({id_range(ids('unverified'))}) is manually signed off, with an owner named on each.")
-    if ids("limitation"):
-        out.append(f"Each limitation ({id_range(ids('limitation'))}) is either automated (staging bypass or test account) or accepted in writing by the site owner.")
-    if ids("tooling") or ids("test_defect"):
-        out.append(f"The tooling issues ({id_range(ids('tooling') + ids('test_defect'))}) are repaired and the affected pages and journeys rerun with a real result.")
-    if cov_ids:
-        out.append(f"The coverage gaps ({id_range(cov_ids)}) are reviewed by a person or covered by a new journey.")
+    if defects:
+        out.append(f"Every application defect ({id_range(defects)}) is fixed, retested and closed.")
     # P4: every clause capable of CAPPING the verdict must appear here, not just the ones that produced an
     # open record - all four other criteria above could be satisfied and GO would still be unreachable if
     # requirements coverage stays below the threshold, with nothing here saying so.
