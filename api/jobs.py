@@ -28,10 +28,13 @@ _PRIVATE_ENV = ("ACCESS_CODE", "SESSION_SECRET")
 _FINISHED_CODES = (0, 1)
 
 
-def site_name(url: str, job_id: str, reuse: bool) -> str:
-    """The workspace folder name. A fresh run gets its own folder; `reuse` keeps working in runs/<host>/ (flows, ratings)."""
+def site_name(url: str, job_id: str, reuse: bool, owner: str = "") -> str:
+    """The workspace folder name. A fresh run gets its own folder; `reuse` keeps working in runs/<host>/ (flows, ratings).
+    With accounts the reused folder is per person (runs/<owner>-<host>/): nobody works in, or sees, another person's."""
     host = re.sub(r"[^a-z0-9.-]", "_", (urlsplit(url).netloc or "site").lower())
-    return host if reuse else f"{host}-{job_id[:6]}"
+    if reuse:
+        return f"{owner}-{host}" if owner else host
+    return f"{host}-{job_id[:6]}"
 
 
 def last_progress(run_dir: Path) -> dict | None:

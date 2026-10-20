@@ -27,7 +27,48 @@ class JobCreate(BaseModel):
 
 
 class Login(BaseModel):
-    code: str
+    """Before any account exists the shared access code signs you in; after, a username and password."""
+    code: str = Field(default="", max_length=200)
+    username: str = Field(default="", max_length=64)
+    password: str = Field(default="", max_length=400, repr=False)
+
+
+class SetupIn(BaseModel):
+    """The first account, which becomes the administrator. Needs the server's access code when it has one."""
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=400, repr=False)
+    code: str = Field(default="", max_length=200)
+
+
+class UserCreate(BaseModel):
+    username: str = Field(max_length=64)
+    password: str = Field(max_length=400, repr=False)
+    role: Literal["admin", "member"] = "member"
+
+
+class UserPatch(BaseModel):
+    role: Literal["admin", "member"] | None = None
+    disabled: bool | None = None
+    password: str | None = Field(default=None, max_length=400, repr=False)
+
+
+class PasswordChange(BaseModel):
+    current: str = Field(max_length=400, repr=False)
+    new: str = Field(max_length=400, repr=False)
+
+
+class UserOut(BaseModel):
+    id: str
+    username: str
+    role: str
+    disabled: bool
+    created_at: str
+    last_login_at: str | None = None
+
+    @classmethod
+    def of(cls, user: dict) -> "UserOut":
+        return cls(id=user["id"], username=user["username"], role=user["role"], disabled=bool(user["disabled"]),
+                   created_at=user["created_at"], last_login_at=user.get("last_login_at"))
 
 
 class HumanAnswerIn(BaseModel):

@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', run_dir TEXT NOT NULL, options TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, created_at);
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member', disabled INTEGER NOT NULL DEFAULT 0, session_version INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL, last_login_at TEXT
+);
 CREATE TABLE IF NOT EXISTS human_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
     payload TEXT NOT NULL DEFAULT '{}', answer TEXT, state TEXT NOT NULL DEFAULT 'open',
@@ -60,9 +65,11 @@ class Database:
             row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
         return _job(row)
 
-    def list_jobs(self, limit: int = 50) -> list[dict]:
+    def list_jobs(self, limit: int = 50, user_id: str | None = None) -> list[dict]:
+        """Newest first. With user_id, only that person's runs."""
+        where, args = ("WHERE user_id = ? ", (user_id,)) if user_id is not None else ("", ())
         with self._conn() as conn:
-            rows = conn.execute("SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
+            rows = conn.execute(f"SELECT * FROM jobs {where}ORDER BY created_at DESC, rowid DESC LIMIT ?", (*args, limit)).fetchall()
         return [_job(r) for r in rows]
 
     def claim_next(self) -> dict | None:
@@ -152,6 +159,62 @@ class Database:
                 conn.execute("UPDATE jobs SET status = 'needs_human' WHERE id = ? AND status = 'running'", (job_id,))
             else:
                 conn.execute("UPDATE jobs SET status = 'running' WHERE id = ? AND status = 'needs_human'", (job_id,))
+
+    # ---- accounts ---------------------------------------------------------------------------------------------
+    def count_users(self) -> int:
+        with self._conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+
+    def create_user(self, user_id: str, username: str, password_hash: str, role: str) -> dict:
+        with self._conn() as conn:
+            conn.execute("INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)",
+                         (user_id, username, password_hash, role, now()))
+        return self.get_user(user_id)
+
+    def create_first_user(self, user_id: str, username: str, password_hash: str) -> dict | None:
+        """The administrator, created only if there are no accounts at all (None when someone got there first)."""
+        with self._conn() as conn:
+            cur = conn.execute(
+                "INSERT INTO users (id, username, password_hash, role, created_at) SELECT ?,?,?,'admin',? WHERE (SELECT COUNT(*) FROM users) = 0",
+                (user_id, username, password_hash, now()))
+        return self.get_user(user_id) if cur.rowcount else None
+
+    def get_user(self, user_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_user_by_name(self, username: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+        return dict(row) if row else None
+
+    def list_users(self) -> list[dict]:
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM users ORDER BY created_at, rowid").fetchall()]
+
+    def active_admins(self) -> int:
+        with self._conn() as conn:
+            return conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0").fetchone()[0]
+
+    def touch_login(self, user_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (now(), user_id))
+
+    def update_user(self, user_id: str, *, role: str | None = None, disabled: bool | None = None, password_hash: str | None = None) -> None:
+        """A new password or a disabled account also ends every session that user has (session_version moves on)."""
+        sets, args = [], []
+        if role is not None:
+            sets.append("role = ?"); args.append(role)
+        if disabled is not None:
+            sets.append("disabled = ?"); args.append(1 if disabled else 0)
+        if password_hash is not None:
+            sets.append("password_hash = ?"); args.append(password_hash)
+        if disabled or password_hash is not None:
+            sets.append("session_version = session_version + 1")
+        if sets:
+            with self._conn() as conn:
+                conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", (*args, user_id))
 
     # ---- limits -----------------------------------------------------------------------------------------------
     def active_jobs_for(self, user_id: str) -> int:

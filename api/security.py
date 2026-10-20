@@ -1,8 +1,11 @@
 """What stands between a stranger and the server: which URLs may be tested, who may use the API, how often."""
 from __future__ import annotations
+import base64
 import hashlib
 import hmac
 import ipaddress
+import os
+import re
 import socket
 import time
 from collections import defaultdict, deque
@@ -115,6 +118,76 @@ def verify_token(secret: str, token: str | None, now: float | None = None) -> bo
 
 def code_matches(expected: str, given: str | None) -> bool:
     return bool(expected) and hmac.compare_digest(expected.encode(), (given or "").encode())
+
+
+# ---- accounts: passwords and per-user session tokens ----------------------------------------------------------
+MIN_PASSWORD = 10
+MAX_PASSWORD = 200
+_USERNAME = re.compile(r"^[a-z0-9][a-z0-9._-]{2,31}$")
+_SCRYPT = (2 ** 14, 8, 1)                     # n, r, p: ~16 MB and a few tens of ms per guess
+
+
+class WeakCredentials(ValueError):
+    """A username or password that may not be used; the message is safe to show the person."""
+
+
+def clean_username(raw: str) -> str:
+    name = (raw or "").strip().lower()
+    if not _USERNAME.match(name):
+        raise WeakCredentials("A username is 3 to 32 letters, digits, dots, dashes or underscores, starting with a letter or digit.")
+    return name
+
+
+def check_password(password: str, username: str = "") -> None:
+    if len(password or "") < MIN_PASSWORD:
+        raise WeakCredentials(f"A password needs at least {MIN_PASSWORD} characters.")
+    if len(password) > MAX_PASSWORD:
+        raise WeakCredentials(f"A password can be at most {MAX_PASSWORD} characters.")
+    if username and password.lower() == username.lower():
+        raise WeakCredentials("The password cannot be the same as the username.")
+    if len(set(password)) < 4:
+        raise WeakCredentials("That password is too repetitive.")
+
+
+def hash_password(password: str) -> str:
+    """scrypt with a random salt, as 'scrypt$n$r$p$salt$hash' - the parameters travel with the hash so they can change later."""
+    n, r, p = _SCRYPT
+    salt = os.urandom(16)
+    digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32)
+    return "$".join(["scrypt", str(n), str(r), str(p), base64.b64encode(salt).decode(), base64.b64encode(digest).decode()])
+
+
+def verify_password(password: str, stored: str) -> bool:
+    try:
+        scheme, n, r, p, salt, digest = stored.split("$")
+        if scheme != "scrypt":
+            return False
+        expected = base64.b64decode(digest)
+        actual = hashlib.scrypt((password or "").encode("utf-8"), salt=base64.b64decode(salt), n=int(n), r=int(r), p=int(p), dklen=len(expected))
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
+
+
+DUMMY_HASH = hash_password("not-a-real-account-password")     # verified against when the username is unknown, so timing does not tell
+
+
+def make_user_token(secret: str, user_id: str, session_version: int, now: float | None = None) -> str:
+    """u.<user>.<session version>.<expires>.<signature>. Bumping the user's session version (password change, account disabled) kills every token."""
+    body = f"u.{user_id}.{int(session_version)}.{int((now or time.time()) + SESSION_TTL_S)}"
+    return f"{body}.{_sign(secret, body)}"
+
+
+def read_user_token(secret: str, token: str | None, now: float | None = None) -> tuple[str, int] | None:
+    """(user id, session version) from a genuine, unexpired token - else None. The caller still checks the user and version."""
+    try:
+        tag, user_id, version, expires, signature = (token or "").split(".")
+        body = f"{tag}.{user_id}.{version}.{expires}"
+        if tag != "u" or not hmac.compare_digest(signature, _sign(secret, body)) or int(expires) <= (now or time.time()):
+            return None
+        return user_id, int(version)
+    except ValueError:
+        return None
 
 
 class SlidingWindow:
