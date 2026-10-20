@@ -784,7 +784,12 @@ async function loadReport(){
   const rq=d.requirements||{};
   $('r-req').innerHTML=(rq.rows||[]).length?`<table><tr><th>Sentence</th><th>Result</th></tr>${rq.rows.map(r=>`<tr><td>${esc(r.sentence)}</td><td><span class="pill ${r.passed?'go':'idle'}">${r.passed?'passed':'not backed'}</span><br><small>${esc(r.reason||r.result||'')}</small></td></tr>`).join('')}</table>`:'<div class="empty">No written requirements were supplied.</div>';
   let files=[];try{files=await api(`/api/jobs/${job.id}/files`);}catch(e){}
-  $('r-dl').innerHTML=files.length?files.map(f=>`<div class="dl"><div class="ico">${esc(f.path.split('.').pop().toUpperCase().slice(0,4))}</div><div class="meta"><b>${esc(f.path.split('/').pop())}</b><small>${(f.size/1024).toFixed(0)} KB</small></div><a class="btn sec sm" href="${dl(job.id,f.path)}" download>Download</a></div>`).join(''):'<div class="empty">No files.</div>';
+  /* the two Word documents are the deliverables (summary, then appendix with screenshots); every other file is folded away */
+  const row=(f,label)=>`<div class="dl"><div class="ico">${esc(f.path.split('.').pop().toUpperCase().slice(0,4))}</div><div class="meta"><b>${esc(label||f.path.split('/').pop())}</b><small>${esc(f.path.split('/').pop())} · ${(f.size/1024).toFixed(0)} KB</small></div><a class="btn sm" href="${dl(job.id,f.path)}" download>Download</a></div>`;
+  const isDoc=f=>/\.docx$/i.test(f.path),isAppendix=f=>/appendix/i.test(f.path);
+  const docs=files.filter(isDoc).sort((a,b)=>isAppendix(a)-isAppendix(b)),others=files.filter(f=>!isDoc(f));
+  $('r-dl').innerHTML=files.length?docs.map(f=>row(f,isAppendix(f)?'Appendix (screenshots, evidence, failure details)':'Report (executive summary)')).join('')
+    +(others.length?`<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">Other files (${others.length}) - data, logs, the same report as text</summary>${others.map(f=>row(f)).join('')}</details>`:''):'<div class="empty">No files.</div>';
 }
 
 /* ---------- journeys and defects (read-only, straight from the run folder) ---------- */
