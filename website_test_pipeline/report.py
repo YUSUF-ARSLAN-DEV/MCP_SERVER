@@ -1036,14 +1036,21 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
             raw_error = outcome.error or ""
             timing_race = bool(re.search(r"Timeout \d+ms exceeded", raw_error)) and bool(re.search(r"not (visible|stable|enabled)", raw_error))
             flaky = kind == "unclear" and timing_race and flow is not None and flow.status == "verified"
-            category = policy.category_for(kind)
+            category = policy.triage_category(kind, raw_error)
             description = f"{actual} Failure class: {kind}." if finding else actual
+            if category == "triage":
+                description = (f"{actual} The test failed while trying to act on the page, before it saw what the page does; "
+                               "this is often the test (a hidden or covered element, a wrong selector) rather than the site. "
+                               "Open the trace or video to decide.")
             if flaky:
                 description += (" This flow's recent history mixes passes and failures with this same timeout "
                                 "signature (see the Risks section); it remains recorded as verified.")
                 impact = (f'Visitors doing "{title}" from {_page_of(outcome.url)} intermittently cannot finish it - the automated '
                           "check has passed in previous runs and failed with the same timing signature in others, so this is "
                           "flagged as a real but likely intermittent defect, not a one-off.")
+            elif category == "triage":
+                impact = (f'Unknown until someone looks: the check "{title}" on {_page_of(outcome.url)} could not complete its step. '
+                          "It is not counted as an application defect and does not change the release decision.")
             else:
                 impact = (f'Visitors doing "{title}" from {_page_of(outcome.url)} may not be able to finish it; this run failed to confirm the journey works.'
                           if flow else f'The check "{title}" on {_page_of(outcome.url)} failed, so that part of the page is not confirmed to work.')
@@ -1540,7 +1547,8 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
     document.add_paragraph(policy.taxonomy_sentence(tax))
     document.add_paragraph("Release rule: " + policy.release_rule_text())
     document.add_paragraph(
-        "ID legend: DEF = Defect (something ran and was broken), UNV = Unverified journey (could not be confirmed either way), "
+        "ID legend: DEF = Defect (something ran and was broken), TRI = Needs triage (a check failed before it could see the "
+        "result; a person decides whether it is the site or the test), UNV = Unverified journey (could not be confirmed either way), "
         "LIM = Limitation (tooling cannot test it - CAPTCHA, sign-in, no test account), TST = Test defect (the test itself is "
         "wrong), TOOL = Tooling issue (the harness failed), COV = Coverage gap (section 6). "
         "Priority: P1 = before release, P2 = next fix cycle, P3 = when convenient.")
@@ -1562,6 +1570,17 @@ def _findings_section(document, run: RunReport, report_data: dict[str, Any] | No
                 f'Impact: {d["business_impact"]}')
     else:
         document.add_paragraph("0 application defects: no test that ran found the application broken.")
+
+    document.add_heading("Needs triage", 2)
+    document.add_paragraph("A check failed while trying to act on the page (a click or fill timed out, or something covered the "
+                           "target), so it never saw what the page does. These are often problems in the test, not the site. "
+                           "They are not counted as defects and do not change the verdict; a person opens the trace and decides.")
+    if by_cat["triage"]:
+        _record_table(document, by_cat["triage"], [
+            ("ID", lambda d: _display_id(d["id"]), 0.75), ("Title", lambda d: d["title"], 1.9),
+            ("Page", lambda d: d["url"], 1.2), ("What happened", lambda d: d["actual"], 1.9), ("Evidence", "evidence", 1.55)])
+    else:
+        document.add_paragraph("Nothing needs triage.")
 
     document.add_heading("Unverified journeys", 2)
     document.add_paragraph("The journey could not be confirmed either way. Severity is the business value of the journey (default Medium). "
@@ -2269,6 +2288,8 @@ def _action_text(record: dict[str, Any]) -> str:
     kind = record["category"]
     if kind == "defect":
         return f'Fix and retest: {record["title"]}'
+    if kind == "triage":
+        return f'Open the trace and decide: site defect or test problem? {record["title"]}'
     if kind == "unverified":
         return f'Manual pass, or add an outcome check so a run can verify it: {record["title"]}'
     if kind == "limitation":
@@ -2322,7 +2343,8 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
         # this disclosure must say which situation this is, not assume the former whenever it sees the latter.
         fell_back = [d for d in records if d.get("owner_source") == "default"]
         if len(categories) > 1 and len(owners) == 1 and fell_back:
-            descriptions = {"defect": "fix an application defect", "test_defect": "correct a wrong test",
+            descriptions = {"defect": "fix an application defect", "triage": "decide whether a failed check is the site or the test",
+                            "test_defect": "correct a wrong test",
                             "tooling": "repair the test harness", "limitation": "get the site owner's agreement on a limitation",
                             "unverified": "give an unverified journey a manual pass"}
             fallback_categories = {d["category"] for d in fell_back}

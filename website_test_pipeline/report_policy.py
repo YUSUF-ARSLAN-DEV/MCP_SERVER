@@ -24,11 +24,11 @@ class ReportConsistencyError(ValueError):
 
 # ----------------------------------------------------------------------------------------------- taxonomy
 
-CATEGORIES = ("defect", "unverified", "limitation", "test_defect", "tooling")
-PREFIX = {"defect": "DEF", "unverified": "UNV", "limitation": "LIM", "test_defect": "TST", "tooling": "TOOL"}
-CATEGORY_LABEL = {"defect": "Defect", "unverified": "Unverified", "limitation": "Limitation",
+CATEGORIES = ("defect", "triage", "unverified", "limitation", "test_defect", "tooling")
+PREFIX = {"defect": "DEF", "triage": "TRI", "unverified": "UNV", "limitation": "LIM", "test_defect": "TST", "tooling": "TOOL"}
+CATEGORY_LABEL = {"defect": "Defect", "triage": "Needs triage", "unverified": "Unverified", "limitation": "Limitation",
                   "test_defect": "Test defect", "tooling": "Tooling issue"}
-ID_RE = re.compile(r"\b(?:DEF|UNV|LIM|TST|TOOL|COV)[-" + NBH + r"]\d{3}\b")
+ID_RE = re.compile(r"\b(?:DEF|TRI|UNV|LIM|TST|TOOL|COV)[-" + NBH + r"]\d{3}\b")
 
 _LIMITATION_KINDS = {"human_input_required", "authentication_required"}
 _UNVERIFIED_KINDS = {"inconclusive", "blocked_flow", "auth_failure"}
@@ -48,8 +48,33 @@ def category_for(kind: str | None) -> str:
     return "defect"
 
 
+# The test could not PERFORM a step (click, fill, select ... timed out, or another element was on top of the target).
+# It never got far enough to see what the site does, so the failure says nothing yet about the site: a hidden skip
+# link, a cookie banner over a button, or a wrong selector all look exactly like this. An expect() that ran and saw
+# the wrong thing (wrong URL, missing text) is different: that is an observation of the site. Page loads (goto) and
+# waits for something to appear are observations too, so they are not in this list.
+_ACTION_TIMEOUT = re.compile(r"\b(?:Locator|Page|Frame|ElementHandle)\.(?:click|dblclick|fill|type|press|press_sequentially|check|uncheck|"
+                             r"select_option|hover|tap|set_input_files|focus|clear|set_checked|drag_to): Timeout \d+ms exceeded")
+_COVERED = re.compile(r"intercepts pointer events|another element (?:was covering|would receive the click)|strict mode violation", re.I)
+
+
+def is_action_failure(error: str | None) -> bool:
+    """True when the test failed while trying to act on the page, before it observed any outcome."""
+    text = error or ""
+    return bool(_ACTION_TIMEOUT.search(text) or _COVERED.search(text))
+
+
+def triage_category(kind: str | None, error: str | None) -> str:
+    """category_for, except that a failure nobody could explain ("unclear") that happened while the test was
+    trying to act is "triage": a person looks at the trace before anyone calls it a bug in the site."""
+    category = category_for(kind)
+    if category == "defect" and (kind or "unclear") == "unclear" and is_action_failure(error):
+        return "triage"
+    return category
+
+
 def display_id(value: str) -> str:
-    return re.sub(r"^(DEF|UNV|LIM|TST|TOOL|COV)-", lambda m: m.group(1) + NBH, value or "")
+    return re.sub(r"^(DEF|TRI|UNV|LIM|TST|TOOL|COV)-", lambda m: m.group(1) + NBH, value or "")
 
 
 def plain_id(value: str) -> str:
@@ -153,7 +178,7 @@ def impact_severity(category: str, *, scope: str, title: str, failure_text: str 
     (reliability IS part of impact), not a reclassification that hides the failure from the Defects table."""
     if category in {"limitation", "test_defect", "tooling"}:
         return "Low"
-    if category == "unverified":
+    if category in {"unverified", "triage"}:
         return business_value(title)
     text = f"{failure_text}\n{assertion_text}"
     secondary = bool(_LOW_VALUE.search(title or "")) and not _HIGH_VALUE.search(title or "")
@@ -174,6 +199,8 @@ def priority_for(category: str, severity: str) -> str:
     """Urgency follows severity; a limitation is never P1."""
     if category in {"limitation", "test_defect", "tooling"}:
         return "P3 - when convenient"
+    if category == "triage":
+        return "P2 - next fix cycle"          # a person looks first; it is never a release blocker on its own
     if severity in {"Critical", "High"}:
         return "P1 - before release"
     return "P2 - next fix cycle" if severity == "Medium" else "P3 - when convenient"
@@ -261,7 +288,7 @@ def taxonomy_counts(records: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def taxonomy_sentence(tax: dict[str, int]) -> str:
-    return (f"{tax['defect']} application defect(s), {tax['unverified']} unverified journey(s), "
+    return (f"{tax['defect']} application defect(s), {tax.get('triage', 0)} failed check(s) needing triage, {tax['unverified']} unverified journey(s), "
             f"{tax['limitation']} tooling limitation(s), {tax['test_defect']} test defect(s) and "
             f"{tax['tooling']} tooling issue(s) were recorded.")
 
@@ -288,9 +315,12 @@ def build_conditions(records: list[dict[str, Any]], cov_ids: list[str], verdict:
         fixed.append((f"{len(defects)} application defect(s) must be fixed and retested before release ({id_range(defects)}, section 5)."
                       if verdict == "NO-GO" else
                       f"{len(defects)} open defect(s) must be fixed or accepted by the owner ({id_range(defects)}, section 5)."))
-    unverified = ids("unverified")
-    if unverified:
-        fixed.append(f"{len(unverified)} journeys need a manual pass before sign-off ({id_range(unverified)}, section 5).")
+    triage, unverified = ids("triage"), ids("unverified")
+    # one bullet for "a person should look", so the five-bullet limit still holds with the triage type added
+    look = ([f"{len(triage)} failed check(s) whose cause is not known yet ({id_range(triage)})"] if triage else []) + \
+           ([f"{len(unverified)} journey(s) the run could not confirm either way ({id_range(unverified)})"] if unverified else [])
+    if look:
+        fixed.append(f"A person should look at {' and '.join(look)}, section 5.")
     if cov_ids:
         fixed.append(f"{len(cov_ids)} page(s) have controls that no journey exercised ({id_range(cov_ids)}, section 6).")
     harness = ids("tooling") + ids("test_defect")
@@ -376,8 +406,8 @@ def _real_name(value: Any) -> str | None:
     return None if text.lower() in _PLACEHOLDER_OWNER else text
 
 
-CATEGORY_ALIASES = {"defect": "application_defect", "tooling": "test_harness", "limitation": "site_owner_agreement",
-                    "unverified": "unverified_journey", "test_defect": "test_defect"}
+CATEGORY_ALIASES = {"defect": "application_defect", "triage": "failure_triage", "tooling": "test_harness",
+                    "limitation": "site_owner_agreement", "unverified": "unverified_journey", "test_defect": "test_defect"}
 
 
 def resolve_owner(cfg: dict[str, Any], record: dict[str, Any]) -> str | None:

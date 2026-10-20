@@ -26,6 +26,35 @@ def test_kinds_map_to_the_three_decision_tables_plus_tooling():
     assert policy.category_for("unclear") == "defect"
 
 
+# Real errors from a production site that the report called application defects (sat.aljazeera.net, 2026-10-20).
+SKIP_LINK = ("Locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for get_by_role(\"link\", name=\"Skip to main content\")\n"
+             "  - <div class=\"header\">...</div> intercepts pointer events\n  - retrying click action")
+DROPDOWN = ("Locator.click: Timeout 30000ms exceeded.\nCall log:\n"
+            "  - waiting for locator(\"label[for='ui-multiselect-channellist-option-1']\")\n  - element is not visible")
+WRONG_PAGE = "AssertionError: Page URL expected to be 'https://x.test/en/find'\nActual value: https://x.test/en/login"
+MISSING = ("AssertionError: Locator expected to be visible\nActual value: <element(s) not found>\nCall log:\n"
+           "  - Expect \"to_be_visible\" with timeout 5000ms")
+NO_LOAD = "Page.goto: Timeout 30000ms exceeded.\nCall log:\n  - navigating to \"https://x.test/\", waiting until \"load\""
+
+
+def test_a_check_that_could_not_act_on_the_page_needs_triage_not_a_defect():
+    assert policy.triage_category("unclear", SKIP_LINK) == "triage"          # a hidden skip link, covered by the header
+    assert policy.triage_category("unclear", DROPDOWN) == "triage"           # clicked an option before the menu opened
+
+
+def test_a_check_that_saw_the_site_do_the_wrong_thing_is_still_a_defect():
+    assert policy.triage_category("unclear", WRONG_PAGE) == "defect"          # it observed the wrong address
+    assert policy.triage_category("unclear", MISSING) == "defect"             # it observed the element missing
+    assert policy.triage_category("unclear", NO_LOAD) == "defect"             # the page itself did not load
+    assert policy.triage_category("test_defect", SKIP_LINK) == "test_defect"  # a known cause keeps its own category
+    assert policy.triage_category("inconclusive", SKIP_LINK) == "unverified"
+
+
+def test_triage_is_never_p1_and_never_blocks():
+    assert policy.priority_for("triage", "High") == "P2 - next fix cycle"
+    assert policy.release_decision([_rec("TRI-001", "triage", "High")]) != "NO-GO"
+
+
 def test_an_open_high_or_critical_defect_is_no_go():
     assert policy.release_decision([_rec("DEF-001", "defect", "High")]) == "NO-GO"
     assert policy.release_decision([_rec("DEF-001", "defect", "Critical"), _rec("UNV-001", "unverified")]) == "NO-GO"
@@ -139,7 +168,14 @@ def test_a_stated_expectation_that_differs_from_the_assertion_that_ran_is_a_test
 def test_thirteen_unverified_journeys_collapse_into_one_bullet_with_an_id_range():
     records = [_rec(f"UNV-{n:03d}", "unverified") for n in range(1, 14)]
     bullets = policy.build_conditions(records, [], "CONDITIONAL GO")
-    assert bullets == ["13 journeys need a manual pass before sign-off (UNV-001 to UNV-013, section 5)."]
+    assert bullets == ["A person should look at 13 journey(s) the run could not confirm either way (UNV-001 to UNV-013), section 5."]
+
+
+def test_failed_checks_needing_triage_share_the_look_bullet_with_unverified_journeys():
+    records = [_rec("TRI-001", "triage"), _rec("TRI-002", "triage"), _rec("UNV-001", "unverified")]
+    assert policy.build_conditions(records, [], "GO") == [
+        "A person should look at 2 failed check(s) whose cause is not known yet (TRI-001, TRI-002) and "
+        "1 journey(s) the run could not confirm either way (UNV-001), section 5."]
 
 
 def test_each_limitation_bullet_keeps_its_own_id_and_url_when_it_fits():
