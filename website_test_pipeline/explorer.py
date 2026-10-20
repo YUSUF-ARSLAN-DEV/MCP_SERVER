@@ -213,7 +213,14 @@ _FORMS_JS = r"""els => els.map(f => ({
     action: f.getAttribute('action'),
     method: (f.getAttribute('method') || 'get').toLowerCase(),
     has_password: !!f.querySelector('input[type="password"]'),
-    fields: [...f.elements].map(el => el.getAttribute('name')).filter(Boolean)
+    fields: [...f.elements].map(el => el.getAttribute('name')).filter(Boolean),
+    // what tells a search box from a sign-up / contact form, without reading any words
+    search_role: f.getAttribute('role') === 'search' || !!f.closest('[role="search"]') || !!f.querySelector('input[type="search"]'),
+    text_fields: [...f.elements].filter(el => el.getClientRects().length && !el.disabled && !el.readOnly
+        && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT'
+            && ['', 'text', 'search', 'email', 'tel', 'number', 'url'].includes((el.getAttribute('type') || '').toLowerCase())))).length,
+    contact_fields: [...f.elements].filter(el => el.tagName === 'INPUT'
+        && ['email', 'tel'].includes((el.getAttribute('type') || '').toLowerCase())).length
 }))"""
 
 # Login / sign-up walls: a VISIBLE password field, and the sibling fields a person would have to fill in
@@ -752,13 +759,23 @@ def _search_term(url: str, headings: list[dict]) -> str:
     return "the"
 
 
+def looks_like_search(form: dict) -> bool:
+    """A search box is marked as one (role="search", an <input type="search">), or is a form with exactly one free-text
+    field and nothing asking for an email or phone number. A sign-up, contact or subscription form has several fields
+    (found live: "search for 'the'" was typed into the Name field of a subscription form). Older inventories without
+    these facts keep the old behaviour."""
+    if form.get("search_role"):
+        return True
+    return form.get("text_fields", 1) == 1 and not form.get("contact_fields")
+
+
 def _probe_search_form(page, url: str, forms: list[dict], headings: list[dict], log=None) -> dict | None:
     """A <form> with a free-text field (WordPress ?s=, site search) - fill it with a
     real term, submit, and record the results page. The commonest 'primary flow'."""
     for form in forms or []:
         fields = [f for f in (form.get("fields") or []) if f]
-        if not fields or form.get("has_password"):
-            continue                       # a login / sign-up form is not a search box: never type junk into it
+        if not fields or form.get("has_password") or not looks_like_search(form):
+            continue                       # a login, sign-up or contact form is not a search box: never type junk into it
         try:
             page.goto(url, wait_until="domcontentloaded")
             settle_page(page)
