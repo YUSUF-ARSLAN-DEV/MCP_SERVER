@@ -142,6 +142,18 @@ def test_guessing_one_account_is_throttled(make_app):
     assert 429 in codes and codes[0] == 401
 
 
+def test_only_failed_attempts_count_so_a_team_on_one_address_is_never_locked_out_by_signing_in(make_app):
+    admin = setup_admin(make_app())
+    for name in ("alice", "bob", "carol"):
+        add_user(admin, name)
+    for _ in range(4):                                         # 12 good sign-ins from one address in a minute
+        for name in ("alice", "bob", "carol"):
+            assert browser(admin).post("/api/login", json={"username": name, "password": PW}).status_code == 200
+    codes = [browser(admin).post("/api/login", json={"username": "alice", "password": f"wrong-guess-{i}"}).status_code for i in range(12)]
+    assert codes[:6] == [401] * 6 and 429 in codes             # guessing is stopped after a handful of failures
+    assert browser(admin).post("/api/login", json={"username": "alice", "password": PW}).status_code == 429   # even the right password waits
+
+
 def test_a_tampered_or_foreign_session_cookie_is_refused(make_app):
     admin = setup_admin(make_app())
     forged = browser(admin)

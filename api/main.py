@@ -180,19 +180,22 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
 
     @app.post("/api/login")
     def login(body: Login, request: Request, response: Response):
-        if not logins.allow(client_id(request)):
-            raise HTTPException(429, "Too many attempts. Wait a minute.")
         if db.count_users():
-            name = (body.username or "").strip().lower()
-            if not user_logins.allow(name or "-"):
-                raise HTTPException(429, "Too many attempts for that account. Wait a minute.")
-            user = db.get_user_by_name(name) if name else None
+            # only FAILED attempts count: a whole team behind one office address signing in normally is never throttled
+            address, name = client_id(request), (body.username or "").strip().lower() or "-"
+            if logins.blocked(address) or user_logins.blocked(name):
+                raise HTTPException(429, "Too many wrong attempts. Wait a minute.")
+            user = db.get_user_by_name(name) if name != "-" else None
             valid = security.verify_password(body.password, user["password_hash"] if user else security.DUMMY_HASH)
             if user is None or not valid or user["disabled"]:
+                logins.record(address)
+                user_logins.record(name)
                 raise HTTPException(401, "Wrong username or password.")
             db.touch_login(user["id"])
             start_session(response, user)
             return {"authenticated": True, "user": {"id": user["id"], "username": user["username"], "role": user["role"]}}
+        if not logins.allow(client_id(request)):
+            raise HTTPException(429, "Too many attempts. Wait a minute.")
         if not settings.access_code:
             raise HTTPException(503, "The server has no ACCESS_CODE set.")
         if not security.code_matches(settings.access_code, body.code):

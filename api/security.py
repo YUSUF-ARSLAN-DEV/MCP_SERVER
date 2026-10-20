@@ -197,6 +197,17 @@ class SlidingWindow:
         self.limit, self.window_s = limit, window_s
         self._events: dict[str, deque] = defaultdict(deque)
 
+    def blocked(self, key: str, now: float | None = None) -> bool:
+        """Has `key` used up its allowance? Looks only; use record() to count an event."""
+        now = now if now is not None else time.monotonic()
+        events = self._events[key]
+        while events and now - events[0] > self.window_s:
+            events.popleft()
+        return len(events) >= self.limit
+
+    def record(self, key: str, now: float | None = None) -> None:
+        self._events[key].append(now if now is not None else time.monotonic())
+
     def allow(self, key: str, now: float | None = None) -> bool:
         now = now if now is not None else time.monotonic()
         events = self._events[key]
