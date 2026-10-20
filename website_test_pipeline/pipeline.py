@@ -15,6 +15,7 @@ Exit code: 0 all fine, 1 the generated tests ran and some failed, 2 a stage coul
 prerequisite, unreadable file, crash) or there are no explored pages yet.
 """
 from __future__ import annotations
+import importlib.util
 import os
 import socket
 import subprocess
@@ -81,7 +82,11 @@ def xdist_args() -> list[str]:
     worker hands its results to the controller instead of writing test_results.json directly - see
     pytest_testnodedown there for why). EXECUTE_CONCURRENCY=1 (or 0) runs pytest the old single-process way."""
     n = os.environ.get("EXECUTE_CONCURRENCY", "4").strip()
-    return ["-n", n] if n not in {"", "0", "1"} else []
+    if n in {"", "0", "1"}:
+        return []
+    if importlib.util.find_spec("xdist") is None:      # pytest-xdist is not installed: run in one process rather than make every run fail on "-n"
+        return []
+    return ["-n", n]
 
 
 def run_execute(settings, log) -> int:

@@ -97,3 +97,20 @@ def test_the_all_in_one_pipeline_builds_the_combined_word_report(tmp_path, monke
     steps = [c[3:] for c in commands if c[1:3] == ["-m", "website_test_pipeline.cli"]]
     assert [s[0] for s in steps] == ["crawl", "generate", "flows", "report"]
     assert steps[-1][:3] == ["report", "--rerun", "--combined"]
+
+
+def test_parallel_tests_are_only_asked_for_when_pytest_xdist_is_installed(monkeypatch):
+    """A container built from the production requirements once lacked pytest-xdist, so the default of four workers made
+    pytest fail on "-n" for every run. Without xdist the tests simply run in one process."""
+    import importlib.util
+    from website_test_pipeline.pipeline import xdist_args
+    monkeypatch.delenv("EXECUTE_CONCURRENCY", raising=False)
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "xdist" else object())
+    assert xdist_args() == []                                           # not installed: no "-n"
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: object())
+    assert xdist_args() == ["-n", "4"]                                  # installed: the default of four
+    monkeypatch.setenv("EXECUTE_CONCURRENCY", "2")
+    assert xdist_args() == ["-n", "2"]
+    for single in ("1", "0", ""):
+        monkeypatch.setenv("EXECUTE_CONCURRENCY", single)
+        assert xdist_args() == []                                       # the single-process setting is respected either way
