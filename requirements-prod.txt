@@ -12,3 +12,4 @@ pypdf==6.19.0
 fastapi>=0.115
 uvicorn[standard]>=0.30
 python-multipart>=0.0.9
+cryptography==50.0.2

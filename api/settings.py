@@ -28,6 +28,8 @@ class AppSettings:
     session_secret: str = field(default_factory=lambda: os.getenv("SESSION_SECRET", ""))
     cookie_secure: bool = field(default_factory=lambda: _flag("COOKIE_SECURE"))
     trust_proxy: bool = field(default_factory=lambda: _flag("TRUST_PROXY"))
+    # master key for saved API keys (see secretbox.py); empty = a key file is created next to the database
+    secrets_key: str = field(default_factory=lambda: os.getenv("SECRETS_KEY", ""))
     # every run must name its own model (and key). Off = a run with no model falls back to the server's own .env
     # (REQUIRE_MODEL=0): fine for one person on their own machine, wrong for a server several people share.
     require_model: bool = field(default_factory=lambda: os.getenv("REQUIRE_MODEL", "1").strip().lower() not in {"0", "false", "no"})

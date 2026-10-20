@@ -20,10 +20,45 @@ class ModelChoice(BaseModel):
     api_key: str = Field(default="", max_length=500, repr=False)
 
 
+class ProfileIn(BaseModel):
+    """A saved model configuration: yours alone. The key is stored encrypted and can never be read back."""
+    name: str = Field(min_length=1, max_length=60)
+    provider: Literal["openai", "anthropic", "google"]
+    model: str = Field(min_length=1, max_length=200, pattern=r"^[\w./:@+-]+$")
+    api_url: str = Field(default="", max_length=2048)
+    api_key: str = Field(default="", max_length=500, repr=False)
+
+
+class ProfilePatch(BaseModel):
+    """Only what is given changes. api_key: leave it out to keep the saved key, send a new one to replace it."""
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    provider: Literal["openai", "anthropic", "google"] | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=200, pattern=r"^[\w./:@+-]+$")
+    api_url: str | None = Field(default=None, max_length=2048)
+    api_key: str | None = Field(default=None, max_length=500, repr=False)
+
+
+class ProfileOut(BaseModel):
+    id: str
+    name: str
+    provider: str
+    model: str
+    api_url: str
+    key_set: bool
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def of(cls, row: dict) -> "ProfileOut":
+        return cls(id=row["id"], name=row["name"], provider=row["provider"], model=row["model"], api_url=row["api_url"],
+                   key_set=bool(row["key_enc"]), created_at=row["created_at"], updated_at=row["updated_at"])
+
+
 class JobCreate(BaseModel):
     url: str
     options: JobOptions = JobOptions()
-    model: ModelChoice | None = None
+    model: ModelChoice | None = None                     # a one-off choice for this run
+    model_id: str | None = None                          # or one of your saved model configurations
 
 
 class Login(BaseModel):

@@ -17,6 +17,11 @@ CREATE TABLE IF NOT EXISTS jobs (
     error TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', run_dir TEXT NOT NULL, options TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX IF NOT EXISTS jobs_status ON jobs (status, created_at);
+CREATE TABLE IF NOT EXISTS model_profiles (
+    id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL COLLATE NOCASE, provider TEXT NOT NULL, model TEXT NOT NULL,
+    api_url TEXT NOT NULL DEFAULT '', key_enc TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    UNIQUE (user_id, name)
+);
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'member', disabled INTEGER NOT NULL DEFAULT 0, session_version INTEGER NOT NULL DEFAULT 0,
@@ -215,6 +220,39 @@ class Database:
         if sets:
             with self._conn() as conn:
                 conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", (*args, user_id))
+
+    # ---- saved model configurations (one person's own; the key is stored encrypted, never plain) ---------------------
+    def create_profile(self, profile_id: str, user_id: str, name: str, provider: str, model: str, api_url: str, key_enc: str) -> dict:
+        stamp = now()
+        with self._conn() as conn:
+            conn.execute("INSERT INTO model_profiles (id, user_id, name, provider, model, api_url, key_enc, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                         (profile_id, user_id, name, provider, model, api_url, key_enc, stamp, stamp))
+        return self.get_profile(profile_id)
+
+    def get_profile(self, profile_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM model_profiles WHERE id = ?", (profile_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_profile_by_name(self, user_id: str, name: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM model_profiles WHERE user_id = ? AND name = ?", (user_id, name)).fetchone()
+        return dict(row) if row else None
+
+    def list_profiles(self, user_id: str) -> list[dict]:
+        with self._conn() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM model_profiles WHERE user_id = ? ORDER BY created_at, rowid", (user_id,)).fetchall()]
+
+    def update_profile(self, profile_id: str, **fields) -> None:
+        if not fields:
+            return
+        names = ", ".join(f"{name} = ?" for name in fields)
+        with self._conn() as conn:
+            conn.execute(f"UPDATE model_profiles SET {names}, updated_at = ? WHERE id = ?", (*fields.values(), now(), profile_id))
+
+    def delete_profile(self, profile_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM model_profiles WHERE id = ?", (profile_id,))
 
     # ---- limits -----------------------------------------------------------------------------------------------
     def active_jobs_for(self, user_id: str) -> int:

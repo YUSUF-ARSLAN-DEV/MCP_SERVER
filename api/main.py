@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import shutil
+import urllib.error
+import urllib.request
 import uuid
 from types import SimpleNamespace
 from contextlib import asynccontextmanager
@@ -20,8 +22,9 @@ from .db import ACTIVE, TERMINAL, Database
 from website_test_pipeline.providers import get_provider
 
 from .jobs import JobRunner, forget_model_secret, site_name
-from .models import (HumanAnswerIn, JobCreate, JobOut, Login, ModelChoice, PasswordChange, SetupIn, UserCreate, UserOut,
-                     UserPatch)
+from .secretbox import SecretBoxError, load_secretbox
+from .models import (HumanAnswerIn, JobCreate, JobOut, Login, ModelChoice, PasswordChange, ProfileIn, ProfileOut, ProfilePatch,
+                     SetupIn, UserCreate, UserOut, UserPatch)
 from .security import UrlRejected
 from .settings import AppSettings
 
@@ -62,6 +65,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     settings = settings or AppSettings()
     db = Database(settings.db_path)
     runner = JobRunner(db, settings)
+    box = load_secretbox(settings.data_dir, settings.secrets_key)      # encrypts the keys people save
     logins = security.SlidingWindow(limit=8, window_s=60)           # per client address: sign-ins and first-account setup
     user_logins = security.SlidingWindow(limit=10, window_s=60)     # per username: slows guessing spread across addresses
 
@@ -259,15 +263,116 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         db.update_user(user_id, role=body.role, disabled=body.disabled, password_hash=new_hash)
         return UserOut.of(db.get_user(user_id))
 
+    # ---- saved model configurations: yours alone, the key encrypted and never returned --------------------------
+    MAX_PROFILES = 20
+
+    def require_account(request: Request) -> dict:
+        me = require_access(request)
+        if me["legacy"]:
+            raise HTTPException(409, "Create the first account to save models.")
+        return me
+
+    def my_profile(profile_id: str, me: dict) -> dict:
+        row = db.get_profile(profile_id)
+        if row is None or row["user_id"] != me["id"]:
+            raise HTTPException(404, "No such saved model.")
+        return row
+
+    def stored_key(row: dict) -> str:
+        try:
+            return box.decrypt(row["key_enc"]) if row["key_enc"] else ""
+        except SecretBoxError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.get("/api/models", response_model=list[ProfileOut])
+    def list_models(me: dict = Depends(require_account)):
+        return [ProfileOut.of(p) for p in db.list_profiles(me["id"])]
+
+    @app.post("/api/models", response_model=ProfileOut, status_code=201)
+    def create_model(body: ProfileIn, me: dict = Depends(require_account)):
+        name = body.name.strip()
+        checked = checked_model(ModelChoice(provider=body.provider, model=body.model, api_url=body.api_url, api_key=body.api_key))
+        if db.get_profile_by_name(me["id"], name):
+            raise HTTPException(409, "You already have a saved model with that name.")
+        if len(db.list_profiles(me["id"])) >= MAX_PROFILES:
+            raise HTTPException(422, f"You can save up to {MAX_PROFILES} models. Delete one first.")
+        key = body.api_key.strip()
+        row = db.create_profile(uuid.uuid4().hex[:12], me["id"], name, checked["provider"], checked["model"], checked["api_url"],
+                                box.encrypt(key) if key else "")
+        return ProfileOut.of(row)
+
+    @app.patch("/api/models/{profile_id}", response_model=ProfileOut)
+    def update_model(profile_id: str, body: ProfilePatch, me: dict = Depends(require_account)):
+        row = my_profile(profile_id, me)
+        new_key = None if body.api_key is None else body.api_key.strip()
+        plain = stored_key(row) if new_key is None else new_key
+        checked = checked_model(ModelChoice(provider=body.provider or row["provider"], model=body.model or row["model"],
+                                            api_url=row["api_url"] if body.api_url is None else body.api_url, api_key=plain))
+        name = (body.name or row["name"]).strip()
+        other = db.get_profile_by_name(me["id"], name)
+        if other and other["id"] != row["id"]:
+            raise HTTPException(409, "You already have a saved model with that name.")
+        fields = {"name": name, "provider": checked["provider"], "model": checked["model"], "api_url": checked["api_url"]}
+        if new_key is not None:
+            fields["key_enc"] = box.encrypt(new_key) if new_key else ""
+        db.update_profile(row["id"], **fields)
+        return ProfileOut.of(db.get_profile(row["id"]))
+
+    @app.delete("/api/models/{profile_id}")
+    def delete_model(profile_id: str, me: dict = Depends(require_account)):
+        my_profile(profile_id, me)
+        db.delete_profile(profile_id)
+        return {"removed": True}
+
+    @app.post("/api/models/{profile_id}/test")
+    def test_model(profile_id: str, me: dict = Depends(require_account)):
+        """Ask the model's own server which models it serves, with the saved key: does the address work, is the key accepted,
+        is this model offered. Says so in words; never returns or logs the key."""
+        row = my_profile(profile_id, me)
+        provider, key = get_provider(row["provider"]), stored_key(row)
+        url = row["api_url"]
+        if url:
+            try:
+                url = security.validate_model_url(url, settings.allow_private_model_urls, resolver)      # checked again: DNS can change
+            except UrlRejected as exc:
+                return {"ok": False, "message": f"Model address: {exc}", "models": []}
+        probe = SimpleNamespace(api_url=url or provider.default_url, api_key=key, model=row["model"], model_provider=row["provider"])
+        try:
+            request_url, headers = provider.models_request(probe)
+            with urllib.request.urlopen(urllib.request.Request(request_url, headers=headers), timeout=10) as response:
+                ids = provider.model_ids(json.load(response))
+        except urllib.error.HTTPError as exc:
+            reason = {401: "The server did not accept the key.", 403: "The server did not accept the key.",
+                      404: "The server answered, but not like this kind of API. Check the address and the provider."}.get(exc.code, f"The server answered with an error ({exc.code}).")
+            return {"ok": False, "message": reason, "models": []}
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            return {"ok": False, "message": f"Could not reach the server ({type(exc).__name__}). Check the address.", "models": []}
+        wanted = row["model"].removeprefix("models/")
+        if not ids:
+            return {"ok": True, "message": "Connected. The server does not list its models, so the model name could not be checked.", "models": []}
+        if wanted in ids:
+            return {"ok": True, "message": f"Connected. '{wanted}' is available.", "models": ids[:30]}
+        return {"ok": False, "message": f"Connected, but '{wanted}' is not offered. It offers: {', '.join(ids[:8])}{' ...' if len(ids) > 8 else ''}.", "models": ids[:30]}
+
     @app.post("/api/jobs", response_model=JobOut, status_code=201, dependencies=[Depends(require_access)])
     def create_job(body: JobCreate, request: Request):
         try:
             url = security.validate_url(body.url, resolver, settings.allow_private_targets)
         except UrlRejected as exc:
             raise HTTPException(422, str(exc)) from exc
-        if body.model is None and settings.require_model:
-            raise HTTPException(422, "Choose a model for this run: its provider, model name and your API key.")
-        model = checked_model(body.model) if body.model else None
+        choice, profile = body.model, None
+        if body.model_id:
+            if body.model:
+                raise HTTPException(422, "Send either a saved model or a one-off one, not both.")
+            if request.state.user["legacy"]:
+                raise HTTPException(409, "Create the first account to use saved models.")
+            profile = my_profile(body.model_id, request.state.user)
+            choice = ModelChoice(provider=profile["provider"], model=profile["model"], api_url=profile["api_url"], api_key=stored_key(profile))
+        if choice is None and settings.require_model:
+            raise HTTPException(422, "Choose a model for this run: one of your saved models, or a provider, model name and API key.")
+        model = checked_model(choice) if choice else None
+        if model and profile:
+            model["profile"] = {"id": profile["id"], "name": profile["name"]}
         me = request.state.user
         user = me["id"]
         if db.active_jobs_for(user):
@@ -280,8 +385,8 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         run_dir = settings.runs_dir / site
         if model:
             options["model"] = model            # no key in here: the database never holds it
-            if body.model.api_key.strip():       # written BEFORE the job exists, so the worker can never start without it
-                _atomic_write(run_dir / "secrets" / "model.json", json.dumps({"api_key": body.model.api_key.strip()}).encode("utf-8"), private=True)
+            if choice.api_key.strip():           # written BEFORE the job exists, so the worker can never start without it
+                _atomic_write(run_dir / "secrets" / "model.json", json.dumps({"api_key": choice.api_key.strip()}).encode("utf-8"), private=True)
         try:
             job = db.create_job(job_id, url, site, run_dir, user, options)
         except Exception:
