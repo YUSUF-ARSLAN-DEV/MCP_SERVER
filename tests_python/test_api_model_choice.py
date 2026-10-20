@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from api.main import create_app
 from api.settings import AppSettings
 
-CODE = "open-sesame"
+
 KEY = "sk-test-SECRET-1234567890"
 
 FAKE_PIPELINE = r"""
@@ -27,17 +27,16 @@ if "slow" in os.environ["SEED_URL"]:
 
 @pytest.fixture
 def make_client(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
     for name in ("MODEL_PROVIDER", "MODEL_NAME", "API_URL", "API_KEY"):
         monkeypatch.delenv(name, raising=False)
     opened = []
 
     def make(**overrides):
-        settings = AppSettings(data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
+        settings = AppSettings(data_dir=tmp_path, command=[sys.executable, "-c", FAKE_PIPELINE],
                                poll_interval_s=0.05, idle_interval_s=0.05, **overrides)
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()
-        assert client.post("/api/login", json={"code": CODE}).status_code == 200
+        assert client.post("/api/signup", json={"username": "tester1", "password": "correct horse battery"}).status_code == 200
         opened.append(client)
         return client
 

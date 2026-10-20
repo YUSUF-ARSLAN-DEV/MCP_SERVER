@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from api.main import create_app, downloadable
 from api.settings import AppSettings
 
-CODE = "open-sesame"
 
 # A stand-in for the pipeline that really uses the web channel: it asks a person, then records what it got.
 # (Only key names and lengths are written for a login: the test then proves the password reached nothing else.)
@@ -40,15 +39,14 @@ else:
 
 @pytest.fixture
 def make_client(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
     opened = []
 
     def make(**overrides):
-        settings = AppSettings(require_model=False, data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
+        settings = AppSettings(require_model=False, data_dir=tmp_path, command=[sys.executable, "-c", FAKE_PIPELINE],
                                poll_interval_s=0.05, idle_interval_s=0.05, **overrides)
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()
-        assert client.post("/api/login", json={"code": CODE}).status_code == 200
+        assert client.post("/api/signup", json={"username": "tester1", "password": "correct horse battery"}).status_code == 200
         opened.append(client)
         return client
 
@@ -229,22 +227,18 @@ def test_cancelling_a_run_that_was_waiting_records_that_the_run_ended_first(make
     assert [(r["state"], r["outcome"]) for r in rows] == [("closed", "ended")]
 
 
-def test_only_the_owner_or_an_administrator_can_read_a_runs_question_history(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
-    settings = AppSettings(require_model=False, data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
+def test_only_the_person_who_ran_it_can_read_a_runs_question_history(tmp_path):
+    settings = AppSettings(require_model=False, data_dir=tmp_path, command=[sys.executable, "-c", FAKE_PIPELINE],
                            poll_interval_s=0.05, idle_interval_s=0.05)
-    pw = "correct horse battery"
-    with TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"])) as admin:
-        assert admin.post("/api/setup", json={"username": "root", "password": pw, "code": CODE}).status_code == 200
-        for name in ("alice", "bob"):
-            assert admin.post("/api/users", json={"username": name, "password": pw}).status_code == 201
-        alice, bob = TestClient(admin.app), TestClient(admin.app)
-        alice.post("/api/login", json={"username": "alice", "password": pw})
-        bob.post("/api/login", json={"username": "bob", "password": pw})
+    pw = "correct horse banana"
+    with TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"])) as alice:
+        assert alice.post("/api/signup", json={"username": "alice", "password": pw}).status_code == 200
+        bob = TestClient(alice.app)
+        assert bob.post("/api/signup", json={"username": "bob", "password": pw}).status_code == 200
         job = alice.post("/api/jobs", json={"url": "captcha.example.com"}).json()
         wait_for(alice, job["id"], ("needs_human",))
-        assert len(history(alice, job)) == 1 and len(history(admin, job)) == 1
-        assert bob.get(f"/api/jobs/{job['id']}/human/history").status_code == 404
+        assert len(history(alice, job)) == 1
+        assert bob.get(f"/api/jobs/{job['id']}/human/history").status_code == 404        # nobody else, whoever they are
         alice.post(f"/api/jobs/{job['id']}/cancel")
 
 

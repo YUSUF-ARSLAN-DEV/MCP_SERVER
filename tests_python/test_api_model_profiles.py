@@ -14,7 +14,7 @@ from api.main import create_app
 from api.secretbox import KEY_FILE, SecretBox, SecretBoxError, load_secretbox
 from api.settings import AppSettings
 
-CODE = "bootstrap-code"
+
 PW = "correct horse battery"
 KEY = "sk-live-VERY-SECRET-key-123456"
 
@@ -29,16 +29,15 @@ run = Path(os.environ["DATA_DIR"]) / "runs" / os.environ["SITE"]
 
 @pytest.fixture
 def make_app(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
     opened = []
 
     def make(**overrides):
-        settings = AppSettings(data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE], poll_interval_s=0.05,
+        settings = AppSettings(data_dir=tmp_path, command=[sys.executable, "-c", FAKE], poll_interval_s=0.05,
                                idle_interval_s=0.05, max_jobs_per_day=50, **overrides)
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()
         opened.append(client)
-        assert client.post("/api/setup", json={"username": "root", "password": PW, "code": CODE}).status_code == 200
+        assert client.post("/api/signup", json={"username": "root", "password": PW}).status_code == 200
         return client
 
     yield make
@@ -47,9 +46,8 @@ def make_app(tmp_path, monkeypatch):
 
 
 def person(admin, name):
-    assert admin.post("/api/users", json={"username": name, "password": PW}).status_code == 201
     browser = TestClient(admin.app)
-    assert browser.post("/api/login", json={"username": name, "password": PW}).status_code == 200
+    assert browser.post("/api/signup", json={"username": name, "password": PW}).status_code == 200
     return browser
 
 
@@ -106,7 +104,7 @@ def test_nobody_else_can_see_change_test_delete_or_run_with_your_saved_model(mak
     admin = make_app()
     alice, bob = person(admin, "alice"), person(admin, "bob")
     mine = alice.post("/api/models", json=GEMINI).json()
-    assert bob.get("/api/models").json() == [] and admin.get("/api/models").json() == []       # not even an administrator
+    assert bob.get("/api/models").json() == [] and admin.get("/api/models").json() == []       # the first person to sign up has no special view either
     for method, path, body in (("patch", f"/api/models/{mine['id']}", {"name": "stolen"}), ("delete", f"/api/models/{mine['id']}", None),
                                ("post", f"/api/models/{mine['id']}/test", None)):
         assert getattr(bob, method)(path, **({"json": body} if body else {})).status_code == 404, path
@@ -171,13 +169,12 @@ def test_you_can_save_only_so_many(make_app):
     assert client.post("/api/models", json={**GEMINI, "name": "one too many"}).status_code == 422
 
 
-def test_without_an_account_there_is_nowhere_to_save_them(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
-    settings = AppSettings(data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE])
+def test_saving_a_model_needs_you_to_be_signed_in(tmp_path):
+    settings = AppSettings(data_dir=tmp_path, command=[sys.executable, "-c", FAKE])
     with TestClient(create_app(settings)) as client:
-        assert client.post("/api/login", json={"code": CODE}).status_code == 200      # the old shared-code mode
-        assert client.get("/api/models").status_code == 409
-        assert client.post("/api/jobs", json={"url": "example.com", "model_id": "x"}).status_code in (409, 422)
+        assert client.get("/api/models").status_code == 401
+        assert client.post("/api/models", json=GEMINI).status_code == 401
+        assert client.post("/api/jobs", json={"url": "example.com", "model_id": "x"}).status_code == 401
 
 
 # ------------------------------------------------------------------------------------------------ running with one
@@ -209,7 +206,7 @@ def test_a_lost_master_key_is_reported_clearly_not_as_a_crash(make_app, tmp_path
     mid = client.post("/api/models", json=GEMINI).json()["id"]
     (tmp_path / KEY_FILE).write_bytes(__import__("cryptography.fernet", fromlist=["Fernet"]).Fernet.generate_key())
     # a server restarted with a different key file cannot read old keys: simulate by opening a fresh app over the same data
-    settings = AppSettings(data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE])
+    settings = AppSettings(data_dir=tmp_path, command=[sys.executable, "-c", FAKE])
     with TestClient(create_app(settings)) as fresh:
         assert fresh.post("/api/login", json={"username": "root", "password": PW}).status_code == 200
         refused = fresh.post("/api/jobs", json={"url": "example.com", "model_id": mid})

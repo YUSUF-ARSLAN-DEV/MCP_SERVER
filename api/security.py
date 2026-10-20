@@ -103,23 +103,6 @@ def _sign(secret: str, payload: str) -> str:
     return hmac.new(secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
 
 
-def make_token(secret: str, now: float | None = None) -> str:
-    expires = str(int((now or time.time()) + SESSION_TTL_S))
-    return f"{expires}.{_sign(secret, expires)}"
-
-
-def verify_token(secret: str, token: str | None, now: float | None = None) -> bool:
-    try:
-        expires, signature = (token or "").split(".", 1)
-        return hmac.compare_digest(signature, _sign(secret, expires)) and int(expires) > (now or time.time())
-    except ValueError:
-        return False
-
-
-def code_matches(expected: str, given: str | None) -> bool:
-    return bool(expected) and hmac.compare_digest(expected.encode(), (given or "").encode())
-
-
 # ---- accounts: passwords and per-user session tokens ----------------------------------------------------------
 MIN_PASSWORD = 10
 MAX_PASSWORD = 200

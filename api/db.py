@@ -37,8 +37,7 @@ CREATE TABLE IF NOT EXISTS model_profiles (
 );
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'member', disabled INTEGER NOT NULL DEFAULT 0, session_version INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL, last_login_at TEXT
+    session_version INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, last_login_at TEXT
 );
 CREATE TABLE IF NOT EXISTS human_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
@@ -59,6 +58,9 @@ class Database:
         with self._conn() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            for gone in ("role", "disabled"):                     # there are no administrators, and no one to disable anyone: every user is just a user
+                if gone in {r[1] for r in conn.execute("PRAGMA table_info(users)")}:
+                    conn.execute(f"ALTER TABLE users DROP COLUMN {gone}")
             if "stored" not in {r[1] for r in conn.execute("PRAGMA table_info(jobs)")}:                  # a database from before files were kept in it
                 conn.execute("ALTER TABLE jobs ADD COLUMN stored INTEGER NOT NULL DEFAULT 0")
             if "outcome" not in {r[1] for r in conn.execute("PRAGMA table_info(human_requests)")}:      # a database from before outcomes were kept
@@ -201,29 +203,11 @@ class Database:
             else:
                 conn.execute("UPDATE jobs SET status = 'running' WHERE id = ? AND status = 'needs_human'", (job_id,))
 
-    # ---- accounts ---------------------------------------------------------------------------------------------
-    def count_users(self) -> int:
+    # ---- accounts: everyone is just a user ---------------------------------------------------------------------
+    def create_user(self, user_id: str, username: str, password_hash: str) -> dict:
         with self._conn() as conn:
-            return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-
-    def create_user(self, user_id: str, username: str, password_hash: str, role: str) -> dict:
-        with self._conn() as conn:
-            conn.execute("INSERT INTO users (id, username, password_hash, role, created_at) VALUES (?,?,?,?,?)",
-                         (user_id, username, password_hash, role, now()))
+            conn.execute("INSERT INTO users (id, username, password_hash, created_at) VALUES (?,?,?,?)", (user_id, username, password_hash, now()))
         return self.get_user(user_id)
-
-    def create_first_user(self, user_id: str, username: str, password_hash: str) -> dict | None:
-        """The administrator, created only if there are no accounts at all (None when someone got there first)."""
-        with self._conn() as conn:
-            cur = conn.execute(
-                "INSERT INTO users (id, username, password_hash, role, created_at) SELECT ?,?,?,'admin',? WHERE (SELECT COUNT(*) FROM users) = 0",
-                (user_id, username, password_hash, now()))
-        return self.get_user(user_id) if cur.rowcount else None
-
-    def users_created_since(self, hours: int = 24) -> int:
-        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
-        with self._conn() as conn:
-            return conn.execute("SELECT COUNT(*) FROM users WHERE created_at >= ?", (since,)).fetchone()[0]
 
     def get_user(self, user_id: str) -> dict | None:
         with self._conn() as conn:
@@ -235,32 +219,19 @@ class Database:
             row = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
         return dict(row) if row else None
 
-    def list_users(self) -> list[dict]:
+    def users_created_since(self, hours: int = 24) -> int:
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
         with self._conn() as conn:
-            return [dict(r) for r in conn.execute("SELECT * FROM users ORDER BY created_at, rowid").fetchall()]
-
-    def active_admins(self) -> int:
-        with self._conn() as conn:
-            return conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0").fetchone()[0]
+            return conn.execute("SELECT COUNT(*) FROM users WHERE created_at >= ?", (since,)).fetchone()[0]
 
     def touch_login(self, user_id: str) -> None:
         with self._conn() as conn:
             conn.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (now(), user_id))
 
-    def update_user(self, user_id: str, *, role: str | None = None, disabled: bool | None = None, password_hash: str | None = None) -> None:
-        """A new password or a disabled account also ends every session that user has (session_version moves on)."""
-        sets, args = [], []
-        if role is not None:
-            sets.append("role = ?"); args.append(role)
-        if disabled is not None:
-            sets.append("disabled = ?"); args.append(1 if disabled else 0)
-        if password_hash is not None:
-            sets.append("password_hash = ?"); args.append(password_hash)
-        if disabled or password_hash is not None:
-            sets.append("session_version = session_version + 1")
-        if sets:
-            with self._conn() as conn:
-                conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", (*args, user_id))
+    def set_password(self, user_id: str, password_hash: str) -> None:
+        """A new password also ends every session that user has (session_version moves on)."""
+        with self._conn() as conn:
+            conn.execute("UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?", (password_hash, user_id))
 
     # ---- what a run was (info) and what it produced (files) ------------------------------------------------------
     INFO_COLUMNS = ("exit_code", "duration_s", "verdict", "tests_ran", "tests_passed", "tests_failed", "pass_rate", "journeys_total",

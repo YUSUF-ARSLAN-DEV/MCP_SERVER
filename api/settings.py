@@ -1,6 +1,7 @@
 """Everything the API reads from the environment, in one place (so a test can build its own)."""
 from __future__ import annotations
 import os
+import secrets
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -22,15 +23,12 @@ def _int(name: str, default: int) -> int:
 @dataclass
 class AppSettings:
     data_dir: Path = field(default_factory=lambda: config.DATA_DIR)
-    # shared access code (see security.py). Empty = the API refuses everything unless allow_open is set.
-    access_code: str = field(default_factory=lambda: os.getenv("ACCESS_CODE", ""))
-    allow_open: bool = field(default_factory=lambda: _flag("API_ALLOW_OPEN"))
     session_secret: str = field(default_factory=lambda: os.getenv("SESSION_SECRET", ""))
     cookie_secure: bool = field(default_factory=lambda: _flag("COOKIE_SECURE"))
     trust_proxy: bool = field(default_factory=lambda: _flag("TRUST_PROXY"))
-    # who may create an account once the first (administrator) exists: "open" = anyone who can reach the server, with a
-    # throttle and a daily cap; "closed" = only administrators add people. The access code is only ever for the first account.
-    signup: str = field(default_factory=lambda: (os.getenv("SIGNUP", "open").strip().lower() if os.getenv("SIGNUP", "open").strip().lower() in {"open", "closed"} else "open"))
+    # anyone who can reach the server may create an account, so the protection is limits: this many per address per hour,
+    # and this many per day for the whole server (0 = sign-ups are closed)
+    signups_per_address_per_hour: int = field(default_factory=lambda: _int("SIGNUPS_PER_ADDRESS_PER_HOUR", 3))
     max_signups_per_day: int = field(default_factory=lambda: _int("MAX_SIGNUPS_PER_DAY", 100))
     # keep what a run produces (reports, evidence, logs, generated tests) in the database instead of leaving it on disk:
     # a run works in a scratch folder, and when it ends everything worth keeping is stored and the folder deleted.
@@ -70,5 +68,21 @@ class AppSettings:
 
     @property
     def secret(self) -> str:
-        """Key that signs the session cookie: SESSION_SECRET, else derived from the access code."""
-        return self.session_secret or f"wtp-session:{self.access_code}"
+        """Key that signs the session cookie: SESSION_SECRET if set, else one generated on first start and kept beside the
+        database (so people stay signed in across restarts)."""
+        if self.session_secret:
+            return self.session_secret
+        path = Path(self.data_dir) / "session.secret"
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            pass
+        path.parent.mkdir(parents=True, exist_ok=True)
+        value = secrets.token_urlsafe(48)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return path.read_text(encoding="utf-8").strip()
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(value)
+        return value

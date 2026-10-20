@@ -9,7 +9,7 @@ from api.db import Database
 from api.main import create_app, downloadable
 from api.settings import AppSettings
 
-CODE = "open-sesame"
+
 
 # A stand-in for `website_test_pipeline.cli all`: reads the same environment, writes the same files, exits like it.
 FAKE_PIPELINE = r"""
@@ -23,7 +23,7 @@ def step(phase, fraction, note=""):
     with (art / "progress.jsonl").open("a") as h:
         h.write(json.dumps({"phase": phase, "fraction": fraction, "note": note}) + "\n")
 (art / "env.json").write_text(json.dumps({"url": url, "pages": os.environ.get("CRAWL_MAX_PAGES"),
-    "probe": os.environ.get("EXPLORE_PROBE_MAX"), "has_code": "ACCESS_CODE" in os.environ, "job": os.environ.get("WTP_JOB")}))
+    "probe": os.environ.get("EXPLORE_PROBE_MAX"), "has_secret": "SESSION_SECRET" in os.environ, "job": os.environ.get("WTP_JOB")}))
 step("Explore", 0.1, "page 1")
 if "slow" in url:
     time.sleep(60)
@@ -41,11 +41,10 @@ step("Report", 1.0, "done")
 
 @pytest.fixture
 def make_client(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
     opened = []
 
     def make(**overrides):
-        settings = AppSettings(require_model=False, data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
+        settings = AppSettings(require_model=False, data_dir=tmp_path, command=[sys.executable, "-c", FAKE_PIPELINE],
                                poll_interval_s=0.05, idle_interval_s=0.05, **overrides)
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()
@@ -57,8 +56,8 @@ def make_client(tmp_path, monkeypatch):
         client.__exit__(None, None, None)
 
 
-def signed_in(client):
-    assert client.post("/api/login", json={"code": CODE}).status_code == 200
+def signed_in(client, name="tester1"):
+    assert client.post("/api/signup", json={"username": name, "password": "correct horse battery"}).status_code == 200
     return client
 
 
@@ -72,29 +71,15 @@ def wait_for(client, job_id, statuses=("done", "failed", "cancelled"), timeout=2
     raise AssertionError(f"job stayed {job['status']}: {job}")
 
 
-def test_the_api_refuses_everything_without_the_access_code(make_client):
+def test_the_api_refuses_everything_until_you_sign_in(make_client):
     client = make_client()
     assert client.get("/api/health").status_code == 200
     assert client.get("/api/jobs").status_code == 401
     assert client.post("/api/jobs", json={"url": "example.com"}).status_code == 401
-    assert client.post("/api/login", json={"code": "wrong"}).status_code == 401
-    assert client.get("/api/jobs", headers={"x-access-code": CODE}).status_code == 200      # a script may send the code
+    assert client.get("/api/session").json() == {"authenticated": False, "user": None, "server_model": True}      # (this server lets a run use its own model)
     signed_in(client)
     assert client.get("/api/session").json()["authenticated"] is True
     assert client.get("/api/jobs").status_code == 200
-
-
-def test_a_server_with_no_access_code_refuses_instead_of_standing_open(tmp_path):
-    with TestClient(create_app(AppSettings(require_model=False, data_dir=tmp_path, access_code=""))) as client:
-        assert client.get("/api/jobs").status_code == 503
-        assert client.post("/api/login", json={"code": ""}).status_code == 503
-        assert client.get("/api/health").status_code == 200
-
-
-def test_too_many_wrong_codes_are_throttled(make_client):
-    client = make_client()
-    codes = [client.post("/api/login", json={"code": "nope"}).status_code for _ in range(10)]
-    assert codes[:8] == [401] * 8 and codes[-1] == 429
 
 
 def test_a_run_goes_from_queued_to_done_and_its_report_can_be_downloaded(make_client):
@@ -114,12 +99,13 @@ def test_a_run_goes_from_queued_to_done_and_its_report_can_be_downloaded(make_cl
     assert download.status_code == 200 and download.content == b"docx-bytes"
 
 
-def test_the_pipeline_gets_the_job_settings_and_never_the_apis_secrets(make_client, tmp_path):
+def test_the_pipeline_gets_the_job_settings_and_never_the_apis_secrets(make_client, tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "the-servers-own-signing-secret")
     client = signed_in(make_client())
     job = client.post("/api/jobs", json={"url": "example.com", "options": {"max_pages": 500, "probe_max": 2}}).json()
     wait_for(client, job["id"])
     env = json.loads((tmp_path / "runs" / job["site"] / "artifacts" / "env.json").read_text())
-    assert env == {"url": "https://example.com/", "pages": "25", "probe": "2", "has_code": False, "job": "1"}
+    assert env == {"url": "https://example.com/", "pages": "25", "probe": "2", "has_secret": False, "job": "1"}
 
 
 def test_every_fresh_run_gets_its_own_folder_and_reuse_keeps_the_sites_folder(make_client):
@@ -127,7 +113,7 @@ def test_every_fresh_run_gets_its_own_folder_and_reuse_keeps_the_sites_folder(ma
     first = client.post("/api/jobs", json={"url": "example.com"}).json()
     wait_for(client, first["id"])
     second = client.post("/api/jobs", json={"url": "example.com", "options": {"reuse_workspace": True}}).json()
-    assert first["site"] != second["site"] and first["site"].startswith("example.com-") and second["site"] == "example.com"
+    assert first["site"] != second["site"] and first["site"].startswith("example.com-") and second["site"].endswith("-example.com") and second["site"] != "example.com"
 
 
 def test_a_failed_run_says_why(make_client):
@@ -148,7 +134,7 @@ def test_addresses_on_the_servers_own_network_are_refused_with_a_reason(make_cli
 def test_a_private_staging_site_runs_only_when_the_operator_allowed_it(make_client):
     refused = signed_in(make_client()).post("/api/jobs", json={"url": "http://10.1.2.3/"})
     assert refused.status_code == 422 and "10.1.2.3" in refused.json()["detail"] and "ALLOW_PRIVATE_TARGETS" in refused.json()["detail"]
-    client = signed_in(make_client(allow_private_targets=True))
+    client = signed_in(make_client(allow_private_targets=True), "tester2")
     created = client.post("/api/jobs", json={"url": "http://10.1.2.3/"})
     assert created.status_code == 201 and created.json()["url"] == "http://10.1.2.3/"
     wait_for(client, created.json()["id"])

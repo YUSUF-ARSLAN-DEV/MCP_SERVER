@@ -67,20 +67,25 @@ def test_an_overlong_address_is_refused():
         validate_url("https://example.com/" + "a" * 2100, PUBLIC)
 
 
-def test_a_session_token_verifies_until_it_expires_and_never_after_tampering():
-    token = security.make_token("k", now=1000.0)
-    assert security.verify_token("k", token, now=1001.0)
-    assert not security.verify_token("other", token, now=1001.0)
-    assert not security.verify_token("k", token, now=1000.0 + security.SESSION_TTL_S + 1)
-    expires, signature = token.split(".")
-    assert not security.verify_token("k", f"{int(expires) + 99999}.{signature}", now=1001.0)
-    assert not security.verify_token("k", None) and not security.verify_token("k", "garbage")
+def test_a_session_token_names_the_user_until_it_expires_and_never_after_tampering():
+    token = security.make_user_token("k", "user1", 3, now=1000.0)
+    assert security.read_user_token("k", token, now=1001.0) == ("user1", 3)
+    assert security.read_user_token("other-secret", token, now=1001.0) is None                       # signed by someone else
+    assert security.read_user_token("k", token, now=1000.0 + security.SESSION_TTL_S + 1) is None     # expired
+    tag, user, version, expires, signature = token.split(".")
+    for forged in (f"{tag}.user2.{version}.{expires}.{signature}", f"{tag}.{user}.9.{expires}.{signature}",
+                   f"{tag}.{user}.{version}.{int(expires) + 99999}.{signature}"):
+        assert security.read_user_token("k", forged, now=1001.0) is None
+    assert security.read_user_token("k", None) is None and security.read_user_token("k", "garbage") is None
 
 
-def test_the_access_code_comparison_needs_a_configured_code():
-    assert security.code_matches("abc", "abc")
-    assert not security.code_matches("abc", "abd") and not security.code_matches("abc", None)
-    assert not security.code_matches("", "")
+def test_the_failure_counter_looks_without_counting_and_only_blocks_at_the_limit():
+    window = security.SlidingWindow(limit=2, window_s=10)
+    assert not window.blocked("a", now=0)
+    window.record("a", now=0)
+    window.record("a", now=1)
+    assert window.blocked("a", now=2) and not window.blocked("b", now=2)
+    assert not window.blocked("a", now=12)                                                               # the window moved on
 
 
 def test_the_sliding_window_allows_a_limit_per_key_per_window():

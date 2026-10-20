@@ -26,7 +26,7 @@ from website_test_pipeline.providers import get_provider
 from .jobs import JobRunner, forget_model_secret, site_name
 from .secretbox import SecretBoxError, load_secretbox
 from .models import (HumanAnswerIn, JobCreate, JobOut, Login, ModelChoice, PasswordChange, ProfileIn, ProfileOut, ProfilePatch,
-                     SetupIn, SignupIn, UserCreate, UserOut, UserPatch)
+                     SignupIn)
 from .security import UrlRejected
 from .settings import AppSettings
 
@@ -67,8 +67,8 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     db = Database(settings.db_path)
     runner = JobRunner(db, settings)
     box = load_secretbox(settings.data_dir, settings.secrets_key)      # encrypts the keys people save
-    logins = security.SlidingWindow(limit=8, window_s=60)           # per client address: sign-ins and first-account setup
-    signups = security.SlidingWindow(limit=3, window_s=3600)        # accounts created per address per hour
+    logins = security.SlidingWindow(limit=8, window_s=60)           # per client address: wrong sign-ins
+    signups = security.SlidingWindow(limit=settings.signups_per_address_per_hour, window_s=3600)      # accounts created per address per hour
     user_logins = security.SlidingWindow(limit=10, window_s=60)     # per username: slows guessing spread across addresses
 
     @asynccontextmanager
@@ -87,43 +87,26 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         return hashlib.sha256(host.encode()).hexdigest()[:16]
 
     def identity(request: Request) -> dict | None:
-        """Who is asking: {id, username, role, legacy} - or None. Before the first account exists the shared access code
-        works as it always did (everyone is the one shared 'person'); once an account exists, only a signed-in user does."""
-        if settings.allow_open:
-            return {"id": client_id(request), "username": "open", "role": "admin", "legacy": True}
-        if db.count_users():
-            read = security.read_user_token(settings.secret, request.cookies.get(COOKIE))
-            user = db.get_user(read[0]) if read else None
-            if user is None or user["disabled"] or user["session_version"] != read[1]:
-                return None
-            return {"id": user["id"], "username": user["username"], "role": user["role"], "legacy": False}
-        if settings.access_code and (security.verify_token(settings.secret, request.cookies.get(COOKIE))
-                                     or security.code_matches(settings.access_code, request.headers.get("x-access-code"))):
-            return {"id": client_id(request), "username": "shared", "role": "admin", "legacy": True}
-        return None
+        """Who is asking: {id, username} - or None when nobody is signed in. A session is a signed token that names the user;
+        changing the password ends every session of theirs."""
+        read = security.read_user_token(settings.secret, request.cookies.get(COOKIE))
+        user = db.get_user(read[0]) if read else None
+        if user is None or user["session_version"] != read[1]:
+            return None
+        return {"id": user["id"], "username": user["username"]}
 
     def require_access(request: Request) -> dict:
-        if not settings.allow_open and not settings.access_code and not db.count_users():
-            raise HTTPException(503, "The server has no ACCESS_CODE set and no account, so it refuses every request.")
         me = identity(request)
         if me is None:
-            raise HTTPException(401, "Sign in first." if db.count_users() else "Enter the access code first.")
+            raise HTTPException(401, "Sign in first.")
         request.state.user = me
         return me
 
-    def require_admin(request: Request) -> dict:
-        me = require_access(request)
-        if me["legacy"]:
-            raise HTTPException(409, "Create the first account before managing users.")
-        if me["role"] != "admin":
-            raise HTTPException(403, "Only an administrator can do that.")
-        return me
-
     def job_or_404(job_id: str, request: Request) -> dict:
-        """The run, if it exists AND belongs to the person asking (an administrator may see every run). Someone else's run is a 404, not a 403."""
+        """The run, if it exists AND is yours. Someone else's run is a 404, not a 403, so its existence is not revealed."""
         job = db.get_job(job_id)
         me = getattr(request.state, "user", None) or require_access(request)
-        if job is None or (me["role"] != "admin" and job["user_id"] != me["id"]):
+        if job is None or job["user_id"] != me["id"]:
             raise HTTPException(404, "No such run.")
         return job
 
@@ -167,47 +150,17 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     @app.get("/api/session")
     def session(request: Request):
         me = identity(request)
-        accounts = db.count_users() > 0
-        return {"authenticated": me is not None, "open": settings.allow_open, "accounts": accounts, "signup": settings.signup, "server_model": not settings.require_model,
-                "setup_needed": not accounts and not settings.allow_open, "needs_code": bool(settings.access_code),
-                "user": {"id": me["id"], "username": me["username"], "role": me["role"]} if me and not me["legacy"] else None}
-
-    @app.post("/api/setup")
-    def setup(body: SetupIn, request: Request, response: Response):
-        """The first account, who becomes the administrator. Guarded by the access code - or, with none set, by being on the server's own machine."""
-        if not logins.allow(client_id(request)):
-            raise HTTPException(429, "Too many attempts. Wait a minute.")
-        if db.count_users():
-            raise HTTPException(409, "An account already exists. Sign in.")
-        if settings.access_code:
-            if not security.code_matches(settings.access_code, body.code):
-                raise HTTPException(401, "That access code is not right.")
-        elif settings.trust_proxy or (request.client.host if request.client else "") not in {"127.0.0.1", "::1"}:
-            raise HTTPException(403, "Set up the first account from the machine the server runs on, or give the server an ACCESS_CODE.")
-        try:
-            name = security.clean_username(body.username)
-            security.check_password(body.password, name)
-        except security.WeakCredentials as exc:
-            raise weak(exc) from exc
-        user = db.create_first_user(uuid.uuid4().hex[:12], name, security.hash_password(body.password))
-        if user is None:
-            raise HTTPException(409, "An account already exists. Sign in.")
-        start_session(response, user)
-        return {"authenticated": True, "user": {"id": user["id"], "username": user["username"], "role": user["role"]}}
+        return {"authenticated": me is not None, "user": me, "server_model": not settings.require_model}
 
     @app.post("/api/signup")
     def signup(body: SignupIn, request: Request, response: Response):
-        """Create your own account (always a member). Open to anyone who can reach the server unless SIGNUP=closed - the
-        protection is not a password but limits: a few accounts per address per hour and a daily cap."""
-        if not db.count_users():
-            raise HTTPException(409, "No one has set this server up yet: create the first account instead.")
-        if settings.signup != "open":
-            raise HTTPException(403, "Sign-ups are closed on this server. Ask an administrator for an account.")
+        """Create your own account. Open to anyone who can reach the server; the protection is limits, not a password: a few
+        accounts per address per hour and a daily cap for the whole server (a cap of 0 closes sign-ups)."""
         address = client_id(request)
         if signups.blocked(address):
             raise HTTPException(429, "Too many accounts were created from your address. Try again later.")
         if db.users_created_since(24) >= settings.max_signups_per_day:
-            raise HTTPException(429, "This server has reached its sign-up limit for today. Try again tomorrow.")
+            raise HTTPException(429, "This server is not taking new accounts right now. Try again tomorrow.")
         try:
             name = security.clean_username(body.username)
             security.check_password(body.password, name)
@@ -216,38 +169,28 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         if db.get_user_by_name(name):
             raise HTTPException(409, "That username is taken.")
         try:
-            user = db.create_user(uuid.uuid4().hex[:12], name, security.hash_password(body.password), "member")
+            user = db.create_user(uuid.uuid4().hex[:12], name, security.hash_password(body.password))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "That username is taken.") from None
         signups.record(address)
         start_session(response, user)
-        return {"authenticated": True, "user": {"id": user["id"], "username": user["username"], "role": user["role"]}}
+        return {"authenticated": True, "user": {"id": user["id"], "username": user["username"]}}
 
     @app.post("/api/login")
     def login(body: Login, request: Request, response: Response):
-        if db.count_users():
-            # only FAILED attempts count: a whole team behind one office address signing in normally is never throttled
-            address, name = client_id(request), (body.username or "").strip().lower() or "-"
-            if logins.blocked(address) or user_logins.blocked(name):
-                raise HTTPException(429, "Too many wrong attempts. Wait a minute.")
-            user = db.get_user_by_name(name) if name != "-" else None
-            valid = security.verify_password(body.password, user["password_hash"] if user else security.DUMMY_HASH)
-            if user is None or not valid or user["disabled"]:
-                logins.record(address)
-                user_logins.record(name)
-                raise HTTPException(401, "Wrong username or password.")
-            db.touch_login(user["id"])
-            start_session(response, user)
-            return {"authenticated": True, "user": {"id": user["id"], "username": user["username"], "role": user["role"]}}
-        if not logins.allow(client_id(request)):
-            raise HTTPException(429, "Too many attempts. Wait a minute.")
-        if not settings.access_code:
-            raise HTTPException(503, "The server has no ACCESS_CODE set.")
-        if not security.code_matches(settings.access_code, body.code):
-            raise HTTPException(401, "That code is not right.")
-        response.set_cookie(COOKIE, security.make_token(settings.secret), max_age=security.SESSION_TTL_S,
-                            httponly=True, samesite="lax", secure=settings.cookie_secure)
-        return {"authenticated": True}
+        # only FAILED attempts count: a whole team behind one office address signing in normally is never throttled
+        address, name = client_id(request), (body.username or "").strip().lower() or "-"
+        if logins.blocked(address) or user_logins.blocked(name):
+            raise HTTPException(429, "Too many wrong attempts. Wait a minute.")
+        user = db.get_user_by_name(name) if name != "-" else None
+        valid = security.verify_password(body.password, user["password_hash"] if user else security.DUMMY_HASH)
+        if user is None or not valid:
+            logins.record(address)
+            user_logins.record(name)
+            raise HTTPException(401, "Wrong username or password.")
+        db.touch_login(user["id"])
+        start_session(response, user)
+        return {"authenticated": True, "user": {"id": user["id"], "username": user["username"]}}
 
     @app.post("/api/logout")
     def logout(response: Response):
@@ -256,8 +199,6 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
 
     @app.post("/api/password")
     def change_password(body: PasswordChange, request: Request, response: Response, me: dict = Depends(require_access)):
-        if me["legacy"]:
-            raise HTTPException(409, "There is no account to change a password for.")
         user = db.get_user(me["id"])
         if not security.verify_password(body.current, user["password_hash"]):
             raise HTTPException(401, "The current password is not right.")
@@ -265,53 +206,12 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             security.check_password(body.new, user["username"])
         except security.WeakCredentials as exc:
             raise weak(exc) from exc
-        db.update_user(user["id"], password_hash=security.hash_password(body.new))      # every other session of theirs ends here
+        db.set_password(user["id"], security.hash_password(body.new))      # every other session of theirs ends here
         start_session(response, db.get_user(user["id"]))
         return {"ok": True}
 
-    # ---- administrators manage the people who may sign in -------------------------------------------------------
-    @app.get("/api/users", response_model=list[UserOut])
-    def list_users(me: dict = Depends(require_admin)):
-        return [UserOut.of(u) for u in db.list_users()]
-
-    @app.post("/api/users", response_model=UserOut, status_code=201)
-    def create_user(body: UserCreate, me: dict = Depends(require_admin)):
-        try:
-            name = security.clean_username(body.username)
-            security.check_password(body.password, name)
-        except security.WeakCredentials as exc:
-            raise weak(exc) from exc
-        if db.get_user_by_name(name):
-            raise HTTPException(409, "That username is taken.")
-        return UserOut.of(db.create_user(uuid.uuid4().hex[:12], name, security.hash_password(body.password), body.role))
-
-    @app.patch("/api/users/{user_id}", response_model=UserOut)
-    def patch_user(user_id: str, body: UserPatch, me: dict = Depends(require_admin)):
-        user = db.get_user(user_id)
-        if user is None:
-            raise HTTPException(404, "No such user.")
-        role = body.role or user["role"]
-        disabled = bool(user["disabled"]) if body.disabled is None else body.disabled
-        if user["role"] == "admin" and not user["disabled"] and (role != "admin" or disabled) and db.active_admins() <= 1:
-            raise HTTPException(409, "There must be at least one active administrator.")
-        new_hash = None
-        if body.password is not None:
-            try:
-                security.check_password(body.password, user["username"])
-            except security.WeakCredentials as exc:
-                raise weak(exc) from exc
-            new_hash = security.hash_password(body.password)
-        db.update_user(user_id, role=body.role, disabled=body.disabled, password_hash=new_hash)
-        return UserOut.of(db.get_user(user_id))
-
     # ---- saved model configurations: yours alone, the key encrypted and never returned --------------------------
     MAX_PROFILES = 20
-
-    def require_account(request: Request) -> dict:
-        me = require_access(request)
-        if me["legacy"]:
-            raise HTTPException(409, "Create the first account to save models.")
-        return me
 
     def my_profile(profile_id: str, me: dict) -> dict:
         row = db.get_profile(profile_id)
@@ -326,11 +226,11 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             raise HTTPException(409, str(exc)) from exc
 
     @app.get("/api/models", response_model=list[ProfileOut])
-    def list_models(me: dict = Depends(require_account)):
+    def list_models(me: dict = Depends(require_access)):
         return [ProfileOut.of(p) for p in db.list_profiles(me["id"])]
 
     @app.post("/api/models", response_model=ProfileOut, status_code=201)
-    def create_model(body: ProfileIn, me: dict = Depends(require_account)):
+    def create_model(body: ProfileIn, me: dict = Depends(require_access)):
         name = body.name.strip()
         checked = checked_model(ModelChoice(provider=body.provider, model=body.model, api_url=body.api_url, api_key=body.api_key))
         if db.get_profile_by_name(me["id"], name):
@@ -343,7 +243,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         return ProfileOut.of(row)
 
     @app.patch("/api/models/{profile_id}", response_model=ProfileOut)
-    def update_model(profile_id: str, body: ProfilePatch, me: dict = Depends(require_account)):
+    def update_model(profile_id: str, body: ProfilePatch, me: dict = Depends(require_access)):
         row = my_profile(profile_id, me)
         new_key = None if body.api_key is None else body.api_key.strip()
         plain = stored_key(row) if new_key is None else new_key
@@ -360,13 +260,13 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         return ProfileOut.of(db.get_profile(row["id"]))
 
     @app.delete("/api/models/{profile_id}")
-    def delete_model(profile_id: str, me: dict = Depends(require_account)):
+    def delete_model(profile_id: str, me: dict = Depends(require_access)):
         my_profile(profile_id, me)
         db.delete_profile(profile_id)
         return {"removed": True}
 
     @app.post("/api/models/{profile_id}/test")
-    def test_model(profile_id: str, me: dict = Depends(require_account)):
+    def test_model(profile_id: str, me: dict = Depends(require_access)):
         """Ask the model's own server which models it serves, with the saved key: does the address work, is the key accepted,
         is this model offered. Says so in words; never returns or logs the key."""
         row = my_profile(profile_id, me)
@@ -405,8 +305,6 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         if body.model_id:
             if body.model:
                 raise HTTPException(422, "Send either a saved model or a one-off one, not both.")
-            if request.state.user["legacy"]:
-                raise HTTPException(409, "Create the first account to use saved models.")
             profile = my_profile(body.model_id, request.state.user)
             choice = ModelChoice(provider=profile["provider"], model=profile["model"], api_url=profile["api_url"], api_key=stored_key(profile))
         if choice is None and settings.require_model:
@@ -421,7 +319,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         if db.jobs_since(user) >= settings.max_jobs_per_day:
             raise HTTPException(429, f"Daily limit reached ({settings.max_jobs_per_day} runs per day).")
         job_id = uuid.uuid4().hex[:12]
-        site = site_name(url, job_id, body.options.reuse_workspace, "" if me["legacy"] else me["id"])
+        site = site_name(url, job_id, body.options.reuse_workspace, me["id"])
         options = body.options.model_dump()
         run_dir = settings.runs_dir / site
         if model:
@@ -438,7 +336,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
     @app.get("/api/jobs", response_model=list[JobOut], dependencies=[Depends(require_access)])
     def list_jobs(request: Request, limit: int = 50):
         me = request.state.user
-        jobs = db.list_jobs(max(1, min(limit, 200)), None if me["role"] == "admin" else me["id"])
+        jobs = db.list_jobs(max(1, min(limit, 200)), me["id"])
         infos = db.run_infos([j["id"] for j in jobs])
         return [view(j, infos.get(j["id"]) or {}) if j["id"] in infos else view(j, {}) for j in jobs]
 

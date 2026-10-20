@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from api.main import create_app
 from api.settings import AppSettings
 
-CODE = "bootstrap-code"
+
 PW = "correct horse battery"
 
 FAKE_PIPELINE = r"""
@@ -28,16 +28,15 @@ if "fail" in url:
 
 @pytest.fixture
 def make_app(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
     opened = []
 
     def make(**overrides):
-        settings = AppSettings(require_model=False, data_dir=tmp_path, access_code=CODE, command=[sys.executable, "-c", FAKE_PIPELINE],
+        settings = AppSettings(require_model=False, data_dir=tmp_path, command=[sys.executable, "-c", FAKE_PIPELINE],
                                poll_interval_s=0.05, idle_interval_s=0.05, max_jobs_per_day=50, **overrides)
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()
         opened.append(client)
-        assert client.post("/api/setup", json={"username": "root", "password": PW, "code": CODE}).status_code == 200
+        assert client.post("/api/signup", json={"username": "root", "password": PW}).status_code == 200
         return client
 
     yield make
@@ -46,9 +45,8 @@ def make_app(tmp_path, monkeypatch):
 
 
 def person(admin, name):
-    assert admin.post("/api/users", json={"username": name, "password": PW}).status_code == 201
     browser = TestClient(admin.app)
-    assert browser.post("/api/login", json={"username": name, "password": PW}).status_code == 200
+    assert browser.post("/api/signup", json={"username": name, "password": PW}).status_code == 200
     return browser
 
 

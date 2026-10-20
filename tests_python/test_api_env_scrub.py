@@ -45,9 +45,9 @@ run = Path(os.environ["DATA_DIR"]) / "runs" / os.environ["SITE"]
 def test_a_real_run_process_receives_none_of_the_servers_secrets_and_its_report_names_its_owner(tmp_path, monkeypatch):
     for name, value in {**SERVER_SECRETS, **HARMLESS}.items():
         monkeypatch.setenv(name, value)
-    settings = AppSettings(data_dir=tmp_path, access_code="bootstrap-code-fff6", command=[sys.executable, "-c", FAKE], poll_interval_s=0.05, idle_interval_s=0.05)
+    settings = AppSettings(data_dir=tmp_path, command=[sys.executable, "-c", FAKE], poll_interval_s=0.05, idle_interval_s=0.05)
     with TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"])) as client:
-        assert client.post("/api/setup", json={"username": "alice", "password": "correct horse battery", "code": "bootstrap-code-fff6"}).status_code == 200
+        assert client.post("/api/signup", json={"username": "alice", "password": "correct horse battery"}).status_code == 200
         job = client.post("/api/jobs", json={"url": "example.com", "model": {"provider": "anthropic", "model": "claude-x", "api_key": "alices-own-key"}}).json()
         deadline = time.monotonic() + 20
         while client.get(f"/api/jobs/{job['id']}").json()["status"] not in ("done", "failed") and time.monotonic() < deadline:

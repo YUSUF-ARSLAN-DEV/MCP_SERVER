@@ -13,7 +13,7 @@ from api import runstore
 from api.main import create_app
 from api.settings import AppSettings
 
-CODE = "bootstrap-code"
+
 PW = "correct horse battery"
 KEY = "sk-live-VERY-SECRET-key-123456"
 
@@ -57,17 +57,16 @@ if "slow" in url:
 
 @pytest.fixture
 def make_app(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
     opened = []
 
     def make(data_dir=None, setup=True, **overrides):
-        settings = AppSettings(**{"data_dir": data_dir or tmp_path, "access_code": CODE, "command": [sys.executable, "-c", FAKE], "poll_interval_s": 0.05,
+        settings = AppSettings(**{"data_dir": data_dir or tmp_path, "command": [sys.executable, "-c", FAKE], "poll_interval_s": 0.05,
                                   "idle_interval_s": 0.05, "max_jobs_per_day": 50, "require_model": False, "store_files_in_db": True, **overrides})
         client = TestClient(create_app(settings, resolver=lambda host: ["93.184.216.34"]))
         client.__enter__()
         opened.append(client)
         if setup:
-            assert client.post("/api/setup", json={"username": "root", "password": PW, "code": CODE}).status_code == 200
+            assert client.post("/api/signup", json={"username": "root", "password": PW}).status_code == 200
         return client
 
     yield make
@@ -76,9 +75,8 @@ def make_app(tmp_path, monkeypatch):
 
 
 def person(admin, name):
-    assert admin.post("/api/users", json={"username": name, "password": PW}).status_code == 201
     browser = TestClient(admin.app)
-    assert browser.post("/api/login", json={"username": name, "password": PW}).status_code == 200
+    assert browser.post("/api/signup", json={"username": name, "password": PW}).status_code == 200
     return browser
 
 
@@ -248,15 +246,16 @@ def test_clean_relative_is_strict():
         assert ok(bad) is None, bad
 
 
-def test_only_the_owner_or_an_administrator_can_read_a_stored_run(make_app):
-    admin = make_app()
-    alice, bob = person(admin, "alice"), person(admin, "bob")
+def test_only_the_person_who_ran_it_can_read_a_stored_run(make_app):
+    first = make_app()
+    alice, bob = person(first, "alice"), person(first, "bob")
     job = run(alice)
     base = f"/api/jobs/{job['id']}"
     for path in ("/info", "/files", "/files/artifacts/report/full-report.docx", "/files/job.log"):
+        assert alice.get(base + path).status_code == 200, path
         assert bob.get(base + path).status_code == 404, path
-        assert alice.get(base + path).status_code == 200 and admin.get(base + path).status_code == 200, path
-    assert bob.get("/api/jobs").json() == []
+        assert first.get(base + path).status_code == 404, path                    # the very first account is just another person
+    assert bob.get("/api/jobs").json() == [] and first.get("/api/jobs").json() == []
 
 
 # ------------------------------------------------------------------------------------------------ safety and the past
@@ -273,7 +272,6 @@ def test_a_failure_while_storing_never_fails_the_run_and_its_files_stay_where_th
 
 
 def test_runs_from_before_this_existed_are_moved_into_the_database_when_the_server_starts(tmp_path, monkeypatch):
-    monkeypatch.setenv("ACCESS_CODE", CODE)
     from api.db import Database
     db = Database(tmp_path / "app.db")
     old = tmp_path / "runs" / "old-run"
@@ -283,7 +281,7 @@ def test_runs_from_before_this_existed_are_moved_into_the_database_when_the_serv
     (old / "auth" / "state.json").write_text("SECRET-OLD-LOGIN")
     db.create_job("oldjob000001", "https://old.test/", "old-run", old, "someone", {})
     db.finish_job("oldjob000001", "done")
-    settings = AppSettings(data_dir=tmp_path, access_code=CODE, require_model=False, store_files_in_db=True, command=[sys.executable, "-c", "pass"],
+    settings = AppSettings(data_dir=tmp_path, require_model=False, store_files_in_db=True, command=[sys.executable, "-c", "pass"],
                            poll_interval_s=0.05, idle_interval_s=0.05)
     with TestClient(create_app(settings)) as client:
         deadline = time.monotonic() + 15
