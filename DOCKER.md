@@ -9,15 +9,23 @@ restart lives in one volume, `/data`: the database (`app.db`), and a scratch fol
 docker compose up --build
 ```
 
-That is all. Add `-d` to run it in the background. It needs no other setup: the first account's setup code defaults to
-`change-me`, which is safe because the app only listens on this machine.
+That is all. Add `-d` to run it in the background. It needs no other setup.
 
-To change settings, copy `docker.env.example` to `docker.env` and edit it (optional). **Before sharing the app with anyone,
-set your own `ACCESS_CODE`, and `SESSION_SECRET` / `SECRETS_KEY`, there.**
+To change settings, copy `docker.env.example` to `docker.env` and edit it (optional). Before sharing the app with anyone,
+set your own `SESSION_SECRET` / `SECRETS_KEY` there.
 
-Open <http://127.0.0.1:8000>. The first visit asks you to **create the first account** (the administrator); the
-setup code (`ACCESS_CODE`, default `change-me`) proves you may. After that, people create their own accounts (or you add them under
-**Users**, if you set `SIGNUP=closed`).
+Open <http://127.0.0.1:8000>. You get a sign-in / **Create account** page. There are no administrators: everyone is just a
+user and sees only their own runs and saved models. `MAX_SIGNUPS_PER_DAY=0` closes sign-ups.
+
+## Start again from empty
+
+To delete every account, run, saved model and stored file but keep the tables:
+
+```bash
+docker compose exec app python3 -m api.reset --yes
+```
+
+(Without `--yes` it only shows what it would remove.)
 
 Each person then saves their own model on the **Models** page (provider, model name, API key). There is no model key in
 the container's settings; saved keys are stored encrypted in the database.

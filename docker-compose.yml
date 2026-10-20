@@ -1,5 +1,5 @@
 # Start it:   docker compose up --build        then open http://127.0.0.1:8000
-# The first visit asks you to create the first account (the administrator); the setup code (default: change-me) proves you may.
+# The first visit shows a sign-in / create-account page; everyone is just a user.
 # To change any setting, copy docker.env.example to docker.env and edit it (optional); see DOCKER.md.
 services:
   app:
