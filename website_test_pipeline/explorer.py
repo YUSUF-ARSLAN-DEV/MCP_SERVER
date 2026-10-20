@@ -72,6 +72,19 @@ _HEADINGS_JS = "els => {" + _JS_HELPERS + r"""
 }"""
 
 _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
+    // Not the site's own controls, so never something to test as the site (both found live on a production site):
+    // the buttons and "Terms" link INSIDE an embedded map widget belong to the map provider, and a skip link
+    // ("skip to main content") is an accessibility shortcut kept off-screen or under the header until Tab is pressed.
+    // A skip link is recognised by its shape, not its words: an in-page anchor to an element that exists, among the
+    // first three things a keyboard user reaches.
+    const WIDGET = '.gm-style, .leaflet-container, .mapboxgl-map, .maplibregl-map, .ol-viewport, .esri-view, [class*="ymaps"]';
+    const firstFocusable = [...document.querySelectorAll(
+        'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])')].slice(0, 3);
+    const isSkipLink = e => {
+        const h = e.tagName === 'A' ? (e.getAttribute('href') || '') : '';
+        if (!/^#[^#\s]+$/.test(h) || !firstFocusable.includes(e)) return false;
+        try { return !!document.getElementById(decodeURIComponent(h.slice(1))); } catch (x) { return false; }
+    };
     return els.filter(e => {
         const s = getComputedStyle(e);
         return s.display !== 'none' && s.visibility !== 'hidden' && e.getClientRects().length;
@@ -123,6 +136,8 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             field_name: nameOk ? rawName : null,
             volatile_id: !testid && ((!!rawId && !idOk) || (!!rawName && !nameOk)),
             hidden: hidden,
+            skip_link: isSkipLink(e),
+            third_party: !!e.closest(WIDGET),
             region: regionOf(e),
             type: e.getAttribute('type'),
             href: e.getAttribute('href'),
@@ -934,6 +949,13 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
         lang = None
     headings = page.locator('h1,h2,h3,h4,h5,h6,[role="heading"]').evaluate_all(_HEADINGS_JS)
     controls = page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)
+    not_the_sites = [c for c in controls if c.get("skip_link") or c.get("third_party")]
+    if not_the_sites:
+        controls = [c for c in controls if not (c.get("skip_link") or c.get("third_party"))]
+        if log:
+            log.info("explore: left out %d control(s) that are not the site's own on %s (%d in an embedded widget, %d skip link(s))",
+                     len(not_the_sites), url, sum(bool(c.get("third_party")) for c in not_the_sites),
+                     sum(bool(c.get("skip_link")) for c in not_the_sites))
     # Flag accessible names the crawl saw on more than one element - a bare
     # get_by_role(name=...) on these raises a strict-mode violation at run time.
     name_counts: dict[str, int] = {}
