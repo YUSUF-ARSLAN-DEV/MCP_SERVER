@@ -52,6 +52,8 @@ class Settings:
     api_url: str = field(default_factory=lambda: os.getenv("API_URL", "https://llm-1.d4done.com/v1/chat/completions"))
     model: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "google/gemma-4-26b-a4b-qat"))
     api_key: str = field(default_factory=lambda: os.getenv("API_KEY", ""))
+    # which kind of model API API_URL speaks - see providers.py ("openai" = chat completions, "anthropic" = Messages API)
+    model_provider: str = field(default_factory=lambda: (os.getenv("MODEL_PROVIDER", "") or "openai").strip().lower())
     seed_url: str = field(default_factory=lambda: os.getenv("SEED_URL", ""))
     crawl_max_depth: int = field(default_factory=lambda: _int("CRAWL_MAX_DEPTH", 3, 0, 20))
     crawl_max_pages: int = field(default_factory=lambda: _int("CRAWL_MAX_PAGES", 100, 1, 5000))

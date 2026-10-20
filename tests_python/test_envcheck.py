@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from website_test_pipeline.envcheck import check_env, check_model, models_url
+from website_test_pipeline.envcheck import check_env, check_model
 
 
 def test_the_typo_that_broke_pytest_is_caught_before_a_run_starts():
@@ -19,8 +19,9 @@ def test_an_api_url_that_is_not_one_http_url_is_caught():
     assert check_env({"API_URL": "https://a.test/v1/chat/completions"}) == []
 
 
-def test_models_url_is_derived_from_the_chat_completions_url():
-    assert models_url("https://a.test/v1/chat/completions") == "https://a.test/v1/models"
+def test_an_unknown_model_provider_is_caught():
+    assert "MODEL_PROVIDER" in check_env({"MODEL_PROVIDER": "skynet"})[0]
+    assert check_env({"MODEL_PROVIDER": "Anthropic"}) == [] and check_env({"MODEL_PROVIDER": "openai"}) == []
 
 
 def _settings(model="m1"):

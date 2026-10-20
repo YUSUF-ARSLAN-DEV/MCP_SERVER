@@ -3,12 +3,9 @@ import json, logging, time, uuid, re
 from typing import Any
 import urllib.error, urllib.request
 from .config import Settings
+from .providers import ModelError, get_provider      # ModelError lives with the providers; re-exported here for callers
 
 TRANSIENT = {408, 409, 425, 429, 500, 502, 503, 504, 524, 530}
-
-class ModelError(RuntimeError):
-    def __init__(self, message: str, *, status: int | None = None, body: str = ""):
-        super().__init__(message); self.status = status; self.body = body
 
 # HTTP statuses that mean "the model service is not available", as opposed to "it answered badly".
 UNAVAILABLE = {401, 403, 429, 500, 502, 503, 504, 524, 530}
@@ -43,12 +40,13 @@ class ModelClient:
     def generate(self, prompt: str, system: str, images: list[str] | None = None) -> str:
         """Ask the model. `images` are data URLs (data:image/jpeg;base64,...) sent with the prompt for a vision-capable
         model; a server that does not accept images answers 400/415/422, which callers treat as "no vision"."""
-        if not self.s.api_key and self.s.api_url.startswith("https://llm-1.d4done.com"):
-            raise ModelError("API_KEY is required for the configured model endpoint")
-        payload = json.dumps({"model": self.s.model, "messages": [{"role":"system","content":system},{"role":"user","content":prompt if not images else [{"type":"text","text":prompt}, *({"type":"image_url","image_url":{"url":u}} for u in images)]}], "temperature": 0.1, "max_tokens": getattr(self.s, "model_max_tokens", 3072), "stream": False, **({"chat_template_kwargs": {"enable_thinking": False}} if getattr(self.s, "model_thinking", "off") == "off" else {})}).encode()
+        provider = get_provider(getattr(self.s, "model_provider", None))
+        for problem in provider.problems(self.s):
+            raise ModelError(problem)
+        url, headers, payload = provider.request(self.s, prompt, system, images)
         for attempt in range(1, self.s.model_retries + 2):
             request_id = uuid.uuid4().hex[:10]; started = time.monotonic()
-            req = urllib.request.Request(self.s.api_url, data=payload, headers={"Content-Type":"application/json", "User-Agent":"website-test-pipeline/0.1", **({"Authorization": f"Bearer {self.s.api_key}"} if self.s.api_key else {})})
+            req = urllib.request.Request(url, data=payload, headers={"User-Agent": "website-test-pipeline/0.1", **headers})
             try:
                 with urllib.request.urlopen(req, timeout=self.s.model_timeout_ms / 1000) as response:
                     status = response.status; raw = response.read().decode("utf-8", "replace")
@@ -57,14 +55,7 @@ class ModelClient:
                 try: data = json.loads(raw)
                 except json.JSONDecodeError as exc: raise ModelError("API returned non-JSON success response", body=raw[:1000]) from exc
                 if data.get("error"): raise ModelError(f"Model error: {str(data['error'])[:500]}", body=raw[:1000])
-                choice = (data.get("choices") or [{}])[0]
-                message = choice.get("message") or {}
-                self.log.info("model choice fields request=%s fields=%s message_fields=%s", request_id, list(choice), list(message))
-                content = message.get("content")
-                if not content and (message.get("reasoning") or message.get("reasoning_content")):
-                    raise ModelError("Model returned reasoning without final content", body=raw[:1000])
-                if isinstance(content, list): content = "".join(x if isinstance(x, str) else x.get("text", "") for x in content)
-                if not isinstance(content, str) or not content.strip(): raise ModelError(f"Model response had no usable content; keys={','.join(data.keys())}", body=raw[:1000])
+                content = provider.reply_text(data, raw)
                 if "</think>" in content:
                     content = content.split("</think>", 1)[1]          # reasoning that leaked into the reply
                 if not content.strip(): raise ModelError("Model reply held only reasoning", body=raw[:1000])
