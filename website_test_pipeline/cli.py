@@ -139,6 +139,12 @@ def main() -> int:
         os.environ['WTP_DEVICE'] = args.device
     settings = Settings(); settings.prepare(); logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s', handlers=[logging.FileHandler(settings.artifacts_dir/'generation.log', encoding='utf-8'), logging.StreamHandler()]); log = logging.getLogger('pipeline')
     log.info('WORKSPACE site=%s dir=%s', settings.site, settings.workspace)
+    from .envcheck import check_env, check_model
+    env_problems = check_env() + ([m] if args.command in {'generate', 'intents', 'expand', 'propose'} and (m := check_model(settings)) else [])
+    for problem in env_problems:
+        log.error('CONFIG %s', problem)
+    if env_problems:
+        return 2
     os.environ['WTP_HEURISTICS'] = str(settings.heuristics_file)   # generated specs read the same lists (see heuristics.py)
     from . import heuristics
     for note in heuristics.configure(settings.heuristics_file):
