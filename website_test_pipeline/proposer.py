@@ -17,7 +17,7 @@ PROMPT_VERSION = "propose-v3"
 MAX_FLOWS = 6
 MAX_STEPS = 8
 MIN_STEPS = 2
-_ACTIONS = {"click": "click", "select": "select", "fill": "fill", "pick": "multiselect"}
+_ACTIONS = {"click": "click", "select": "select", "fill": "fill", "pick": "multiselect", "check": "check", "uncheck": "uncheck"}
 _OUTCOMES = {"navigates": "navigates", "shows_results": "results",
              "shows_validation": "validation", "reveals_panel": "reveals"}
 
@@ -34,7 +34,7 @@ RULES = (
     "- A flow may cross pages: after a step that navigates, the next step happens on the destination page. "
     "Chain pages only in the direction the SITE MAP's LINKS or NAV connect them (e.g. /a then /b then /c only if "
     "/a links to /b and /b links to /c), and name each step's own page.\n"
-    "- Step actions: click | select | fill | pick (pick = choose an option in a dropdown or checkbox menu). "
+    "- Step actions: click | select | fill | pick (pick = choose an option in a dropdown or checkbox menu) | check | uncheck (tick or untick a checkbox or radio button listed in the SITE MAP). "
     "select/fill/pick may carry a value; leave it out if unsure.\n"
     "- Outcomes: navigates (give to_path) | shows_results | shows_validation | reveals_panel.\n"
     "- If the input ends with a NOT YET COVERED list, prefer flows that reach those pages or act on those controls.\n"
@@ -106,6 +106,8 @@ def _check_step(step: dict, index: dict, pages: set[str]) -> tuple[dict | None, 
         return None, f'"{step.get("target")}" is not a select'
     if action == "fill" and tag not in {"input", "textarea"}:
         return None, f'"{step.get("target")}" is not a text field'
+    if action in {"check", "uncheck"} and not (tag == "input" and (control.get("type") or "").lower() in {"checkbox", "radio"}):
+        return None, f'"{step.get("target")}" is not a checkbox or radio button'
     value = step.get("value")
     options = [str(o) for o in (control.get("options") or [])]
     if action == "select" and value is not None and options and str(value) not in options:

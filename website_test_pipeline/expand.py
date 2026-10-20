@@ -39,7 +39,7 @@ RULES = (
     "- Use ONLY pages and controls listed in the SITE MAP. Copy control names exactly as written there.\n"
     "- Every step names the page it happens on (its path). After a step that navigates, later steps happen on the "
     "destination page; chain pages only in the direction the SITE MAP's LINKS or NAV connect them.\n"
-    "- Step actions: click | select | fill | pick (pick = choose an option in a dropdown or checkbox menu). "
+    "- Step actions: click | select | fill | pick (pick = choose an option in a dropdown or checkbox menu) | check | uncheck (tick or untick a checkbox or radio button listed in the SITE MAP). "
     "Give a value ONLY if the sentence names a specific option or text; otherwise leave value null. A button that opens a checkbox or dropdown menu must be a pick step, not a click, when the sentence says to pick, choose or select one of its options.\n"
     "- Outcomes: navigates (give to_path) | shows_results | shows_validation | reveals_panel. Choose the one that "
     "matches what the sentence says the visitor should see.\n"

@@ -104,7 +104,10 @@ def _locator(step: dict, pool: list[dict]) -> tuple[str | None, str]:
 
 
 def _target_slug(step: dict) -> str:
-    return _slug(step.get("selector") or step.get("name") or "control", 24)
+    selector = step.get("selector") or ""
+    if ">> nth=" in selector:             # a positional selector slugs to noise ("input-type-checkbox-nth-"); the caption reads better
+        selector = ""
+    return _slug(selector or step.get("name") or "control", 24)
 
 
 def _heading_locator(text: str) -> str | None:
@@ -178,6 +181,8 @@ def _outcome_expects(flow: dict, pool: list[dict]) -> tuple[list[str], list[dict
 def _step_verify(step: dict, effect: str | None, path_after: str | None, var: str) -> str:
     if effect == "navigates" and path_after:
         return f"expect(page).to_have_url(re.compile({_re_lit(_url_regex(path_after))}))"
+    if step.get("kind") in {"check", "uncheck"}:
+        return f"expect({var}).{'to_be_checked' if step['kind'] == 'check' else 'not_to_be_checked'}()"
     if effect != "navigates" and step.get("kind") == "select":
         # a named option must be the one that ended up selected; "some non-empty value" would pass for the wrong pick
         if step.get("value"):
@@ -207,6 +212,8 @@ def _step_action(step: dict, var: str) -> tuple[str | None, str]:
         return f"{var}.fill(secret({_lit(ref_name(step['value']))}))", ""
     if kind == "fill":
         return f"{var}.fill({_lit(str(step.get('value') or _plausible_value({})))})", ""
+    if kind in {"check", "uncheck"}:
+        return f"{var}.{kind}()", ""
     if kind == "multiselect":
         if not step.get("value"):
             return None, "a multiselect step names no option to pick"

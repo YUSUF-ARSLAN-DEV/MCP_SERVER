@@ -87,7 +87,13 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             || parseFloat(cs.opacity) === 0
             || r.bottom < 0 || r.right < 0
             || r.left > (window.innerWidth || 10000) + 1500;
-        const label = e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].textContent) || e.getAttribute('placeholder') || (isInputButton ? e.value : '') || (isMedia ? e.tagName.toLowerCase() + ' player' : '') || (e.textContent||'').trim().replace(/\s+/g,' ').slice(0,120);
+        const label0 = e.getAttribute('aria-label') || (e.labels && e.labels[0] && e.labels[0].textContent) || e.getAttribute('placeholder') || (isInputButton ? e.value : '') || (isMedia ? e.tagName.toLowerCase() + ' player' : '') || (e.textContent||'').trim().replace(/\s+/g,' ').slice(0,120);
+        // A checkbox/radio/field with no accessible name usually has its caption as a bare text node beside it
+        // ("<input type=checkbox> checkbox 1"); that caption is the only name a person would give it.
+        const isField = ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.tagName) && !isInputButton;
+        const sideText = n => (n && n.nodeType === 3) ? n.textContent.trim().replace(/\s+/g, ' ').slice(0, 60) : '';
+        const label = label0 || (isField ? (sideText(e.nextSibling) || sideText(e.previousSibling)) : '');
+        const accessiblyNamed = !!(e.getAttribute('aria-label') || (e.labels && e.labels.length) || e.getAttribute('placeholder'));
         const testid = (e.dataset && e.dataset.testid) || null;
         const rawId = e.id || null;
         const rawName = e.getAttribute('name') || null;
@@ -98,6 +104,12 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
         else if (idOk) selector = `#${rawId}`;
         else if (nameOk) selector = `${e.tagName.toLowerCase()}[name="${rawName}"]`;
         else if (isMedia) selector = e.tagName.toLowerCase();
+        else if (isField && !hidden && !accessiblyNamed) {
+            // no id, name, test id or accessible name to find it by: its position among same-kind fields is all
+            // there is, so say so (Playwright's `>> nth=`) rather than leave the control unreachable
+            const css = e.tagName.toLowerCase() + (e.tagName === 'INPUT' && e.type ? `[type="${e.type}"]` : '');
+            selector = `${css} >> nth=${[...document.querySelectorAll(css)].indexOf(e)}`;
+        }
         return {
             tag: e.tagName.toLowerCase(),
             role: e.getAttribute('role') || e.type || null,

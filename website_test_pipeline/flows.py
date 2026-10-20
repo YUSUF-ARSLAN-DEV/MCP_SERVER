@@ -45,6 +45,8 @@ def describe_step(step: dict) -> str:
         return f'fill "{value}" in {_target(step)}' if value else f'fill {_target(step)}'
     if kind == "multiselect":
         return f'pick "{value}" in {_target(step)}' if value else f'pick an option in {_target(step)}'
+    if kind in {"check", "uncheck"}:
+        return f'{kind} {_target(step)}'
     if kind == "submit":
         return f'{value} in {_target(step)}' if value == "press Enter" else f'click {_target(step)}'
     if kind == "click":

@@ -286,7 +286,7 @@ def snapshots_equal(a: dict, b: dict) -> bool:
             and [(r["key"], r["rows"]) for r in a["results"]] == [(r["key"], r["rows"]) for r in b["results"]])
 
 
-_KIND_TAGS = {"select": {"select"}, "fill": {"input", "textarea"}}   # what can stand in for these kinds of step
+_KIND_TAGS = {"select": {"select"}, "fill": {"input", "textarea"}, "check": {"input"}, "uncheck": {"input"}}   # what can stand in for these kinds of step
 _RENAMED_RATIO = 0.75                                                 # how alike two control names must be
 
 
@@ -437,6 +437,8 @@ def _do_step(page, step: dict, seen: dict | None = None) -> None:
             if not step.get("value") and (loc.get_attribute("type") or "").lower() == "password":
                 raise RuntimeError("a password field needs the login details, and none are bound to this step")
             loc.fill(str(step.get("value") or _plausible_value({})), timeout=2000)
+    elif kind in {"check", "uncheck"}:
+        (loc.check if kind == "check" else loc.uncheck)(timeout=3000)       # idempotent: ticking a ticked box is not a failure
     elif kind == "multiselect" and step.get("value"):
         pick_option(page, loc, str(step["value"]))   # open the widget and pick the NAMED option
     elif kind == "multiselect":
