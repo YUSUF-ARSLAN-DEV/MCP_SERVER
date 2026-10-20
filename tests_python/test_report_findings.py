@@ -540,3 +540,44 @@ def test_a_second_run_gets_a_delta_block_with_removed_tests_and_their_reason(tmp
     second = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     assert "Change since the previous run" in second and "Compared with" in second
     assert "Tests removed" in second and "test_flow_flap" in second
+
+
+def test_a_defect_lives_its_whole_life_through_real_renders_open_persist_frozen_severity_then_auto_close(tmp_path):
+    """The ledger tests above start from a hand-written ledger entry. This one starts from nothing: a flow FAILS
+    in a real create_report, the ledger entry is born, it survives a second failure with its severity frozen,
+    and only the third consecutive clean run closes it - each step through the actual build, not the helpers."""
+    from website_test_pipeline import report_policy as policy
+    artifacts, tests = _workspace(tmp_path)
+    good_node = f"tests/{file_name(_flow('f--good'))}::test_flow_good[chromium]"
+    key = policy.stable_test_key(good_node)
+    ledger_path = tmp_path / "defect_ledger.json"
+
+    def run(status, error=None):
+        results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+        for row in results["tests"]:
+            if row["nodeid"] == good_node:
+                row.update(status=status, error=error)
+        (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+        create_report(artifacts, tests, tmp_path / "report", combined=True)
+        entry = json.loads(ledger_path.read_text(encoding="utf-8"))["defects"].get(key)
+        return entry, json.loads((tmp_path / "report" / "report-data.json").read_text(encoding="utf-8"))
+
+    wrong_page = "E   AssertionError: Page.expect_url\nE     Expected URL to match /en/find but was https://x.test/en"
+    entry, data = run("failed", wrong_page)                              # 1: born from a real failure
+    assert entry["status"] == "open" and entry["total_failures"] == 1 and entry["severity"] == "High"
+    assert data["recommendation"] == "NO-GO" and data["counts"]["open_defects"] == 1
+    born_severity, born_at = entry["severity"], entry["severity_set_at"]
+
+    entry, data = run("failed", wrong_page.replace("/en/find", "/en/other"))   # 2: fails again, differently
+    assert entry["total_failures"] == 2 and entry["consecutive_not_reproduced"] == 0
+    assert (entry["severity"], entry["severity_set_at"]) == (born_severity, born_at)   # frozen: set once, at confirmation
+
+    for clean in (1, 2):                                                 # 3-4: clean runs do not close it
+        entry, data = run("passed")
+        assert entry["status"] == "open" and entry["consecutive_not_reproduced"] == clean
+        assert data["counts"]["open_defects"] == 1 and data["recommendation"] == "NO-GO"
+
+    entry, data = run("passed")                                          # 5: the third consecutive clean run closes it
+    assert entry["status"] == "closed" and entry["audit_log"][-1]["actor"] == "[auto]"
+    assert entry["audit_log"][-1]["clean_run_count"] == 3 and entry["severity"] == born_severity
+    assert data["counts"]["open_defects"] == 0 and data["recommendation"] != "NO-GO"
