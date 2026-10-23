@@ -1,6 +1,6 @@
 # Start it:   docker compose up --build        then open http://127.0.0.1:8000
 # The first visit shows a sign-in / create-account page; everyone is just a user.
-# To change any setting, copy docker.env.example to docker.env and edit it (optional); see DOCKER.md.
+# To change any setting, copy docker.env.example to docker.env and edit it (optional); see docs/DOCKER.md.
 services:
   app:
     build:
@@ -12,7 +12,7 @@ services:
     init: true                      # reaps the browser processes a run leaves behind
     shm_size: "1gb"                 # Chromium needs a real /dev/shm; the default 64 MB makes pages crash
     ports:
-      - "127.0.0.1:8000:8000"       # only this machine; put a reverse proxy with HTTPS in front to share it (see DOCKER.md)
+      - "127.0.0.1:8000:8000"       # only this machine; put a reverse proxy with HTTPS in front to share it (see docs/DOCKER.md)
     env_file:
       - path: docker.env            # optional: your settings (see docker.env.example); never put into the image
         required: false

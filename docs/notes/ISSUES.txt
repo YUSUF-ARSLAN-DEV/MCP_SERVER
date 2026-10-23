@@ -75,7 +75,7 @@ code or a real live run - nothing here is speculative unless explicitly marked "
     - Fixed this session: removed the "User flows" section (duplicated the Defect Report + Appendix),
       fixed severity/status conflating "confirmed bug" with "couldn't verify"/"needs a human", fixed
       NO-GO firing on any open item instead of only a confirmed-broken one, moved the evidence section to
-      match the report_format.txt spec exactly (9/9 sections, correct order).
+      match the docs/report_format.txt spec exactly (9/9 sections, correct order).
     - Left in place on purpose: "Flows without a test result in this run" (a compact Stored-status/
       Latest-result table) still overlaps with the Defect Report's BLOCK-* entries. Judged not pure fluff
       (it carries the "stored status" nuance the Defect Report doesn't), but it is partially redundant and

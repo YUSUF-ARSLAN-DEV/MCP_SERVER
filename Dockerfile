@@ -6,7 +6,7 @@
 # exact version drives. Change both together.
 FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
 
-# the git commit this image was built from, shown on every run (docker compose passes it; see DOCKER.md)
+# the git commit this image was built from, shown on every run (docker compose passes it; see docs/DOCKER.md)
 ARG CODE_VERSION=unknown
 ENV CODE_VERSION=${CODE_VERSION} \
     PYTHONUNBUFFERED=1 \

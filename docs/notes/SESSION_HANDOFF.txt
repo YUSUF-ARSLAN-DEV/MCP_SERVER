@@ -35,7 +35,7 @@ eb37136 fix(generator): _compact_primary_flow now explicitly tells the model to 
         real defects.
 
 Earlier in the session (before these, same day): report.py was also changed so its section structure is
-an exact 1:1 match to report_format.txt's 9 sections (verified directly against the real rendered docx -
+an exact 1:1 match to docs/report_format.txt's 9 sections (verified directly against the real rendered docx -
 headings checked in order), fluff removed ("User flows" section cut as redundant with the Defect Report),
 and the validator.py dead-conditional check was added (catches `action if False else None`-style dead
 code in a generated spec).
@@ -118,7 +118,7 @@ execute concurrency (EXECUTE_CONCURRENCY, default 1 in .env - see CONCURRENCY_NO
 4. KEY FILE LOCATIONS
 ====================================================================
 
-Report (combined, matches report_format.txt exactly - verified):
+Report (combined, matches docs/report_format.txt exactly - verified):
   runs\sat-stg.aljazeera.tv\artifacts\report\full-report.docx
 Per-page reports: runs\sat-stg.aljazeera.tv\artifacts\report\pages\
 Appendix: runs\sat-stg.aljazeera.tv\artifacts\report\full-report-appendix.docx
