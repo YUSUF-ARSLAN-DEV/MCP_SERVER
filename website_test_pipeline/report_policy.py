@@ -31,7 +31,7 @@ CATEGORY_LABEL = {"defect": "Defect", "triage": "Needs triage", "unverified": "U
 ID_RE = re.compile(r"\b(?:DEF|TRI|UNV|LIM|TST|TOOL|COV)[-" + NBH + r"]\d{3}\b")
 
 _LIMITATION_KINDS = {"human_input_required", "authentication_required"}
-_UNVERIFIED_KINDS = {"inconclusive", "blocked_flow", "auth_failure"}
+_UNVERIFIED_KINDS = {"inconclusive", "blocked_flow", "auth_failure", "never_confirmed"}
 
 # A skipped test is the harness declining to run, never a result: the validator rejected the spec, the model
 # returned no code, the spec never named its target page.
@@ -74,6 +74,32 @@ def is_action_failure(error: str | None) -> bool:
     """True when the test failed while trying to act on the page, before it observed any outcome."""
     text = error or ""
     return bool(_ACTION_TIMEOUT.search(text) or _COVERED.search(text))
+
+
+_ELEMENT_ABSENT = re.compile(r"element\(s\) not found|waiting for (?:get_by_\w+|locator)\(", re.I)
+
+
+def is_element_absent_failure(error: str | None) -> bool:
+    """The check found no such element. A test that has passed before reads this as "the element went away"; a test that has
+    never passed may simply have named the wrong element. Unlike a wrong page (a URL that differs), it cannot tell which."""
+    return bool(_ELEMENT_ABSENT.search(error or ""))
+
+
+def finding_key(kind: str, url: str, summary: str) -> str:
+    """A stable ledger key for a defect the browser itself reported (a broken link, an error page ...), so it stays open
+    across runs like a failing test does. The same fault on the same page gives the same key; a different link or a
+    different click is a different defect."""
+    import hashlib
+    from urllib.parse import urlsplit
+    detail = re.sub(r"\s+", " ", (summary or "").lower()).strip()[:160]
+    path = (urlsplit(url or "").path or "/").rstrip("/") or "/"
+    return f"finding::{kind}::{path}::{hashlib.sha1(detail.encode('utf-8')).hexdigest()[:10]}"
+
+
+def ever_passed(history: list[dict[str, Any]], stable_key: str) -> bool:
+    """True when an earlier report recorded this test passing. A test that has never passed has never shown it can tell a
+    working page from a broken one, so its first failure is as likely the test's fault as the site's."""
+    return any((run.get("tests") or {}).get(stable_key, {}).get("status") == "passed" for run in history)
 
 
 def triage_category(kind: str | None, error: str | None) -> str:

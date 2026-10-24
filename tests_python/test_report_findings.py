@@ -699,3 +699,82 @@ def test_a_broken_same_site_link_found_by_the_sweep_is_a_medium_defect(tmp_path)
                                                 "href": "https://x.test/gone"}])
     assert "1 application defect found this run" in joined and "returns HTTP 404" in joined
     assert "Release decision: NO-GO" not in joined
+
+
+# ------------------------------------------------------------------ a test that has never passed cannot prove the site broken
+
+def _unclear_page_failure(tmp_path, *, history=None, health=None):
+    from website_test_pipeline import report_policy as policy
+    artifacts, tests = _workspace(tmp_path)
+    (tests / "https-x-test-en_test.py").write_text(
+        "from playwright.sync_api import expect\n"
+        "def test_wizard_step(page):\n"
+        "    expect(page.get_by_role('button', name='Go')).to_be_visible()\n", encoding="utf-8")
+    (artifacts / "page.inventory.json").write_text(json.dumps(
+        {"url": START, "controls": [{"name": "Go", "tag": "button", "role": "button"}], **({"health": health} if health else {})}), encoding="utf-8")
+    results = json.loads((artifacts / "test_results.json").read_text(encoding="utf-8"))
+    for row in results["tests"]:
+        if "test_wizard_step" in row["nodeid"]:
+            row["error"] = "E   AssertionError: Locator expected to be visible\nE   Error: element(s) not found"
+    (artifacts / "test_results.json").write_text(json.dumps(results), encoding="utf-8")
+    if history:      # an earlier report in which every one of these tests passed
+        earlier = {policy.stable_test_key(row["nodeid"]): {"status": "passed", "title": row["nodeid"], "url": row["url"], "scope": "page"}
+                   for row in results["tests"]}
+        (tmp_path / "report").mkdir()
+        (tmp_path / "report" / "run-history.json").write_text(json.dumps({"runs": [
+            {"run_id": "run-1", "finished_at": "2026-01-01T00:00:00+00:00", "tests_ran": len(earlier), "tests": earlier}]}), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    return chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+def test_a_first_failure_of_a_page_test_that_never_passed_needs_triage_and_never_blocks(tmp_path):
+    joined = _unclear_page_failure(tmp_path)
+    assert "Release decision: NO-GO" not in joined and "TRI-001" in joined
+    assert "has never passed on this page" in joined
+
+
+def test_the_same_failure_is_a_defect_once_that_test_has_passed_before(tmp_path):
+    joined = _unclear_page_failure(tmp_path, history=True)
+    assert "DEF-001" in joined.replace("‑", "-") and "has never passed on this page" not in joined
+
+
+def test_a_failing_page_test_is_a_defect_when_the_no_model_checks_also_flagged_that_page(tmp_path):
+    joined = _unclear_page_failure(tmp_path, health={"main_status": 500})
+    assert "Release decision: NO-GO" in joined and "has never passed on this page" not in joined
+
+
+def test_a_requirement_the_tool_could_not_turn_into_a_test_does_not_count_against_the_site():
+    from types import SimpleNamespace
+    from website_test_pipeline.report import _requirement_stats
+    run = SimpleNamespace(flow_reports=[], requirements=[
+        {"id": "i-1", "sentence": "A visitor searches.", "source": "doc", "status": "expanded", "flow_id": "f1"},
+        {"id": "i-2", "sentence": "The page title is shown.", "source": "doc", "status": "unbuildable", "reason": "a content statement"},
+        {"id": "i-3", "sentence": "A guess.", "source": "ai", "status": "expanded"}])
+    stats = _requirement_stats(run)
+    assert (stats["total"], stats["written_total"], stats["written_not_backed"]) == (3, 1, 1)
+    assert (stats["guessed"], stats["untestable"]) == (1, 1)
+
+
+def test_a_browser_reported_fault_stays_open_across_runs_like_a_failing_test(tmp_path):
+    """A broken link found once must not vanish because the next run happened not to see it: it is born in the ledger,
+    stays open when it does not reproduce, and a person (or three clean runs) closes it - same life as a failing test."""
+    artifacts, tests = _workspace(tmp_path)
+    ledger_path = tmp_path / "defect_ledger.json"
+
+    def inventory(outcome, status):
+        return {"url": START, "title": "Home", "controls": [], "headings": [{"text": "Hi"}],
+                "swept": [{"name": "Old brochure", "kind": "link", "outcome": outcome, "status": status, "href": "https://x.test/gone"}]}
+
+    def run(outcome, status):
+        (artifacts / "health.inventory.json").write_text(json.dumps(inventory(outcome, status)), encoding="utf-8")
+        create_report(artifacts, tests, tmp_path / "report", combined=True)
+        entries = {k: v for k, v in json.loads(ledger_path.read_text(encoding="utf-8"))["defects"].items() if k.startswith("finding::broken_link")}
+        return entries, json.loads((tmp_path / "report" / "report-data.json").read_text(encoding="utf-8"))
+
+    entries, data = run("broken", 404)
+    (key, entry), = entries.items()
+    assert entry["status"] == "open" and entry["severity"] == "Medium" and data["counts"]["open_defects"] == 1
+
+    entries, data = run("ok", 200)                                   # not seen this run: still open, never silently dropped
+    assert entries[key]["status"] == "open" and entries[key]["consecutive_not_reproduced"] == 1
+    assert data["counts"]["open_defects"] == 1

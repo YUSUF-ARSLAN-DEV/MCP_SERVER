@@ -656,3 +656,18 @@ def test_low_control_use_and_a_missing_baseline_are_named_when_nothing_worse_app
 
 def test_a_run_where_nothing_executed_leads_with_that():
     assert policy.main_limits(_limits_data(counts={"executed_tests": 0}))[0].startswith("No test ran")
+
+
+def test_only_a_missing_element_counts_as_the_unprovable_kind_of_failure():
+    assert policy.is_element_absent_failure("E   Error: element(s) not found\nE   - waiting for get_by_role(\"button\", name=\"Go\")")
+    assert policy.is_element_absent_failure("E     - waiting for locator(\"#x\")")
+    assert not policy.is_element_absent_failure("E   AssertionError: Page URL expected to be 'https://x.test/a'\nE   Actual value: https://x.test/b")
+    assert not policy.is_element_absent_failure(None)
+
+
+def test_a_finding_key_is_stable_for_the_same_fault_and_different_for_another():
+    a = policy.finding_key("broken_link", "https://x.test/en/", 'the link "Old" returns HTTP 404: https://x.test/gone')
+    assert a == policy.finding_key("broken_link", "https://x.test/en", 'the link "Old"  returns HTTP 404: https://x.test/gone')
+    assert a != policy.finding_key("broken_link", "https://x.test/en/", 'the link "Old" returns HTTP 404: https://x.test/other')
+    assert a != policy.finding_key("broken_image", "https://x.test/en/", 'the link "Old" returns HTTP 404: https://x.test/gone')
+    assert a.startswith("finding::broken_link::/en::")

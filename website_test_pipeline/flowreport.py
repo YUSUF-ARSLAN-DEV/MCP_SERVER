@@ -70,6 +70,7 @@ class FlowReport:
     title_suffix: str = ""             # set when several flows share one sentence, so a reader can tell them apart
     not_run_reason: str = ""           # why an untested flow has no result in this run (empty when it ran)
     verify_failed: bool = False        # untested, and the last real check of it (runner or pytest) failed
+    ever_passed: bool = False          # some check of it (runner or pytest) passed at some point: proof it can work
     needs_person: bool = False         # untested because the journey reaches a step only a person can do (a CAPTCHA)
     inconclusive: bool = False         # untested; its steps all ran but nothing visible changed, so the outcome could not be confirmed
     quarantined: bool = False          # a diagnosed-unstable flow (flows.json: "quarantined": true) - excluded
@@ -204,6 +205,7 @@ def build_flow_report(flow: dict, entries: list[dict], outcome=None) -> FlowRepo
         latest = next((e for e in reversed(entries) if e.get("source") in {"runner", "pytest", "human_needed"}), None)
         fr.needs_person = bool(latest and latest.get("source") == "human_needed")
         fr.not_run_reason, fr.verify_failed = explain_not_run(flow, entries)
+        fr.ever_passed = any(e.get("passed") for e in entries if e.get("source") in {"runner", "pytest"})
         if fr.needs_person:
             fr.not_run_reason, fr.verify_failed = ("the journey reaches a CAPTCHA that only a person can answer; run it in a terminal with someone there "
                                                    "and a window will ask for the code"), False

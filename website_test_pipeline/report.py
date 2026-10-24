@@ -982,6 +982,9 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
     # instead of recomputing one - severity is set once, when a defect is first confirmed, and a run that
     # reproduces (or fails to reproduce) it changes neither its severity nor its open status.
     ledger = policy.load_ledger(run.artifacts_dir.parent / policy.LEDGER_FILE) if run.artifacts_dir is not None else {}
+    history = policy.load_history(Path(report_dir) / policy.HISTORY_FILE) if report_dir else []
+    # Pages the no-model checks flagged for a real fault (an error page, a broken link ...): a failing test there is corroborated.
+    flagged_urls = {f.url for f in run.findings if f.severity in {"P1", "P2"} and f.kind in policy.FINDING_SEVERITY}
     ledger_entries = ledger.get("defects", {})
     # D2: run.run_id encodes run.finished_at (report_policy.run_id_for) - the ledger must be stamped with the
     # SAME timestamp, not the wall-clock moment the report happens to be generated, or a cited run ID's
@@ -1037,8 +1040,21 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
             timing_race = bool(re.search(r"Timeout \d+ms exceeded", raw_error)) and bool(re.search(r"not (visible|stable|enabled)", raw_error))
             flaky = kind == "unclear" and timing_race and flow is not None and flow.status == "verified"
             category = policy.triage_category(kind, raw_error)
+            # A generated test that has never passed, failing in a way nobody can explain ("unclear": an element was not there,
+            # not a definite wrong URL or missing content), and with nothing else flagging the page, is as likely a wrong test
+            # as a broken site - found live: a test asserting a dropdown still carried its old caption after a choice changed
+            # it, and a test expecting a hidden checkbox to be visible, each made a production site NO-GO. A failure that
+            # IS definite (the wrong page, content gone), or a test that has passed before, is still a defect.
+            unproven = (category == "defect" and kind == "unclear" and policy.is_element_absent_failure(raw_error)
+                        and outcome.url not in flagged_urls
+                        and not policy.ever_passed(history, policy.stable_test_key(outcome.nodeid)))
+            if unproven:
+                category = "triage"
             description = f"{actual} Failure class: {kind}." if finding else actual
-            if category == "triage":
+            if category == "triage" and unproven:
+                description = (f"{actual} This check has never passed on this page, so it cannot yet tell a broken page from a wrong "
+                               "test, and nothing else found a fault there. Open the trace or video to decide.")
+            elif category == "triage":
                 description = (f"{actual} The test failed while trying to act on the page, before it saw what the page does; "
                                "this is often the test (a hidden or covered element, a wrong selector) rather than the site. "
                                "Open the trace or video to decide.")
@@ -1108,6 +1124,12 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
             continue
         category = policy.category_for(finding.kind)
         title = finding.summary or "A recorded validation finding needs review."
+        finding_key = (policy.finding_key(finding.kind, finding.url, finding.summary)
+                       if category == "defect" and finding.kind in policy.FINDING_SEVERITY else None)
+        frozen = ledger_entries.get(finding_key) if finding_key else None
+        finding_severity = ({"severity_override": frozen["severity"], "severity_set_at": frozen.get("severity_set_at", ""),
+                             "severity_reason": frozen.get("severity_reason", "")} if frozen and frozen.get("severity")
+                            else {"severity_override": policy.FINDING_SEVERITY.get(finding.kind)})
         rec = _make_record(
             run, report_dir, category=category, failure_class=finding.kind or "unclear", scope=finding.scope,
             title=title, description=title,
@@ -1115,15 +1137,22 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
             expected="The recorded check should complete without this finding.", actual=finding.summary or "NOT CAPTURED",
             url=finding.url, flow_id=finding.test if finding.scope == "flow" else "NOT CAPTURED",
             impact=f'A {finding.kind or "validation"} finding on {_page_of(finding.url)}: {_full(finding.summary or "see the finding")}. It needs review before the release decision can be trusted.',
-            severity_override=policy.FINDING_SEVERITY.get(finding.kind))
+            **finding_severity)
         if category == "defect":
             rec["severity_set_at"] = rec["severity_set_at"] or now
             rec["severity_reason"] = rec["severity_reason"] or title
+        if finding_key:
+            # a fault the browser itself reported lives in the ledger like a failing test: open until closed, severity frozen
+            rec["_stable_key"] = finding_key
+            current_defects[finding_key] = {"title": title, "url": finding.url, "scope": finding.scope, "flow_id": "NOT CAPTURED",
+                                            "severity": rec["severity"], "severity_set_at": rec["severity_set_at"],
+                                            "severity_reason": rec["severity_reason"]}
         raw.append(rec)
 
     for flow in run.untested_flows:
         failed_check = flow.verify_failed         # its last real check failed: a failure, not merely "could not run"
-        failure_class = ("failed_last_check" if failed_check else "human_input_required" if flow.needs_person else
+        failure_class = (("failed_last_check" if flow.ever_passed else "never_confirmed") if failed_check else
+                         "human_input_required" if flow.needs_person else
                          "inconclusive" if flow.inconclusive else "blocked_flow")
         category = policy.category_for(failure_class)
         title = _plain_flow_title(flow.title)
@@ -1296,8 +1325,13 @@ def _requirement_stats(run: "RunReport") -> dict[str, Any]:
     total = len(rows)
     not_backed = sum(not r["passed"] for r in rows)
     written = [r for r in rows if r["source"] != "ai"]          # what people asked for; the model's guesses do not cap the verdict
+    # A requirement the tool could not turn into a test ("unbuildable": a page-content statement, a step it cannot drive) is
+    # the tool's blind spot, not evidence against the site, so it is listed but cannot hold the verdict back - the same
+    # principle as an unverified journey. Only requirements it COULD test count towards the threshold.
+    testable = [r for r in written if r["status"] != "unbuildable"]
     return {"total": total, "not_backed": not_backed, "percent": round(100 * not_backed / total) if total else 0, "rows": rows,
-            "written_total": len(written), "written_not_backed": sum(not r["passed"] for r in written)}
+            "written_total": len(testable), "written_not_backed": sum(not r["passed"] for r in testable),
+            "guessed": total - len(written), "untestable": len(written) - len(testable)}
 
 
 def _warning_items(run: "RunReport") -> list[tuple[str, str]]:
@@ -2279,8 +2313,10 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
     document.add_paragraph(
         f'Requirements coverage: {reqs["not_backed"]} of {reqs["total"]} requirements ({reqs["percent"]}%) are not backed by a passing result '
         f'(section 6), next to a {counts["pass_rate_percent"]}% pass rate among the tests that ran.'
-        + (f' {reqs["total"] - reqs.get("written_total", reqs["total"])} of them were guessed by the model from the pages; '
-           'those are shown but do not affect the verdict.' if reqs.get("written_total", reqs["total"]) < reqs["total"] else '')
+        + (f' {reqs["guessed"]} of them were guessed by the model from the pages; those are shown but do not affect the verdict.'
+           if reqs.get("guessed") else '')
+        + (f' {reqs["untestable"]} written requirement(s) could not be turned into a test; they are listed in the appendix and do not affect the verdict.'
+           if reqs.get("untestable") else '')
         if reqs["total"] else
         "Requirements coverage: no written requirements were supplied, so it cannot be computed; the pass rate covers only the tests that ran.")
     # B1/B2: "Failed this run" is an arithmetic term (passed + failed this run == tests run, always); "Open
