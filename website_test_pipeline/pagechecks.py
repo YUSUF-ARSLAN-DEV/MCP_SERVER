@@ -12,6 +12,7 @@ is a pure function over data, so it is testable without a browser.
 from __future__ import annotations
 from urllib.parse import urlsplit
 
+_REFUSED = {401, 403, 429}   # the server refused a robot, not a page that is broken
 MAX_ITEMS = 15      # per list - enough to show the problem, small enough to keep the report readable
 
 # One pass over the settled DOM. Returns only counts and short samples, never page content in bulk.
@@ -156,7 +157,7 @@ def sweep_findings(inv: dict):
         add("P2", "broken_link", f"{len(broken) - 5} more broken link(s) on this page (first 5 listed separately)", f"open {url}",
             "check every link on the page")
     for item in inv.get("swept") or []:
-        if item.get("kind") == "button" and item.get("outcome") == "navigates" and (item.get("status") or 0) >= 400:
+        if item.get("kind") == "button" and item.get("outcome") == "navigates" and (item.get("status") or 0) >= 400 and item["status"] not in _REFUSED:
             add("P1", "click_error_page", f'clicking "{item.get("name")}" lands on an error page (HTTP {item["status"]}): {item.get("to")}',
                 f'open {url} and click "{item.get("name")}"', "fix the destination; a visitor who clicks this sees an error")
         if item.get("errors"):
@@ -181,7 +182,7 @@ def health_findings(inv: dict):
                            repro=f"open {url} and check the browser developer console and network tab", next_action=action))
 
     status = health.get("main_status")
-    if status and status >= 400:
+    if status and status >= 400 and status not in _REFUSED:
         add("P1", "page_http_error", f"the page itself answered HTTP {status}", "check the route, redirect or server; a user sees an error page")
     if m and m.get("body_text_chars", 1) < 20 and not (inv.get("controls") or inv.get("headings")):
         add("P1", "blank_page", "the page rendered with almost no visible text and no controls",

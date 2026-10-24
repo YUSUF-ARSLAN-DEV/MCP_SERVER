@@ -667,3 +667,35 @@ def test_a_no_go_summary_still_reconciles_and_names_the_defect_with_its_action(t
     joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
     assert "Release decision: NO-GO" in joined and "Do not release on the strength of this run." in joined
     assert "Fix and retest:" in joined and "DEF‑001" in joined
+
+
+def _with_health(tmp_path, health, **extra):
+    artifacts, tests = _workspace(tmp_path)
+    (artifacts / "health.inventory.json").write_text(json.dumps(
+        {"url": START, "title": "Home", "controls": [], "headings": [{"text": "Hi"}], "health": health, **extra}), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    return chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+
+
+def test_a_page_that_answers_with_a_server_error_is_a_high_defect_and_means_no_go(tmp_path):
+    joined = _with_health(tmp_path, {"main_status": 500})
+    assert "Release decision: NO-GO" in joined and "the page itself answered HTTP 500" in joined
+
+
+def test_a_bot_wall_status_is_not_called_a_broken_page(tmp_path):
+    joined = _with_health(tmp_path, {"main_status": 403})
+    assert "answered HTTP 403" not in joined and "Release decision: NO-GO" not in joined
+
+
+def test_quality_notes_are_never_recorded_as_defects_so_they_cannot_change_the_verdict(tmp_path):
+    joined = _with_health(tmp_path, {"console_errors": [{"text": "x", "source": "", "same_site": True}],
+                                     "measured": {"title": "", "h1_count": 0, "body_text_chars": 500, "has_lang": False,
+                                                  "controls_without_name_count": 3, "controls_without_name": ["<button></button>"]}})
+    assert "0 application defects found this run." in joined and "Release decision: NO-GO" not in joined
+
+
+def test_a_broken_same_site_link_found_by_the_sweep_is_a_medium_defect(tmp_path):
+    joined = _with_health(tmp_path, {}, swept=[{"name": "Dead page", "kind": "link", "outcome": "broken", "status": 404,
+                                                "href": "https://x.test/gone"}])
+    assert "1 application defect found this run" in joined and "returns HTTP 404" in joined
+    assert "Release decision: NO-GO" not in joined

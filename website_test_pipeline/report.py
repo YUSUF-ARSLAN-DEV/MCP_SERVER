@@ -1104,7 +1104,7 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
     # Findings from authentication history or capture/localization checks do not always have a pytest outcome of
     # their own; they still get the same complete record shape.
     for finding in run.findings:
-        if (finding.scope, finding.test, finding.url) in direct_keys:
+        if (finding.scope, finding.test, finding.url) in direct_keys or finding.kind in policy.ADVISORY_KINDS:
             continue
         category = policy.category_for(finding.kind)
         title = finding.summary or "A recorded validation finding needs review."
@@ -1114,7 +1114,8 @@ def _defect_records(run: "RunReport", report_dir: Path | None = None,
             steps=[finding.repro or f"Open {finding.url or 'the affected page'}."],
             expected="The recorded check should complete without this finding.", actual=finding.summary or "NOT CAPTURED",
             url=finding.url, flow_id=finding.test if finding.scope == "flow" else "NOT CAPTURED",
-            impact=f'A {finding.kind or "validation"} finding on {_page_of(finding.url)}: {_full(finding.summary or "see the finding")}. It needs review before the release decision can be trusted.')
+            impact=f'A {finding.kind or "validation"} finding on {_page_of(finding.url)}: {_full(finding.summary or "see the finding")}. It needs review before the release decision can be trusted.',
+            severity_override=policy.FINDING_SEVERITY.get(finding.kind))
         if category == "defect":
             rec["severity_set_at"] = rec["severity_set_at"] or now
             rec["severity_reason"] = rec["severity_reason"] or title
