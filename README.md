@@ -248,6 +248,30 @@ some failed, 2 a stage could not run.
 - The model endpoint is external and rate-limited; large runs will hit
   transient failures that the retry logic absorbs but cannot eliminate.
 
+## Tell it what the site should do (user stories, use cases, a spec)
+
+A report can only say "the site does what it should" if it knows what that is. Give the run a document of plain
+sentences - user stories, use cases, a requirements list (`.pdf`, `.docx`, `.md`, `.txt`):
+
+- **Web page:** the "What the site should do" file picker on *New run*.
+- **Command line:** `python -m website_test_pipeline.cli all path/to/stories.md`, or drop files in `runs/<site>/requirements/`.
+- **MCP / API:** the `requirements` field of `start_run` / `POST /api/jobs`.
+
+The tested journeys then come from the document (each is based on a sentence quoted from it, never invented), and the
+model's own guesses about the site are skipped. `docs/stories/sat-aljazeera-net.md` is a worked example.
+
+## How much to trust a report
+
+The verdict word (GO / CONDITIONAL GO / NO-GO) is about the site; the line under it says how much of the site it rests
+on, and "What this report cannot tell you" names the three biggest limits of that run. Rules that keep it honest:
+
+- Only a page that is broken (an error page, a 5xx, a blank page, a click that lands on one, a broken link) is a defect,
+  found by the browser itself with no model involved (`pagechecks.py`, `sweep.py`).
+- A generated test that has never passed cannot prove the site broken: unexplained failures go to "needs triage".
+- What the tool could not test (a CAPTCHA, a requirement it could not turn into a test) never counts against the site.
+- `tests_python/fixtures/bugsite.py` is a site with seeded faults; `test_benchmark_bugsite.py` checks that each is found
+  and that the clean page is left alone.
+
 ## MCP server (drive it from an AI client)
 
 `mcp_adapter/` is a thin [MCP](https://modelcontextprotocol.io) server in front of the job API: an AI client can start a

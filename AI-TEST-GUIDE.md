@@ -200,6 +200,12 @@ flag in `CONTROLS`), or `REVEALED` shows a `submit ... -> validation` entry:
   button that becomes disabled or relabelled ("Subscribing…") after a click, an
   overlay `_open()` already dismissed, a field that clears on submit — verify the
   genuine post-state instead (a value you set, a panel that appeared, a URL glob).
+- **A dropdown button shows its CHOICE once you have made one.** A picker whose button says "Please select a channel"
+  now reads the channel you picked (or "1 selected"), so a locator built from the old caption finds nothing. After
+  choosing an option, never re-locate the picker by its old name; assert the RESULT of the choice instead (the results
+  table, the URL, the next control). The option rows of such a picker (the `<label>` of a checkbox in its menu) are
+  visually hidden: do not `.check()` or `to_be_visible()` them - open the menu with the button and pick the option by
+  its text, or assert only that the menu offers it with `to_have_count(1)`.
 - **Do not assert guessed copy.** No invented success/error messages. Do not
   assert the exact text of individual article/news headlines or anything inside a
   feed, list, or article region — it rotates between crawl and run. Assert stable
