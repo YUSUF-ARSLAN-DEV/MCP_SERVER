@@ -189,7 +189,9 @@ def health_findings(inv: dict):
             "open the page: a script may have failed before drawing it")
     for e in health.get("page_errors", [])[:3]:
         add("P2", "script_error", f'an uncaught script error was thrown: "{e["text"]}"', "fix the script error; it can break features on this page")
-    own_bad = [r for r in health.get("bad_responses", []) if r.get("same_site")]
+    # the page's own document answering an error is already the page_http_error above, not a second "failed request"
+    own_bad = [r for r in health.get("bad_responses", []) if r.get("same_site")
+               and not (r.get("type") == "document" and r["url"].rstrip("/") == url.rstrip("/"))]
     for r in own_bad[:3]:
         sev = "P2" if r["status"] >= 500 or r.get("type") in {"script", "stylesheet", "xhr", "fetch", "document"} else "P3"
         add(sev, "failed_request", f'{r.get("type", "request")} {r["url"]} returned HTTP {r["status"]}', "fix or remove the reference")

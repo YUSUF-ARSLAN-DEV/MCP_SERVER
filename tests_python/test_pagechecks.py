@@ -103,3 +103,8 @@ def test_a_script_error_is_recorded_while_listening_and_not_after_freeze(page):
     page.set_content("<body><script>throw new Error('later')</script></body>")
     page.wait_for_timeout(100)
     assert len(health.page_errors) == 1
+
+
+def test_the_pages_own_error_response_is_one_finding_not_two():
+    health = {"main_status": 500, "bad_responses": [{"url": "https://shop.example.com/", "status": 500, "type": "document", "same_site": True}]}
+    assert [f.kind for f in health_findings(_inv(health))] == ["page_http_error"]
