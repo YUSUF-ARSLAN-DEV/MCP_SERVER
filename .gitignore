@@ -43,3 +43,6 @@ REPORT_FIXES.md
 
 # Docker: your filled-in settings (secrets); the .example next to it is committed
 docker.env
+
+# Local test-account credentials (never commit)
+credentials.txt
