@@ -74,14 +74,23 @@ class PageHealth:
         self.failed_requests: list[dict] = []
         self.bad_responses: list[dict] = []
         self.measured: dict = {}
-        page.on("console", self._on_console)
-        page.on("pageerror", self._on_pageerror)
-        page.on("requestfailed", self._on_requestfailed)
-        page.on("response", self._on_response)
+        self._handlers = (("console", self._on_console), ("pageerror", self._on_pageerror),
+                          ("requestfailed", self._on_requestfailed), ("response", self._on_response))
+        for event, handler in self._handlers:
+            page.on(event, handler)
         self._main_frame = page.main_frame
 
     def freeze(self) -> None:
         self.recording = False
+
+    def detach(self, page) -> None:
+        """Stop listening. A short-lived collector (one per click) must not leave its handlers on the page."""
+        self.recording = False
+        for event, handler in self._handlers:
+            try:
+                page.remove_listener(event, handler)
+            except Exception:
+                pass
 
     def _add(self, bucket: list[dict], item: dict) -> None:
         if self.recording and len(bucket) < MAX_ITEMS and item not in bucket:
@@ -126,6 +135,34 @@ class PageHealth:
     def as_dict(self) -> dict:
         return {"main_status": self.main_status, "console_errors": self.console_errors, "page_errors": self.page_errors,
                 "failed_requests": self.failed_requests, "bad_responses": self.bad_responses, "measured": self.measured}
+
+
+def sweep_findings(inv: dict):
+    """Findings from the control sweep (sweep.py): a same-site link that returns an error, a click that throws a
+    script error, a click that lands on an error page. Only what the browser reported - never a judgement that a
+    control 'should' have done something."""
+    from .findings import Finding
+    url, out = inv.get("url", ""), []
+
+    def add(sev: str, kind: str, summary: str, repro: str, action: str) -> None:
+        out.append(Finding(test=f"sweep: {url}", scope="page", url=url, severity=sev, kind=kind, summary=summary,
+                           repro=repro, next_action=action))
+
+    broken = [i for i in inv.get("swept") or [] if i.get("outcome") == "broken"]
+    for item in broken[:5]:
+        add("P2", "broken_link", f'the link "{item.get("name") or item.get("href")}" returns HTTP {item.get("status")}: {item.get("href")}',
+            f'open {item.get("href")}', "fix the link target, or remove the link")
+    if len(broken) > 5:
+        add("P2", "broken_link", f"{len(broken) - 5} more broken link(s) on this page (first 5 listed separately)", f"open {url}",
+            "check every link on the page")
+    for item in inv.get("swept") or []:
+        if item.get("kind") == "button" and item.get("outcome") == "navigates" and (item.get("status") or 0) >= 400:
+            add("P1", "click_error_page", f'clicking "{item.get("name")}" lands on an error page (HTTP {item["status"]}): {item.get("to")}',
+                f'open {url} and click "{item.get("name")}"', "fix the destination; a visitor who clicks this sees an error")
+        if item.get("errors"):
+            add("P2", "click_script_error", f'using "{item.get("name")}" threw a script error: "{item["errors"][0]}"',
+                f'open {url}, use "{item.get("name")}" with the console open', "fix the script error")
+    return out
 
 
 def health_findings(inv: dict):

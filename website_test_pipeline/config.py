@@ -60,6 +60,9 @@ class Settings:
     # explore: after the static snapshot, click up to N [content] triggers and
     # record what each one surfaced (0 disables the interaction probe entirely).
     explore_probe_max: int = field(default_factory=lambda: _int("EXPLORE_PROBE_MAX", 5, 0, 20))
+    # the control sweep (sweep.py): touch up to N safe buttons and fields per page, and check every same-site
+    # link, with no model involved (0 disables it). Each click reloads the page, so this is where the time goes.
+    explore_sweep_max: int = field(default_factory=lambda: _int("EXPLORE_SWEEP_MAX", 12, 0, 60))
     headless: bool = field(default_factory=lambda: os.getenv("HEADLESS", "true").lower() != "false")
     # login / sign-up walls: "auto" asks a person for credentials when a password form is found (interactive
     # runs only); "none" never asks and only reports the wall as not tested.

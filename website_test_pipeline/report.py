@@ -1470,6 +1470,7 @@ def _report_data(run: "RunReport", report_dir: Path,
             "pages_visited": run.coverage.pages_visited if run.coverage else 0,
             "controls_total": run.coverage.controls_total if run.coverage else 0,
             "controls_touched": run.coverage.controls_touched if run.coverage else 0,
+            "controls_swept": run.coverage.controls_swept if run.coverage else 0,
             "tested_flows": run.coverage.tested_flows if run.coverage else 0,
             "planned_flows": run.coverage.planned_flows if run.coverage else 0,
             "gaps": gaps,
@@ -2062,7 +2063,7 @@ def _coverage_section(document, run: RunReport, report_data: dict[str, Any]) -> 
         document.add_heading("Flow coverage", 2)
         document.add_paragraph(
             f"Pages visited by a tested flow: {coverage.pages_visited} of {coverage.pages_total} ({coverage.percent_pages}%). "
-            f"Content controls a tested flow acts on: {coverage.controls_touched} of {coverage.controls_total} "
+            f"Content controls a tested flow acts on: {coverage.controls_touched} of {coverage.controls_total}" + (f" (plus {coverage.controls_swept} exercised by the automatic sweep)" if coverage.controls_swept else "") + " "
             f"({coverage.percent_controls}%). Journeys with a test result in this run: {counts['flows_with_result']} of {counts['journeys_total']} "
             f"(the flow figure of section 4). Stored status: {coverage.tested_flows} verified or approved, "
             f"{coverage.planned_flows} written but not backed by a passing run.")
@@ -2220,8 +2221,11 @@ def _at_a_glance(document, run: RunReport, data: dict[str, Any]) -> None:
     cov = data["coverage"]
     gaps = []
     if cov.get("controls_total"):
+        swept = cov.get("controls_swept", 0)
         gaps.append(f'Journeys used {cov["controls_touched"]} of the {cov["controls_total"]} controls found on the pages; '
-                    "the rest were only checked for being present, not used.")
+                    + (f"an automatic sweep exercised {swept} more (clicked, filled or link-checked, never submitted); the rest were "
+                       "only checked for being present, not used." if swept else
+                       "the rest were only checked for being present, not used."))
     gaps.append("Other browsers and phone-size screens were not tested, and neither were speed or security.")
     for gap in gaps:
         document.add_paragraph(gap, style="List Bullet")

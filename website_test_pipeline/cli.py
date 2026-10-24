@@ -76,6 +76,8 @@ def _process_one_url(command: str, settings, client, guide, persona, url: str, i
                 health = PageHealth(page, url)  # listeners go on BEFORE goto, or the load itself goes unseen
                 page.goto(url, wait_until='domcontentloaded')
                 inventory = explore(page, url, settings.explore_probe_max, log, health=health)
+                from .sweep import sweep_page
+                inventory.swept = sweep_page(page, url, inventory.controls, settings.explore_sweep_max, log)
                 (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
                 try:
                     with _flows_lock:

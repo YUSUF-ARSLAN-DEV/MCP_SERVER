@@ -30,6 +30,7 @@ class PageCoverage:
     visited: bool = False
     total: int = 0
     touched: int = 0
+    swept: int = 0          # controls no journey acts on that the automatic sweep did exercise (sweep.py)
     untouched: list[str] = field(default_factory=list)      # names of content controls no tested flow acts on
     flows: list[str] = field(default_factory=list)          # ids of tested flows that visit this page
 
@@ -60,6 +61,10 @@ class Coverage:
     @property
     def controls_touched(self) -> int:
         return sum(p.touched for p in self.pages)
+
+    @property
+    def controls_swept(self) -> int:
+        return sum(p.swept for p in self.pages)
 
     @property
     def percent_pages(self) -> int:
@@ -122,6 +127,10 @@ def _touches(step: dict, control: dict) -> bool:
     return len(step.get("name") or "") >= _NAME_CUT and have.startswith(want)     # a name stored at the 40-char cut
 
 
+def _swept_touch(item: dict, control: dict) -> bool:
+    return item.get("outcome") not in {"not_reached", "unreachable"} and _touches(item, control)
+
+
 def compute_coverage(inventories: list[dict], flows: list[dict]) -> Coverage:
     tested = [f for f in flows if f.get("status") in TESTED]
     coverage = Coverage(tested_flows=len(tested),
@@ -158,6 +167,8 @@ def compute_coverage(inventories: list[dict], flows: list[dict]) -> Coverage:
             page.total += 1
             if any(_touches(step, control) for step in acted[path]):
                 page.touched += 1
+            elif any(_swept_touch(item, control) for item in inv_by_path[path].get("swept") or []):
+                page.swept += 1      # not by a journey, but the sweep exercised it: not an untouched control
             else:
                 label = (control.get("name") or control.get("selector") or "").strip()
                 page.untouched.append(label[:40] or "(unnamed)")
