@@ -778,3 +778,13 @@ def test_a_browser_reported_fault_stays_open_across_runs_like_a_failing_test(tmp
     entries, data = run("ok", 200)                                   # not seen this run: still open, never silently dropped
     assert entries[key]["status"] == "open" and entries[key]["consecutive_not_reproduced"] == 1
     assert data["counts"]["open_defects"] == 1
+
+
+def test_a_key_in_a_url_never_reaches_the_report(tmp_path):
+    artifacts, tests = _workspace(tmp_path)
+    (artifacts / "health.inventory.json").write_text(json.dumps({"url": START, "title": "Home", "controls": [], "headings": [{"text": "Hi"}],
+        "swept": [{"name": "Geo", "kind": "link", "outcome": "broken", "status": 404, "href": "https://x.test/geo?key=SECRETVALUE123&lang=en"}]}), encoding="utf-8")
+    create_report(artifacts, tests, tmp_path / "report", combined=True)
+    joined = chr(10).join(_text(tmp_path / "report" / "full-report.docx"))
+    data = (tmp_path / "report" / "report-data.json").read_text(encoding="utf-8")
+    assert "SECRETVALUE123" not in joined and "SECRETVALUE123" not in data and "key=***" in joined

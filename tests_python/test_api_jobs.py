@@ -87,7 +87,7 @@ def test_a_run_goes_from_queued_to_done_and_its_report_can_be_downloaded(make_cl
     created = client.post("/api/jobs", json={"url": "example.com", "options": {"max_pages": 500, "probe_max": 2}})
     assert created.status_code == 201
     job = created.json()
-    assert job["status"] == "queued" and job["url"] == "https://example.com/"
+    assert job["status"] in {"queued", "running"} and job["url"] == "https://example.com/"   # a busy machine can start the worker before the response is read
 
     done = wait_for(client, job["id"])
     assert done["status"] == "done" and done["progress_pct"] == 100 and done["started_at"] and done["finished_at"]

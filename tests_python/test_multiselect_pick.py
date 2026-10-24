@@ -69,3 +69,28 @@ def test_a_picker_is_recognised_by_what_it_is_so_an_arabic_caption_works_too():
     assert _is_picker(controls["اختر"]) and controls["اختر"]["popup"] == "listbox"
     assert not _is_picker(controls["بحث"])                           # an Arabic "Search" button is not a picker
     assert _is_picker(controls["Choose a topic"])                    # the English caption still counts as a hint
+
+
+def test_the_option_rows_of_an_open_dropdown_are_not_counted_as_controls_a_journey_revealed():
+    """Found live: a search journey on a real site "revealed" the checkboxes of its channel menu (it was still open when the run
+    looked), so the generated test asserted a checkbox was visible after the menu had closed - and failed on a healthy site."""
+    from website_test_pipeline.runner import take_snapshot
+
+    def check(page):
+        page.set_content('''<main><button id="ms" type="button">Pick</button><a href="/x">Real link</a>
+        <div class="ui-multiselect-menu"><ul class="ui-multiselect-checkboxes"><li><label><input type="checkbox" value="1"> Option A</label></li></ul></div></main>''')
+        return take_snapshot(page)["controls"]
+    controls = _run(check)
+    assert any("Real link" in c for c in controls) and not any("Option A" in c for c in controls)
+
+
+def test_a_form_that_asks_for_personal_details_is_never_submitted_with_made_up_values():
+    from website_test_pipeline.explorer import collects_personal_data
+    subscribe = [{"tag": "input", "name": "Name *", "type": "text"}, {"tag": "input", "name": "Email *", "type": "text"},
+                 {"tag": "select", "name": "Country *"}, {"tag": "input", "name": "Mobile *", "type": "text"}]
+    assert collects_personal_data(subscribe)
+    assert collects_personal_data([{"tag": "input", "name": "x", "type": "email"}])
+    assert collects_personal_data([{"tag": "input", "name": "Passcode", "type": "text"}])
+    search = [{"tag": "select", "name": "Please select a country"}, {"tag": "button", "name": "Search"}, {"tag": "input", "name": "Search term", "type": "search"}]
+    assert not collects_personal_data(search)
+    assert not collects_personal_data([{"tag": "button", "name": "Email us"}])        # a button's caption is not a field that asks

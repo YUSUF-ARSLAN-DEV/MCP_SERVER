@@ -163,7 +163,12 @@ def _outcome_expects(flow: dict, pool: list[dict]) -> tuple[list[str], list[dict
     if not exprs and observed["effect"] == "reveals":
         for entry in observed.get("new_controls") or []:
             tag, _, name = entry.partition(":")
-            role = _resolve_role(name, pool) if name and len(name) < _NAME_CUT else None
+            # the run saw a <button>: that is the role, whatever else on the explored pages happens to share its name
+            # (found live: a picker's button relabelled itself "Al Jazeera 2 Channel" after the choice, and the menu's own
+            # checkbox of that name was looked up instead - an assertion that failed on a healthy site)
+            role = "button" if tag == "button" and name and len(name) < _NAME_CUT else None   # an <a> is NOT assumed a link: its role is not certain from its tag
+            if role is None:
+                role = _resolve_role(name, pool) if name and len(name) < _NAME_CUT else None
             if role is None and tag == "button" and name and len(name) < _NAME_CUT:
                 role = "button"      # it appeared only AFTER an action (Remove after Add to cart), so the explorer never saw it;
                                        # the run did, and a <button> element is a button - nothing is guessed

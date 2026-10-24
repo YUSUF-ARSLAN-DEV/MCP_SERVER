@@ -1,3 +1,4 @@
+import os
 import re
 
 from .models import PageInventory
@@ -143,6 +144,9 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             // what kind of picker this is by STRUCTURE, not by what its caption says: the caption of a channel picker is
             // "Please select a channel" in English and "اختر قناة" in Arabic, but its class / aria-haspopup are the same
             popup: e.getAttribute('aria-haspopup'),
+            // an option row of an open dropdown (jQuery-UI multiselect, select2, chosen, a listbox / menu): it exists only while the
+            // menu is open, so it is never evidence that a journey "revealed" a control
+            in_popup: !!e.closest('.ui-multiselect-menu, .select2-dropdown, .select2-results, .chosen-drop, [role="listbox"], [role="menu"]'),
             widget: (typeof e.className === 'string' && /ui-multiselect|select2-selection|chosen-single|multiselect/i.test(e.className)) ? 'picker' : null,
             href: e.getAttribute('href'),
             value: e.value || null,
@@ -616,6 +620,23 @@ _PLACEHOLDER_VAL = {"", "-1", "0", "null", "none", "all", "any", "undefined"}
 _MS_HINT = re.compile(r"select|choose|channel|category|option|type|brand|make|model|topic", re.I)
 
 
+_PERSONAL = re.compile(r"e-?mail|mobile|phone|tel\b|password|passcode|card|cvv|iban|ssn|passport|birth|address|postcode|zip", re.I)
+
+
+def collects_personal_data(controls: list[dict]) -> bool:
+    """A form asking for an e-mail, phone, password, card ... is a sign-up, contact or payment form. Pressing its button with
+    made-up values would create a real subscription / message / order on the site under test, so the probe never does it
+    unless the operator allows it (ALLOW_FORM_SUBMIT=1). A search or filter form asks for none of these."""
+    for c in controls:
+        if c.get("tag") not in {"input", "select", "textarea"}:
+            continue
+        if (c.get("type") or "").lower() in {"email", "tel", "password"}:
+            return True
+        if _PERSONAL.search(" ".join(str(c.get(k) or "") for k in ("name", "placeholder", "field_name", "id"))):
+            return True
+    return False
+
+
 def _is_picker(control: dict) -> bool:
     """A button that opens a list of choices. Recognised by what it IS (a jQuery-UI / select2 / chosen widget, or
     aria-haspopup=listbox|menu), so it works on a site in any language, and only then by an English caption."""
@@ -902,6 +923,11 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
     ms_buttons = [c for c in content
                   if (c.get("tag") == "button" or c.get("role") == "button")
                   and c is not action and _is_picker(c)]
+    if collects_personal_data(content) and os.environ.get("ALLOW_FORM_SUBMIT", "").strip().lower() not in {"1", "true", "yes"}:
+        if log:
+            log.info('primary-flow: "%s" is on a form that asks for personal details; not pressing it with made-up values '
+                     '(ALLOW_FORM_SUBMIT=1 allows it)', action.get("name"))
+        return None
     if not (selects or inputs or ms_buttons):
         if log:
             log.info('primary-flow: action "%s" found but no fillable select/input/multiselect - skipping',
@@ -1065,7 +1091,11 @@ def explore(page, url: str, probe_max: int = 5, log=None, health=None) -> PageIn
     revealed = _probe_interactions(page, url, controls, probe_max, log)
     primary_flow = None
     if probe_max > 0:
-        revealed = revealed + _probe_forms(page, url, forms, min(2, probe_max), log)
+        if collects_personal_data(controls) and os.environ.get("ALLOW_FORM_SUBMIT", "").strip().lower() not in {"1", "true", "yes"}:
+            if log:
+                log.info("forms: %s asks for personal details; not submitting it, even empty (ALLOW_FORM_SUBMIT=1 allows it)", url)
+        else:
+            revealed = revealed + _probe_forms(page, url, forms, min(2, probe_max), log)
         try:
             primary_flow = _probe_primary_flow(page, url, controls, forms, headings, log)
         except Exception as exc:

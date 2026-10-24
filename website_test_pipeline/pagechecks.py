@@ -186,8 +186,8 @@ def sweep_findings(inv: dict):
     url, out = inv.get("url", ""), []
 
     def add(sev: str, kind: str, summary: str, repro: str, action: str) -> None:
-        out.append(Finding(test=f"sweep: {url}", scope="page", url=url, severity=sev, kind=kind, summary=summary,
-                           repro=repro, next_action=action))
+        out.append(Finding(test=f"sweep: {url}", scope="page", url=url, severity=sev, kind=kind, summary=redact(summary),
+                           repro=redact(repro), next_action=action))
 
     broken = [i for i in inv.get("swept") or [] if i.get("outcome") == "broken"]
     for item in broken[:5]:
@@ -218,7 +218,7 @@ def health_findings(inv: dict):
     m = health.get("measured") or {}
 
     def add(sev: str, kind: str, summary: str, action: str) -> None:
-        out.append(Finding(test=f"page health: {url}", scope="page", url=url, severity=sev, kind=kind, summary=summary,
+        out.append(Finding(test=f"page health: {url}", scope="page", url=url, severity=sev, kind=kind, summary=redact(summary),
                            repro=f"open {url} and check the browser developer console and network tab", next_action=action))
 
     status = health.get("main_status")

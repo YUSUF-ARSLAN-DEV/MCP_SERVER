@@ -257,7 +257,7 @@ def take_snapshot(page) -> dict:
     return {
         "url": page.url,
         "headings": sorted({h["text"][:80] for h in headings if h.get("text") and not h.get("hidden")}),
-        "controls": sorted({_control_sig(c) for c in controls if not c.get("hidden") and c.get("region") != "chrome"}),
+        "controls": sorted({_control_sig(c) for c in controls if not c.get("hidden") and c.get("region") != "chrome" and not c.get("in_popup")}),
         # A header/nav dropdown (settings menu, hamburger) lives in "chrome", which is otherwise excluded from
         # the comparison on purpose (chrome repeats on every page and would make diffs noisy). But chrome going
         # from hidden to visible is a real reveal - a click opening a settings menu - not noise, so it is

@@ -308,3 +308,14 @@ def test_a_select_step_with_no_named_option_still_asserts_a_value_was_chosen():
     flow["steps"][0]["value"] = None
     source, reason = emit_flow_spec(flow, [_inventory(controls=[SELECT, SEARCH])])
     assert reason == "" and 'not_to_have_value("")' in source
+
+
+def test_a_control_the_run_saw_as_a_button_is_asserted_as_a_button_even_if_a_checkbox_shares_its_name():
+    from website_test_pipeline.flowgen import _outcome_expects
+    pool = [{"tag": "input", "role": "checkbox", "name": "Al Jazeera 2 Channel"}]
+    flow = {"observed": {"effect": "reveals", "new_headings": [], "results": [], "new_controls": ["button:Al Jazeera 2 Channel"]}}
+    exprs, extra, why = _outcome_expects(flow, pool)
+    assert not why and len(exprs) == 1
+    assert "'button'" in exprs[0] or '"button"' in exprs[0]
+    assert 'checkbox' not in exprs[0]
+    assert extra == [{"control": "Al Jazeera 2 Channel", "role": "button"}]

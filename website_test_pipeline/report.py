@@ -29,6 +29,7 @@ from docx.shared import Inches, Pt, RGBColor
 from . import report_policy as policy
 from .config import pw_output_dir
 from .coverage import Coverage, compute_coverage
+from .pagechecks import redact
 from .findings import (
     Finding, FlapRecord, auth_failure_findings, auth_summary_lines, collect_findings, detect_flapping,
     environment_block, human_input_pages, load_auth_history, plain_error, plain_skip_reason, untested_auth,
@@ -926,11 +927,11 @@ def _make_record(run: "RunReport", report_dir: Path | None, *, category: str, fa
         "category": category,
         "severity": severity,
         "priority": policy.priority_for(category, severity),
-        "title": _full(title),
-        "description": description,
+        "title": _full(redact(title)),
+        "description": redact(description),
         "steps_to_reproduce": steps,
         "expected": expected or "NOT CAPTURED",
-        "actual": actual or "NOT CAPTURED",
+        "actual": redact(actual) or "NOT CAPTURED",
         "screenshot_url": shot,
         "trace_url": trace_url,
         "video_url": video_url,
@@ -942,7 +943,7 @@ def _make_record(run: "RunReport", report_dir: Path | None, *, category: str, fa
         "failure_class": failure_class,
         "scope": scope,
         "url": url or "",
-        "business_impact": impact,
+        "business_impact": redact(impact),
         "blocking": category == "defect" and severity in {"Critical", "High"},
         "severity_set_at": severity_set_at,
         "severity_reason": severity_reason,

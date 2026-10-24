@@ -20,7 +20,7 @@ from .coverage import actionable_controls
 from .explorer import (_CONTROLS_JS, _CONTROL_SEL, _control_key, _flow_locator, _is_probe_trigger, _locator_for,
                        _plausible_value, _select_first_real)
 from . import netguard
-from .pagechecks import PageHealth, _same_site
+from .pagechecks import PageHealth, _same_site, redact
 from .pageutils import dismiss_overlays, settle_page
 
 MAX_LINKS = 60
@@ -35,7 +35,7 @@ def touched(item: dict) -> bool:
 
 def _entry(control: dict, kind: str, outcome: str, **extra) -> dict:
     return {"name": (control.get("name") or "")[:60], "selector": control.get("selector"), "kind": kind,
-            "outcome": outcome, **extra}
+            "outcome": outcome, **{k: (redact(v) if isinstance(v, str) else v) for k, v in extra.items()}}
 
 
 def _errors(health: PageHealth) -> list[str]:

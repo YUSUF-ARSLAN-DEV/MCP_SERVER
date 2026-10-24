@@ -17,6 +17,7 @@ What the server protects, what you must do when you deploy it, and what it does 
 | Session cookie over plain http | the cookie is `Secure` automatically whenever the page came over https (or a trusted proxy says so); `Strict-Transport-Security` is sent over https |
 | Cached private data | every `/api/` response is `Cache-Control: no-store` |
 | Huge uploads | request bodies over ~48 MB are refused; a requirements document is limited to 8 MB, a `.docx` that unpacks to more than 60 MB or a PDF over 300 pages is refused before it is parsed |
+| A test run creating real records on the site under test | the explorer never presses the button of a form that asks for personal details (e-mail, phone, password, card ...), not even empty, unless `ALLOW_FORM_SUBMIT=1`; the sweep types into fields but never submits |
 | One run starving the machine | at most `MAX_CONCURRENT_JOBS` at once, one active run per person, `MAX_JOBS_PER_DAY` per person, `JOB_TIMEOUT_S` per run, `MAX_PAGES_LIMIT` pages |
 | Server credentials reaching a run | a run's process does not inherit the server's `.env` (see `api/jobs.py: run_environment`) |
 | The container | runs as a non-root user; the image is built from an allow-list (`.dockerignore`), so `.env`, saved logins and `runs/` can never be in it |
