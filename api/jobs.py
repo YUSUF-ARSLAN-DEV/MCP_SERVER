@@ -147,6 +147,8 @@ class JobRunner:
             provider = get_provider(choice["provider"])
             env.update({"MODEL_PROVIDER": provider.name, "MODEL_NAME": choice["model"],
                         "API_URL": choice.get("api_url") or provider.default_url, "API_KEY": read_model_secret(job["run_dir"])})
+        if not self.settings.allow_private_targets:
+            env["WTP_BLOCK_PRIVATE"] = "1"           # the browser itself refuses private addresses (redirects, scripts), not only the typed URL
         if options.get("probe_max") is not None:
             env["EXPLORE_PROBE_MAX"] = str(options["probe_max"])
         if options.get("ask_human", True):       # a CAPTCHA or login wall is put to the person on the web page

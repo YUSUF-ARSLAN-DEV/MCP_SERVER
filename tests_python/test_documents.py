@@ -293,3 +293,22 @@ def test_a_requirements_document_may_produce_more_journeys_than_the_models_own_g
     assert FROM_DOCUMENT > GUESSES and len(added) == 12
     capped, _ = accept_intents(rows, {"version": 1, "intents": []}, {"/"}, "t", document=("d.md", text))
     assert len(capped) == GUESSES
+
+
+def test_a_word_file_that_unpacks_to_a_huge_size_is_refused_before_it_is_parsed(tmp_path):
+    import zipfile
+    from website_test_pipeline import documents
+    bomb = tmp_path / "bomb.docx"
+    with zipfile.ZipFile(bomb, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", b"0" * (documents.MAX_UNPACKED_BYTES + 1))   # ~60 MB of zeros compresses to ~60 KB
+    assert bomb.stat().st_size < documents.MAX_BYTES
+    with pytest.raises(documents.DocumentError, match="unpacks to far more"):
+        documents.read_document(bomb)
+
+
+def test_a_docx_that_is_not_a_zip_is_refused_politely(tmp_path):
+    from website_test_pipeline import documents
+    fake = tmp_path / "fake.docx"
+    fake.write_bytes(b"this is not a word document at all, just text")
+    with pytest.raises(documents.DocumentError, match="not a valid Word document"):
+        documents.read_document(fake)

@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+import website_test_pipeline  # noqa: F401  (installs the private-address guard when WTP_BLOCK_PRIVATE is set)
+
 _ARTIFACTS = os.environ.get("WTP_ARTIFACTS")
 ACTIVE = bool(_ARTIFACTS)
 ARTIFACTS = Path(_ARTIFACTS) if _ARTIFACTS else Path.cwd() / "python_artifacts"

@@ -87,8 +87,25 @@ def read_document(path) -> str:
     return text
 
 
+MAX_UNPACKED_BYTES = 60_000_000      # a .docx is a zip: a few KB can unpack to gigabytes, so the unpacked size is limited too
+MAX_ZIP_MEMBERS = 2000
+MAX_PDF_PAGES = 300
+
+
+def _refuse_zip_bomb(file: Path) -> None:
+    import zipfile
+    try:
+        with zipfile.ZipFile(file) as archive:
+            infos = archive.infolist()
+    except zipfile.BadZipFile as exc:
+        raise DocumentError(f"{file.name} could not be read (not a valid Word document)") from exc
+    if len(infos) > MAX_ZIP_MEMBERS or sum(i.file_size for i in infos) > MAX_UNPACKED_BYTES:
+        raise DocumentError(f"{file.name} unpacks to far more than a requirements document should; attach the relevant part")
+
+
 def _read_docx(file: Path) -> str:
     from docx import Document
+    _refuse_zip_bomb(file)
     document = Document(str(file))
     parts = [p.text for p in document.paragraphs]
     for table in document.tables:
@@ -134,7 +151,10 @@ def _read_pdf(file: Path) -> str:
         from pypdf import PdfReader
     except ImportError as exc:
         raise DocumentError("reading PDFs needs the pypdf package (pip install pypdf)") from exc
-    return "\n".join((page.extract_text() or "") for page in PdfReader(str(file)).pages)
+    pages = PdfReader(str(file)).pages
+    if len(pages) > MAX_PDF_PAGES:
+        raise DocumentError(f"{file.name} has {len(pages)} pages; attach the relevant part (up to {MAX_PDF_PAGES})")
+    return "\n".join((page.extract_text() or "") for page in pages)
 
 
 def _tidy(text: str) -> str:

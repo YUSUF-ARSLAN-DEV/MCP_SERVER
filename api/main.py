@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import security
+from . import hardening, security
 from .db import ACTIVE, TERMINAL, Database
 from website_test_pipeline.providers import get_provider
 
@@ -101,6 +101,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
 
     app = FastAPI(title="Website test pipeline", lifespan=lifespan)
     app.state.settings, app.state.db, app.state.runner = settings, db, runner
+    hardening.install(app, settings)
 
     def client_id(request: Request) -> str:
         host = request.client.host if request.client else "unknown"
@@ -143,9 +144,12 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         out.summary = summarize(info if info is not None else db.get_run_info(job["id"]))
         return out
 
-    def start_session(response: Response, user: dict) -> None:
+    def start_session(response: Response, user: dict, request: Request) -> None:
+        # Secure whenever the page itself came over https (or a trusted proxy says it did), not only when an operator
+        # remembered to set COOKIE_SECURE: a session cookie must never travel over plain http by default.
         response.set_cookie(COOKIE, security.make_user_token(settings.secret, user["id"], user["session_version"]),
-                            max_age=security.SESSION_TTL_S, httponly=True, samesite="lax", secure=settings.cookie_secure)
+                            max_age=security.SESSION_TTL_S, httponly=True, samesite="lax",
+                            secure=settings.cookie_secure or hardening.is_secure_request(request, settings.trust_proxy))
 
     def weak(exc: security.WeakCredentials) -> HTTPException:
         return HTTPException(422, str(exc))
@@ -195,7 +199,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         except sqlite3.IntegrityError:
             raise HTTPException(409, "That username is taken.") from None
         signups.record(address)
-        start_session(response, user)
+        start_session(response, user, request)
         return {"authenticated": True, "user": {"id": user["id"], "username": user["username"]}}
 
     @app.post("/api/login")
@@ -211,7 +215,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             user_logins.record(name)
             raise HTTPException(401, "Wrong username or password.")
         db.touch_login(user["id"])
-        start_session(response, user)
+        start_session(response, user, request)
         return {"authenticated": True, "user": {"id": user["id"], "username": user["username"]}}
 
     @app.post("/api/logout")
@@ -229,7 +233,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         except security.WeakCredentials as exc:
             raise weak(exc) from exc
         db.set_password(user["id"], security.hash_password(body.new))      # every other session of theirs ends here
-        start_session(response, db.get_user(user["id"]))
+        start_session(response, db.get_user(user["id"]), request)
         return {"ok": True}
 
     # ---- saved model configurations: yours alone, the key encrypted and never returned --------------------------

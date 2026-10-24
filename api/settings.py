@@ -51,7 +51,8 @@ class AppSettings:
     # no longer wait in one line. Each person still has one active run at a time.
     max_concurrent_jobs: int = field(default_factory=lambda: max(1, _int("MAX_CONCURRENT_JOBS", 2)))
     max_pages_limit: int = field(default_factory=lambda: _int("MAX_PAGES_LIMIT", 25))
-    job_timeout_s: int = field(default_factory=lambda: _int("JOB_TIMEOUT_S", 1800))
+    # a run that stories-guides 18 journeys and repairs failing tests re-runs the whole suite once: ~25 minutes on a real site
+    job_timeout_s: int = field(default_factory=lambda: _int("JOB_TIMEOUT_S", 3600))
     max_jobs_per_day: int = field(default_factory=lambda: _int("MAX_JOBS_PER_DAY", 5))
     poll_interval_s: float = 1.0
     idle_interval_s: float = 0.5
