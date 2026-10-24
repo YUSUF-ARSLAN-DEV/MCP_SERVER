@@ -247,3 +247,20 @@ some failed, 2 a stage could not run.
 - **Chromium only.**
 - The model endpoint is external and rate-limited; large runs will hit
   transient failures that the retry logic absorbs but cannot eliminate.
+
+## MCP server (drive it from an AI client)
+
+`mcp_adapter/` is a thin [MCP](https://modelcontextprotocol.io) server in front of the job API: an AI client can start a
+run, follow it and read the verdict. It adds no testing logic, so it uses the same engine, sign-in, limits and per-user
+privacy as the web page.
+
+Tools: `list_models`, `start_run`, `run_status`, `list_runs`, `get_report` (verdict + confidence + open defects + counts),
+`cancel_run`. A run started this way never waits for a CAPTCHA or sign-in; those steps are skipped and reported.
+
+```
+python -m pip install -r requirements.txt
+PIPELINE_URL=http://127.0.0.1:8000 PIPELINE_USERNAME=<user> PIPELINE_PASSWORD=<password> python -m mcp_adapter.server
+```
+
+`MCP_TRANSPORT=streamable-http` (with `MCP_HOST` / `MCP_PORT`, default 127.0.0.1:8765) serves it over HTTP instead of stdio.
+To use it from Claude Code: `claude mcp add smoke-tester -e PIPELINE_USERNAME=... -e PIPELINE_PASSWORD=... -- python -m mcp_adapter.server`.
