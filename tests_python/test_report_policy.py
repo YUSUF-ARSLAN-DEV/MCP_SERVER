@@ -613,3 +613,11 @@ def test_an_open_high_priority_journey_lowers_confidence():
 def test_a_run_where_nothing_executed_has_no_confidence_line_because_it_has_no_verdict():
     c = policy.evidence_confidence([], pages_total=3, executed_tests=0)
     assert c["level"] == "None" and policy.confidence_sentence(c) == ""
+
+
+def test_compute_delta_counts_the_change_in_skipped_tests_so_added_tests_reconcile_with_tests_ran():
+    prev = {"run_id": "run-0", "finished_at": "t", "tests_ran": 0, "tests": {}}
+    cur = {"tests": {"a::t1": {"status": "passed"}, "a::t2": {"status": "passed"}, "b::t3": {"status": "skipped"}}}
+    delta = policy.compute_delta(prev, cur)
+    assert len(delta["added"]) == 3 and delta["skipped_delta"] == 1
+    assert delta["previous_tests_ran"] - 0 + len(delta["added"]) - delta["skipped_delta"] == 2     # the two that ran

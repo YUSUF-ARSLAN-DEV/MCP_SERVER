@@ -209,14 +209,14 @@ def _validate_delta_reconciles(data: dict[str, Any]) -> None:
         return
     dropped = len(delta.get("removed", [])) - delta.get("renamed_count", 0)
     expected = (delta.get("previous_tests_ran", 0) - dropped + len(delta.get("added", []))
-                - delta.get("quarantined_delta", 0) - delta.get("test_defect_delta", 0))
+                - delta.get("quarantined_delta", 0) - delta.get("test_defect_delta", 0) - delta.get("skipped_delta", 0))
     actual = data["counts"]["executed_tests"]
     if expected != actual:
         from .report_policy import ReportConsistencyError   # imported here: report_policy must stay import-free of this module
         raise ReportConsistencyError(
             f"delta reconciliation does not balance: {delta.get('previous_tests_ran', 0)} (previous) - {dropped} "
             f"(removed, excluding renames) + {len(delta.get('added', []))} (added) - {delta.get('quarantined_delta', 0)} "
-            f"(quarantine change) - {delta.get('test_defect_delta', 0)} (test-defect change) = {expected}, but this "
+            f"(quarantine change) - {delta.get('test_defect_delta', 0)} (test-defect change) - {delta.get('skipped_delta', 0)} (skipped change) = {expected}, but this "
             f"run counted {actual}. The report is not emitted with a sentence that admits its own mismatch.")
 
 

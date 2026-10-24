@@ -70,7 +70,7 @@ def test_a8_reconciliation_has_no_escape_hatch_and_balances(good):
     if not delta.get("baseline"):
         pytest.skip("baseline run - no reconciliation to check")
     dropped = len(delta.get("removed", [])) - delta.get("renamed_count", 0)
-    expected = delta.get("previous_tests_ran", 0) - dropped + len(delta.get("added", [])) - delta.get("quarantined_delta", 0) - delta.get("test_defect_delta", 0)
+    expected = delta.get("previous_tests_ran", 0) - dropped + len(delta.get("added", [])) - delta.get("quarantined_delta", 0) - delta.get("test_defect_delta", 0) - delta.get("skipped_delta", 0)
     assert expected == good["counts"]["executed_tests"]
 
 

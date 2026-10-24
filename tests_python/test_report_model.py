@@ -153,6 +153,17 @@ def test_a_newly_invalid_test_leaves_tests_ran_and_the_delta_still_balances():
         validate_report_data(_base_data(delta={**delta, "test_defect_delta": 0}))  # 12 != 10
 
 
+def test_a_newly_skipped_test_is_added_but_never_ran_and_the_delta_still_balances():
+    """Found live: a first run after an empty one added 16 tests, one of them skipped by the harness; tests_ran
+    was 15, the delta said 16, and the whole report was refused."""
+    delta = {"baseline": True, "previous_run_id": "run-0", "previous_tests_ran": 9, "removed": [],
+             "added": [{"id": "x", "title": "x"}, {"id": "y", "title": "y"}], "renamed_count": 0, "quarantined_delta": 0,
+             "test_defect_delta": 0, "skipped_delta": 1}
+    validate_report_data(_base_data(delta=delta))  # 9 - 0 + 2 - 0 - 0 - 1 == 10
+    with pytest.raises(ReportConsistencyError, match="skipped change"):
+        validate_report_data(_base_data(delta={**delta, "skipped_delta": 0}))  # 11 != 10
+
+
 def test_appendix_index_rows_equals_tests_ran_plus_skipped_plus_quarantined_plus_test_defects():
     validate_report_data(_base_data())  # 10 + 1 + 0 + 0 == 11
     with pytest.raises(ValueError, match="appendix index"):

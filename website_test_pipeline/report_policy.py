@@ -839,6 +839,10 @@ def compute_delta(prev: dict[str, Any] | None, cur: dict[str, Any], *, ledger_op
         # tests whose failure is the test's own fault leave tests_ran without being added or removed, exactly
         # like quarantine; counted over both snapshots whole so renames, additions and removals all balance
         "test_defect_delta": sum(1 for k in ct if ct[k].get("invalid")) - sum(1 for k in pt if pt[k].get("invalid")),
+        # a skipped test is in both snapshots but never in tests_ran (canonical_counts), so one that appears, vanishes or
+        # stops being skipped moves tests_ran without being "added"/"removed" - found live: a first run whose one new
+        # test was skipped could not balance (16 added, 15 ran) and the whole report was refused
+        "skipped_delta": sum(1 for k in ct if ct[k].get("status") == "skipped") - sum(1 for k in pt if pt[k].get("status") == "skipped"),
         "category_changes": category_changes,
         # C1: a test the ledger still calls open did not pass for good - it is a ghost (category_changes already
         # says "not reproduced"), never counted here as "now passing" alongside an Executive Summary that

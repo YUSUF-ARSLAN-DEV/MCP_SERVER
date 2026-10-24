@@ -1895,9 +1895,11 @@ def _delta_block(document, delta: dict[str, Any], counts: dict[str, Any], requir
     q_term = f' - {q_delta} (newly quarantined)' if q_delta > 0 else (f' + {-q_delta} (unquarantined)' if q_delta < 0 else "")
     td_delta = delta.get("test_defect_delta", 0)
     td_term = f' - {td_delta} (newly invalid)' if td_delta > 0 else (f' + {-td_delta} (no longer invalid)' if td_delta < 0 else "")
+    sk_delta = delta.get("skipped_delta", 0)
+    sk_term = f' - {sk_delta} (newly skipped)' if sk_delta > 0 else (f' + {-sk_delta} (no longer skipped)' if sk_delta < 0 else "")
     document.add_paragraph(
         f'Reconciling the totals: {delta["previous_tests_ran"]} (previous) - {dropped} (removed, excluding renames) '
-        f'+ {len(delta["added"])} (added){q_term}{td_term} = {counts["executed_tests"]} (this run).')
+        f'+ {len(delta["added"])} (added){q_term}{td_term}{sk_term} = {counts["executed_tests"]} (this run).')
     for heading, key in (("Tests added", "added"), ("Tests removed", "removed"), ("Failures now passing", "fixed"),
                          ("Failures still open", "still_failing"), ("New failures", "new_failures")):
         rows = delta[key]
