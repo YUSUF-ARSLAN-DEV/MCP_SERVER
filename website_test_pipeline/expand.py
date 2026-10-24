@@ -26,7 +26,7 @@ from .ratings import RatingsFileError, append_rating, load_ratings, save_ratings
 from .sitemap import build_site_map, load_inventories, render_site_map
 
 PROMPT_VERSION = "expand-v1"
-MAX_PER_RUN = 10
+MAX_PER_RUN = 24            # a requirements document may hold ~20 testable stories; a cap of 10 left the rest "new" (never tried) and dragged the coverage figure down
 
 SYSTEM = "Return exactly one JSON object and no prose. Use only what the site map supports."
 
