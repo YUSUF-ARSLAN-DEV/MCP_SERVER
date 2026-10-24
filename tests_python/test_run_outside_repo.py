@@ -96,7 +96,40 @@ def test_the_all_in_one_pipeline_builds_the_combined_word_report(tmp_path, monke
     assert cli.main() == 0
     steps = [c[3:] for c in commands if c[1:3] == ["-m", "website_test_pipeline.cli"]]
     assert [s[0] for s in steps] == ["crawl", "generate", "flows", "report"]
-    assert steps[-1][:3] == ["report", "--rerun", "--combined"]
+    assert steps[-1] == ["report", "--rerun", "--repair", "--combined"]      # a failing page test gets one repair pass by default
+
+
+def _all_steps(monkeypatch, tmp_path, *extra_argv, env=None):
+    monkeypatch.setattr(config, "RUNS", tmp_path / "runs")
+    monkeypatch.setenv("SITE", "allsteps")
+    monkeypatch.setenv("SEED_URL", "https://example.test/")
+    monkeypatch.setenv("WTP_JOB", "1")
+    for key, value in (env or {}).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setattr(sys, "argv", ["cli", "all", "--no-window", *extra_argv])
+    commands = []
+    monkeypatch.setattr(cli.subprocess, "run", lambda cmd, **kw: commands.append(cmd) or subprocess.CompletedProcess(cmd, 0))
+    assert cli.main() == 0
+    return [c[3:] for c in commands if c[1:3] == ["-m", "website_test_pipeline.cli"]]
+
+
+def test_auto_repair_can_be_switched_off(monkeypatch, tmp_path):
+    assert _all_steps(monkeypatch, tmp_path, env={"AUTO_REPAIR": "off"})[-1] == ["report", "--rerun", "--combined"]
+
+
+def test_a_requirements_document_makes_the_journeys_come_from_it_and_skips_the_models_own_guesses(monkeypatch, tmp_path):
+    steps = _all_steps(monkeypatch, tmp_path, "stories.md")
+    assert [s[0] for s in steps] == ["crawl", "generate", "intents", "flows", "report"]
+    assert steps[2] == ["intents", "stories.md"] and "intents" in steps[3][-1].split(",")
+
+
+def test_files_in_the_workspaces_requirements_folder_are_used_without_naming_them(monkeypatch, tmp_path):
+    folder = tmp_path / "runs" / "allsteps" / "requirements"
+    folder.mkdir(parents=True)
+    (folder / "spec.pdf").write_bytes(b"%PDF-1.4")
+    (folder / "notes.exe").write_bytes(b"x")                                   # not a readable document type: ignored
+    steps = _all_steps(monkeypatch, tmp_path)
+    assert steps[2][0] == "intents" and [Path(p).name for p in steps[2][1:]] == ["spec.pdf"]
 
 
 def test_parallel_tests_are_only_asked_for_when_pytest_xdist_is_installed(monkeypatch):

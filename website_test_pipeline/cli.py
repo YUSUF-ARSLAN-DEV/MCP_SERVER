@@ -197,7 +197,10 @@ def main() -> int:
         req_dir = settings.workspace / 'requirements'
         docs = list(args.words) or sorted(str(p) for p in (req_dir.glob('*') if req_dir.is_dir() else []) if p.suffix.lower() in SUPPORTED)
         steps = (([['crawl']] if settings.seed_url else []) + [['generate']] + ([['intents', *docs]] if docs else [])
-                 + [['flows', 'run', '--skip', ','.join(filter(None, ['execute', 'intents' if docs else '', args.skip]))], ['report', '--rerun', '--combined']])
+                 + [['flows', 'run', '--skip', ','.join(filter(None, ['execute', 'intents' if docs else '', args.skip]))],
+                    # a failing page test goes back to the model once, with its own errors, and the tests run again: a test the model
+                    # got wrong then stops showing up as an unexplained failure (AUTO_REPAIR=off to skip; it costs nothing when nothing failed)
+                    ['report', '--rerun', *([] if os.environ.get('AUTO_REPAIR', 'on').strip().lower() == 'off' else ['--repair']), '--combined']])
         from . import progress
         weights = {'crawl': 1, 'generate': 4, 'intents': 1, 'flows': 3, 'report': 3}          # each step's rough share of the total time
         total_w = sum(weights[s[0]] for s in steps); t0 = datetime.now().timestamp(); done_w = 0

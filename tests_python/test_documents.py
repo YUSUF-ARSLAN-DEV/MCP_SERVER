@@ -280,3 +280,16 @@ def test_a_py_requirements_file_without_a_template_or_with_an_unknown_variable_i
     (tmp_path / "c.py").write_text("REQUIREMENTS = (\n", encoding="utf-8")
     with pytest.raises(DocumentError, match="not valid Python"):
         read_document(tmp_path / "c.py")
+
+
+def test_a_requirements_document_may_produce_more_journeys_than_the_models_own_guesses_are_allowed():
+    from website_test_pipeline.intents import MAX_NEW as GUESSES, accept_intents
+    from website_test_pipeline.documents import MAX_NEW as FROM_DOCUMENT
+    words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet", "kilo", "lima"]
+    rows = [{"sentence": f"A visitor opens the {w} page and sees the {w} heading.", "start_path": "/", "evidence": "the page",
+             "quote": f"the visitor can open the {w} page and read the {w} heading"} for w in words]
+    text = "\n".join(r["quote"] for r in rows)
+    added, _ = accept_intents(rows, {"version": 1, "intents": []}, {"/"}, "t", document=("d.md", text), limit=FROM_DOCUMENT)
+    assert FROM_DOCUMENT > GUESSES and len(added) == 12
+    capped, _ = accept_intents(rows, {"version": 1, "intents": []}, {"/"}, "t", document=("d.md", text))
+    assert len(capped) == GUESSES

@@ -330,12 +330,13 @@ def parse_response(raw: str) -> list[dict]:
 
 
 def accept_intents(raw_rows: list[dict], doc: dict, pages: set[str], now: str, model: str = "",
-                   document: tuple[str, str] | None = None, allow_account: bool = False) -> tuple[list[dict], list[tuple[str, str]]]:
+                   document: tuple[str, str] | None = None, allow_account: bool = False,
+                   limit: int | None = None) -> tuple[list[dict], list[tuple[str, str]]]:
     """Add the model's sentences that pass the checks. Returns (added intents, [(sentence, reason)] rejected).
     With `document` = (file name, the text the model was shown) every sentence must also carry a quote that really is
     in that text (documents.quote_in_text); it is then stored as a `doc` intent with `from_doc` and `quote`."""
     added, rejected = [], []
-    for row in raw_rows[:MAX_NEW]:
+    for row in raw_rows[:limit or MAX_NEW]:
         sentence = str(row.get("sentence") or "").strip()
         start = str(row.get("start_path") or "").split("?")[0].split("#")[0] or "/"
         if start not in pages:

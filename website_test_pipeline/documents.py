@@ -29,7 +29,7 @@ MAX_CHUNKS = 4                   # per document and run; a long document is cove
 MIN_QUOTE_WORDS = 4              # a one-word "quote" proves nothing
 
 PROMPT_VERSION = "intents-doc-v1"
-MAX_NEW = 8
+MAX_NEW = 20                     # a requirements document is the brief: one journey per testable requirement, not a handful
 
 SYSTEM = "Return exactly one JSON object and no prose. Propose only what the site map supports."
 
@@ -251,7 +251,7 @@ def run_documents(settings, urls: list[str], client, log, paths: list[str]) -> i
             asked += 1
             now = datetime.now(timezone.utc).isoformat(timespec="seconds")
             added, rejected = accept_intents(rows, doc, pages, now, settings.model, document=(name, excerpt),
-                                             allow_account=allow_account)
+                                             allow_account=allow_account, limit=MAX_NEW)
             added_total += len(added)
             rejected_total += len(rejected)
             for intent in added:
