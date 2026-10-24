@@ -102,3 +102,11 @@ def test_an_unreachable_api_is_reported_as_unreachable_with_a_hint_not_a_bare_fa
     client = PipelineClient("http://pipeline.test", "me", "pw", transport=httpx.MockTransport(refuse))
     with pytest.raises(PipelineError, match="Could not reach the pipeline API at http://pipeline.test.*docker compose up"):
         client.run("abc")
+
+
+def test_user_stories_are_sent_as_a_base64_markdown_file_and_omitted_when_blank():
+    import base64
+    with_stories = _client([]).start_run("https://x.test/", requirements="US-01: search works.")["echo"]
+    (item,) = with_stories["requirements"]
+    assert item["name"] == "user-stories.md" and base64.b64decode(item["data"]).decode() == "US-01: search works."
+    assert "requirements" not in _client([]).start_run("https://x.test/", requirements="   ")["echo"]

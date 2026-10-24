@@ -54,14 +54,19 @@ def build_server(client: PipelineClient) -> MCPServer:
 
     @server.tool()
     @_guard
-    def start_run(url: str, model_id: str = "", max_pages: int = 0, probe_max: int = -1, reuse_workspace: bool = False) -> dict:
+    def start_run(url: str, model_id: str = "", max_pages: int = 0, probe_max: int = -1, reuse_workspace: bool = False,
+                  requirements: str = "") -> dict:
         """Start a test run of a website and return its job id. One run per user at a time.
 
         model_id: an id from list_models (blank = the server's default model). max_pages: pages to explore (0 = server
         default). probe_max: buttons to click per page (-1 = server default). Steps that need a person (a CAPTCHA, a
-        sign-in) are skipped and reported, because an agent cannot solve them."""
+        sign-in) are skipped and reported, because an agent cannot solve them.
+
+        requirements: what the site SHOULD do, as plain text (user stories, use cases, a spec). When given, the tested
+        journeys come from it, so the report says whether the site does what it should, not just that it loads."""
         job = client.start_run(url, model_id=model_id or None, max_pages=max_pages or None,
-                               probe_max=None if probe_max < 0 else probe_max, ask_human=False, reuse_workspace=reuse_workspace)
+                               probe_max=None if probe_max < 0 else probe_max, ask_human=False, reuse_workspace=reuse_workspace,
+                               requirements=requirements)
         return {"job_id": job["id"], "status": job["status"], "site": job.get("site")}
 
     @server.tool(annotations=_READ)

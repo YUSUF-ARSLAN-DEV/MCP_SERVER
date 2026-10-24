@@ -91,7 +91,7 @@ def test_start_run_never_asks_a_person_and_maps_defaults_to_the_server_defaults(
 def test_start_run_passes_a_chosen_model_and_limits_through():
     client = FakeClient()
     _call(client, "start_run", url="https://x.test/", model_id="m1", max_pages=3, probe_max=0)
-    assert client.started[1] | {} == {"model_id": "m1", "max_pages": 3, "probe_max": 0, "ask_human": False, "reuse_workspace": False}
+    assert client.started[1] | {} == {"model_id": "m1", "max_pages": 3, "probe_max": 0, "ask_human": False, "reuse_workspace": False, "requirements": ""}
 
 
 def test_run_status_returns_only_the_fields_an_agent_needs():
@@ -117,3 +117,9 @@ def test_get_report_and_cancel_run_reach_the_client():
 def test_the_client_comes_from_the_environment_and_defaults_to_the_local_api():
     client = client_from_env({"PIPELINE_USERNAME": "u", "PIPELINE_PASSWORD": "p"})
     assert str(client._http.base_url).rstrip("/") == "http://127.0.0.1:8000" and client.username == "u"
+
+
+def test_start_run_can_carry_user_stories_as_text():
+    client = FakeClient()
+    _call(client, "start_run", url="https://x.test/", requirements="US-01: A visitor can search.")
+    assert client.started[1]["requirements"] == "US-01: A visitor can search."

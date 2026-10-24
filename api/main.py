@@ -1,9 +1,11 @@
 """FastAPI app: queue a run, follow it, fetch its files.  Start:  uvicorn --factory api.main:create_app"""
 from __future__ import annotations
 import asyncio
+import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
 import urllib.error
@@ -33,6 +35,26 @@ from .settings import AppSettings
 COOKIE = "wtp_session"
 # files a visitor may download from a run folder: results and evidence, never saved logins or credentials
 from .runstore import DOWNLOADABLE as _DOWNLOADABLE, PRIVATE_PARTS as _PRIVATE_PARTS, clean_relative, read_stored
+
+
+def save_requirements(run_dir: Path, files) -> list[str]:
+    """Write each uploaded requirement document to <run>/requirements/ (the pipeline reads that folder) and return the
+    names kept. A name is reduced to its last part, must end in a type the pipeline can read, and must really decode."""
+    from website_test_pipeline.documents import MAX_BYTES, SUPPORTED
+    saved: list[str] = []
+    for item in files or []:
+        name = re.sub(r"[^\w.\- ]", "_", Path(item.name.replace("\\", "/")).name).strip(" .")
+        if Path(name).suffix.lower() not in SUPPORTED:
+            raise HTTPException(422, f"{item.name}: use one of {', '.join(SUPPORTED)}.")
+        try:
+            data = base64.b64decode(item.data, validate=True)
+        except Exception as exc:
+            raise HTTPException(422, f"{item.name}: the file did not arrive intact.") from exc
+        if not data or len(data) > MAX_BYTES:
+            raise HTTPException(422, f"{item.name}: empty or larger than {MAX_BYTES // 1_000_000} MB.")
+        _atomic_write(run_dir / "requirements" / name, data)
+        saved.append(name)
+    return saved
 
 
 def _atomic_write(path: Path, data: bytes, private: bool = False) -> None:
@@ -280,7 +302,9 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         probe = SimpleNamespace(api_url=url or provider.default_url, api_key=key, model=row["model"], model_provider=row["provider"])
         try:
             request_url, headers = provider.models_request(probe)
-            with urllib.request.urlopen(urllib.request.Request(request_url, headers=headers), timeout=10) as response:
+            # a User-Agent, like the real model client sends: some providers (Cerebras, Groq: Cloudflare error 1010) refuse
+            # Python's default one with a 403, which this test then misreported as "the server did not accept the key"
+            with urllib.request.urlopen(urllib.request.Request(request_url, headers={"User-Agent": "website-test-pipeline/0.1", **headers}), timeout=10) as response:
                 ids = provider.model_ids(json.load(response))
         except urllib.error.HTTPError as exc:
             reason = {401: "The server did not accept the key.", 403: "The server did not accept the key.",
@@ -322,6 +346,9 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
         site = site_name(url, job_id, body.options.reuse_workspace, me["id"])
         options = body.options.model_dump()
         run_dir = settings.runs_dir / site
+        saved_requirements = save_requirements(run_dir, body.requirements)       # 422 on a bad file, before anything is queued
+        if saved_requirements:
+            options["requirements"] = saved_requirements
         if model:
             options["model"] = model            # no key in here: the database never holds it
             if choice.api_key.strip():           # written BEFORE the job exists, so the worker can never start without it
@@ -330,6 +357,7 @@ def create_app(settings: AppSettings | None = None, resolver=security._resolve) 
             job = db.create_job(job_id, url, site, run_dir, user, options)
         except Exception:
             forget_model_secret(run_dir)
+            shutil.rmtree(run_dir / "requirements", ignore_errors=True)
             raise
         return view(job)
 

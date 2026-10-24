@@ -190,9 +190,16 @@ def main() -> int:
         # crawl (when SEED_URL is set) -> generate -> flows run -> report --rerun. The report step runs the tests itself,
         # so execute is skipped in the flow chain. Exit 2 (a stage could not run) stops the chain; exit 1 (tests failed) does not.
         base = [sys.executable, '-m', 'website_test_pipeline.cli']
-        steps = ([['crawl']] if settings.seed_url else []) + [['generate'], ['flows', 'run', '--skip', ','.join(filter(None, ['execute', args.skip]))], ['report', '--rerun', '--combined']]
+        # What the site SHOULD do, in a person's words (user stories, use cases, a spec): named on the command line, or any
+        # supported file in <workspace>/requirements/ (where the web page puts an upload). When there is one, the journeys
+        # come from it - quoted, not invented - and the model's own guesses about the site are skipped.
+        from .documents import SUPPORTED
+        req_dir = settings.workspace / 'requirements'
+        docs = list(args.words) or sorted(str(p) for p in (req_dir.glob('*') if req_dir.is_dir() else []) if p.suffix.lower() in SUPPORTED)
+        steps = (([['crawl']] if settings.seed_url else []) + [['generate']] + ([['intents', *docs]] if docs else [])
+                 + [['flows', 'run', '--skip', ','.join(filter(None, ['execute', 'intents' if docs else '', args.skip]))], ['report', '--rerun', '--combined']])
         from . import progress
-        weights = {'crawl': 1, 'generate': 4, 'flows': 3, 'report': 3}          # each step's rough share of the total time
+        weights = {'crawl': 1, 'generate': 4, 'intents': 1, 'flows': 3, 'report': 3}          # each step's rough share of the total time
         total_w = sum(weights[s[0]] for s in steps); t0 = datetime.now().timestamp(); done_w = 0
         progress.report(settings, 'Starting', note=settings.site)
         if not args.no_window and progress.window_available():

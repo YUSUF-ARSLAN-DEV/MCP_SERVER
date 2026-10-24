@@ -207,6 +207,9 @@ nav{display:flex;flex-direction:column}
     <div style="flex:1"><label for="nProbe">Buttons to probe per page</label><input id="nProbe" type="number" min="0" max="20" placeholder="server default"></div></div>
     <label for="nHuman">When a CAPTCHA or sign-in appears</label>
     <select id="nHuman"><option value="ask">Ask me here, on this page</option><option value="skip">Skip it and report "Needs a person"</option></select>
+    <label for="nReq">What the site should do <small>(optional: user stories, use cases or a spec; PDF, Word, .md or .txt)</small></label>
+    <input id="nReq" type="file" accept=".pdf,.docx,.md,.markdown,.txt,.rst" multiple>
+    <p class="sub" style="margin:4px 0 0">When you give one, the tested journeys come from it (quoted, not invented), so the report can say whether the site does what it should.</p>
     <div class="err" id="nErr"></div>
     <p><button class="btn" id="nGo">Start run</button></p>
   </div>
@@ -489,7 +492,7 @@ async function loadAbout(job){
     ${row('Model',esc(i.model_profile?`${i.model_profile} (${i.model_provider}: ${i.model_name})`:(i.model_name?`${i.model_provider}: ${i.model_name}`:'the server\'s own model')))}
     ${row('Took',esc(dur(i.duration_s)))}
     ${row('Pages explored',esc(i.pages_explored??'-'))}
-    ${row('Settings',esc([opt.max_pages?`up to ${opt.max_pages} pages`:'',opt.probe_max!=null?`${opt.probe_max} buttons probed per page`:'',opt.ask_human===false?'CAPTCHAs skipped':'CAPTCHAs asked'].filter(Boolean).join(' · ')))}
+    ${row('Settings',esc([(opt.requirements&&opt.requirements.length)?`guided by ${opt.requirements.join(', ')}`:'',opt.max_pages?`up to ${opt.max_pages} pages`:'',opt.probe_max!=null?`${opt.probe_max} buttons probed per page`:'',opt.ask_human===false?'CAPTCHAs skipped':'CAPTCHAs asked'].filter(Boolean).join(' · ')))}
     ${row('Browser',esc(i.browser||'-'))}
     ${row('Code version',`<code>${esc(i.code_version||'unknown')}</code>`)}
     ${row('Pipeline exit code',esc(i.exit_code??'-'))}
@@ -622,6 +625,8 @@ function paintModelsList(){
 async function loadModels(){await reloadModels();paintModelsList();paintModelForm();}
 
 /* ---------- new run ---------- */
+const fileToBase64=f=>new Promise((ok,fail)=>{const r=new FileReader();r.onload=()=>ok(String(r.result).split(',')[1]||'');
+  r.onerror=()=>fail(new Error('Could not read '+f.name));r.readAsDataURL(f);});
 $('nGo').onclick=async()=>{
   $('nErr').textContent='';$('mErr').textContent='';
   const url=$('nUrl').value.trim();if(!url){$('nErr').textContent='Enter the site URL.';return;}
@@ -629,8 +634,13 @@ $('nGo').onclick=async()=>{
   const options={reuse_workspace:false,ask_human:$('nHuman').value==='ask'};         /* every run is its own, independent record */
   if($('nPages').value)options.max_pages=+$('nPages').value;
   if($('nProbe').value!=='')options.probe_max=+$('nProbe').value;
+  const requirements=[];
+  for(const f of [...($('nReq').files||[])]){
+    if(f.size>6e6){$('nErr').textContent=`${f.name} is larger than 6 MB.`;return;}
+    try{requirements.push({name:f.name,data:await fileToBase64(f)});}catch(e){$('nErr').textContent=e.message;return;}
+  }
   $('nGo').disabled=true;
-  try{const body={url,options};if(choice)Object.assign(body,choice);
+  try{const body={url,options};if(choice)Object.assign(body,choice);if(requirements.length)body.requirements=requirements;
     const job=await api('/api/jobs',{method:'POST',body});
     toast('Run queued.');await refreshJobs();location.hash='#/live';}
   catch(e){(/^Model address|API_KEY|chat-completions/.test(e.message)?$('mErr'):$('nErr')).textContent=e.message;}

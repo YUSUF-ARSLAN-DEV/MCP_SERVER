@@ -5,6 +5,7 @@ web UI and an AI agent drive the same engine, with the same sign-in, limits and 
 no MCP dependency, so it can be tested without one.
 """
 from __future__ import annotations
+import base64
 import json
 from typing import Any
 
@@ -69,8 +70,11 @@ class PipelineClient:
         return self._request("GET", "/api/models").json()
 
     def start_run(self, url: str, *, model_id: str | None = None, max_pages: int | None = None, probe_max: int | None = None,
-                  ask_human: bool = False, reuse_workspace: bool = False) -> dict:
+                  ask_human: bool = False, reuse_workspace: bool = False, requirements: str = "",
+                  requirements_name: str = "user-stories.md") -> dict:
         body: dict[str, Any] = {"url": url, "options": {"ask_human": ask_human, "reuse_workspace": reuse_workspace}}
+        if requirements.strip():     # what the site SHOULD do, as text; the run's journeys then come from it
+            body["requirements"] = [{"name": requirements_name, "data": base64.b64encode(requirements.encode("utf-8")).decode("ascii")}]
         if max_pages is not None:
             body["options"]["max_pages"] = max_pages
         if probe_max is not None:

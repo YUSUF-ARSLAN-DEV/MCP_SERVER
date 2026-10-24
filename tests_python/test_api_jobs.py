@@ -202,3 +202,32 @@ def test_a_restart_marks_runs_that_were_in_progress_as_failed(tmp_path):
     assert db.get_job("b2")["status"] == "queued"
     db.finish_job("a1", "done")                                              # an ended job is never overwritten
     assert db.get_job("a1")["status"] == "failed"
+
+
+# ------------------------------------------------------------------ requirement documents travel with a run
+
+def _b64(text: str) -> str:
+    import base64
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def test_a_run_can_carry_user_stories_and_they_land_where_the_pipeline_reads_them(make_client, tmp_path):
+    client = make_client()
+    signed_in(client)
+    job = client.post("/api/jobs", json={"url": "https://example.com/", "requirements": [
+        {"name": "../../etc/stories.md", "data": _b64("US-01: A visitor can search.")}]})
+    assert job.status_code == 201, job.text
+    kept = tmp_path / "runs" / job.json()["site"] / "requirements" / "stories.md"      # path parts are stripped from the name
+    assert kept.read_text(encoding="utf-8") == "US-01: A visitor can search."
+
+
+@pytest.mark.parametrize("name,data,why", [("notes.exe", _b64("x"), "use one of"), ("a.md", "!!not base64!!", "did not arrive intact"),
+                                           ("a.md", _b64(""), "")])
+def test_a_bad_requirement_file_is_refused_before_anything_is_queued(make_client, name, data, why):
+    client = make_client()
+    signed_in(client)
+    response = client.post("/api/jobs", json={"url": "https://example.com/", "requirements": [{"name": name, "data": data or "QQ=="}]}) \
+        if data else client.post("/api/jobs", json={"url": "https://example.com/", "requirements": [{"name": name, "data": ""}]})
+    assert response.status_code == 422
+    assert why in response.text
+    assert client.get("/api/jobs").json() == []

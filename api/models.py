@@ -54,9 +54,16 @@ class ProfileOut(BaseModel):
                    key_set=bool(row["key_enc"]), created_at=row["created_at"], updated_at=row["updated_at"])
 
 
+class RequirementFile(BaseModel):
+    """What the site should do, in a person's words: user stories, use cases, a spec (txt, md, docx, pdf). base64, <= 6 MB."""
+    name: str = Field(min_length=1, max_length=120)
+    data: str = Field(min_length=1, max_length=8_500_000, repr=False)
+
+
 class JobCreate(BaseModel):
     url: str
     options: JobOptions = JobOptions()
+    requirements: list[RequirementFile] = Field(default_factory=list, max_length=5)
     model: ModelChoice | None = None                     # a one-off choice for this run
     model_id: str | None = None                          # or one of your saved model configurations
 

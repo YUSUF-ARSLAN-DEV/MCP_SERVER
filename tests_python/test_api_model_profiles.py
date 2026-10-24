@@ -283,3 +283,11 @@ def test_the_key_file_is_created_once_owner_only_and_reused(tmp_path):
     assert load_secretbox(tmp_path).decrypt(first.encrypt("hello")) == "hello"            # same key on the next start
     with pytest.raises(SecretBoxError, match="SECRETS_KEY"):
         load_secretbox(tmp_path, "not-a-valid-key")
+
+
+def test_the_connection_test_identifies_itself_because_some_providers_refuse_a_python_default_agent(make_app, models_server):
+    """Cerebras and Groq answer Python's default User-Agent with a 403 (Cloudflare 1010); that was reported as a bad key."""
+    client = make_app(allow_private_model_urls=True)
+    mid = client.post("/api/models", json={"name": "local", "provider": "openai", "model": "served-1", "api_url": models_server, "api_key": KEY}).json()["id"]
+    client.post(f"/api/models/{mid}/test")
+    assert _Models.seen[-1][1]["user-agent"].startswith("website-test-pipeline/")
