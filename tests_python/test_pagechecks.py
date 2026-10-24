@@ -116,3 +116,19 @@ def test_a_request_that_failed_once_but_answered_fine_when_asked_again_is_only_a
     kinds = {f.kind: f.severity for f in health_findings(_inv({"bad_responses": [flaky, real]}))}
     assert kinds == {"failed_request": "P2", "transient_request_error": "P3"}
     assert "transient_request_error" in __import__("website_test_pipeline.report_policy", fromlist=["x"]).ADVISORY_KINDS
+
+
+def test_a_key_in_a_url_is_never_copied_into_a_finding():
+    from website_test_pipeline.pagechecks import redact
+    assert redact("Failed to load 'https://pro.ip-api.com/json/?key=h49qrIxAVSStejH&lang=en'") == "Failed to load 'https://pro.ip-api.com/json/?key=***&lang=en'"
+    assert "***" in redact("https://x.test/a?token=abc123&x=1") and "abc123" not in redact("https://x.test/a?token=abc123")
+    assert redact("https://x.test/a?page=2") == "https://x.test/a?page=2"
+
+
+def test_a_script_error_about_another_sites_service_is_only_a_note_but_the_sites_own_is_a_defect():
+    other = {"page_errors": [{"text": "NetworkError: Failed to execute 'send' on 'XMLHttpRequest': Failed to load 'https://pro.ip-api.com/json/?key=***'."}]}
+    assert {f.kind: f.severity for f in health_findings(_inv(other))} == {"third_party_script_error": "P3"}
+    own = {"page_errors": [{"text": "TypeError: x is undefined at https://shop.example.com/app.js:10"}]}
+    assert {f.kind: f.severity for f in health_findings(_inv(own))} == {"script_error": "P2"}
+    plain = {"page_errors": [{"text": "TypeError: x is undefined"}]}
+    assert {f.kind for f in health_findings(_inv(plain))} == {"script_error"}

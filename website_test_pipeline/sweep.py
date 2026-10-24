@@ -19,6 +19,7 @@ from urllib.parse import urldefrag, urljoin, urlsplit
 from .coverage import actionable_controls
 from .explorer import (_CONTROLS_JS, _CONTROL_SEL, _control_key, _flow_locator, _is_probe_trigger, _locator_for,
                        _plausible_value, _select_first_real)
+from . import netguard
 from .pagechecks import PageHealth, _same_site
 from .pageutils import dismiss_overlays, settle_page
 
@@ -54,6 +55,8 @@ def sweep_links(page, url: str, controls: list[dict]) -> list[dict]:
         seen.add(target)
         if len(seen) > MAX_LINKS:
             break
+        if netguard.enabled() and not netguard.url_allowed(target):
+            continue                  # a request of ours (not the browser's) must not reach a private address either
         try:
             status = page.request.head(target, timeout=8000, max_redirects=5).status
             if status >= 500:           # a server error once is a hiccup: ask again before calling the link broken

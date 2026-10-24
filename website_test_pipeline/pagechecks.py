@@ -10,6 +10,7 @@ interaction probes navigate away and add noise. `health_findings()` turns the re
 is a pure function over data, so it is testable without a browser.
 """
 from __future__ import annotations
+import re
 from urllib.parse import urlsplit
 
 _REFUSED = {401, 403, 429}   # the server refused a robot, not a page that is broken
@@ -52,6 +53,21 @@ _MEASURE_JS = r"""
   };
 }
 """ % {"n": MAX_ITEMS}
+
+
+_SECRET_PARAM = re.compile(r"(?i)\b(api[_-]?key|key|token|secret|password|passwd|pwd|auth|sig|signature|access[_-]?token)=([^&\s\"'<>]+)")
+_URL_IN_TEXT = re.compile(r"https?://[^\s\"'<>)]+")
+
+
+def redact(text: str) -> str:
+    """A key or token in a URL (?key=..., ?token=...) is never copied into a report: it is a credential, not a finding."""
+    return _SECRET_PARAM.sub(lambda m: f"{m.group(1)}=***", text or "")
+
+
+def _names_another_site(text: str, page_url: str) -> bool:
+    """True when an error message is about a URL on a site other than the page's own (a geo-IP lookup, an ad, an analytics call)."""
+    urls = _URL_IN_TEXT.findall(text or "")
+    return bool(urls) and all(not _same_site(u, page_url) for u in urls)
 
 
 def _host(url: str) -> str:
@@ -101,19 +117,19 @@ class PageHealth:
         if msg.type != "error":
             return
         where = (msg.location or {}).get("url", "") or ""
-        self._add(self.console_errors, {"text": (msg.text or "")[:200], "source": where[:200],
+        self._add(self.console_errors, {"text": redact(msg.text or "")[:200], "source": redact(where)[:200],
                                         "same_site": _same_site(where, self.url) if where else True})
 
     def _on_pageerror(self, err) -> None:
         name = getattr(err, "name", "") or "Error"
-        self._add(self.page_errors, {"text": f"{name}: {getattr(err, 'message', err)}"[:200]})
+        self._add(self.page_errors, {"text": redact(f"{name}: {getattr(err, 'message', err)}")[:200]})
 
     def _on_requestfailed(self, req) -> None:
         reason = (req.failure or "")
         # A request the page itself cancelled (navigating away, a replaced image) is not a failure.
         if "ERR_ABORTED" in str(reason):
             return
-        self._add(self.failed_requests, {"url": req.url[:200], "type": req.resource_type, "reason": str(reason)[:80],
+        self._add(self.failed_requests, {"url": redact(req.url)[:200], "type": req.resource_type, "reason": str(reason)[:80],
                                          "same_site": _same_site(req.url, self.url)})
 
     def _on_response(self, resp) -> None:
@@ -122,7 +138,7 @@ class PageHealth:
             if req.is_navigation_request() and req.frame == self._main_frame and self.main_status is None and self.recording:
                 self.main_status = resp.status
             if resp.status >= 400:
-                self._add(self.bad_responses, {"url": resp.url[:200], "status": resp.status, "type": req.resource_type,
+                self._add(self.bad_responses, {"url": redact(resp.url)[:200], "status": resp.status, "type": req.resource_type,
                                                "same_site": _same_site(resp.url, self.url)})
         except Exception:
             return
@@ -136,6 +152,9 @@ class PageHealth:
         checked = 0
         for item in self.bad_responses + self.failed_requests:
             if checked >= limit or not item.get("same_site") or item.get("type") == "document":
+                continue
+            from . import netguard
+            if netguard.enabled() and not netguard.url_allowed(item["url"]):
                 continue
             checked += 1
             item["transient"] = False
@@ -209,6 +228,10 @@ def health_findings(inv: dict):
         add("P1", "blank_page", "the page rendered with almost no visible text and no controls",
             "open the page: a script may have failed before drawing it")
     for e in health.get("page_errors", [])[:3]:
+        if _names_another_site(e["text"], url):      # the site's script fell over on somebody else's service (geo lookup, ad, analytics)
+            add("P3", "third_party_script_error", f'a script error about a service on another site: "{e["text"]}"',
+                "not the site's own code; watch it if it recurs or breaks something visible")
+            continue
         add("P2", "script_error", f'an uncaught script error was thrown: "{e["text"]}"', "fix the script error; it can break features on this page")
     # the page's own document answering an error is already the page_http_error above, not a second "failed request"
     own_bad = [r for r in health.get("bad_responses", []) if r.get("same_site") and not r.get("transient")
