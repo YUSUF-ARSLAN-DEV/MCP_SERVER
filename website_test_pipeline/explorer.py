@@ -978,10 +978,13 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
     return flow
 
 
-def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
+def explore(page, url: str, probe_max: int = 5, log=None, health=None) -> PageInventory:
     settle_page(page)
     dismiss_overlays(page)  # snapshot the real page, not consent / ad overlays
     prime_lazy_content(page)  # mount lazy footers / newsletter widgets before scraping
+    if health is not None:
+        health.measure(page)
+        health.freeze()  # the probes below navigate away and reload; what they trigger is not this page's health
     title = page.title()
     try:
         direction = page.evaluate("() => document.documentElement.getAttribute('dir')")
@@ -1047,4 +1050,5 @@ def explore(page, url: str, probe_max: int = 5, log=None) -> PageInventory:
             if log:
                 log.info("primary-flow: probe errored (%s)", str(exc).splitlines()[0][:150])
     return PageInventory(url=url, title=title, dir=direction, lang=lang, headings=headings, controls=controls,
-                         accessibility=signals, forms=forms, revealed=revealed, embeds=embeds, primary_flow=primary_flow, auth=auth)
+                         accessibility=signals, forms=forms, revealed=revealed, embeds=embeds, primary_flow=primary_flow, auth=auth,
+                         health=health.as_dict() if health is not None else {})

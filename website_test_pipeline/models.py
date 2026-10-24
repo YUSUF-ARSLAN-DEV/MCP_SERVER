@@ -31,6 +31,9 @@ class PageInventory:
     # person for them: [{"kind": "login"|"signup", "selector": str|None, "region": str,
     # "fields": [{"type", "name", "label", "autocomplete", "required"}]}]
     auth: list[dict[str, Any]] = field(default_factory=list)
+    # what the browser itself reported while the page loaded (see pagechecks.PageHealth): script errors,
+    # failed requests, broken images, accessibility basics. Empty on inventories saved before this existed.
+    health: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -72,8 +72,10 @@ def _process_one_url(command: str, settings, client, guide, persona, url: str, i
             try:
                 context = browser.new_context(**context_kwargs(settings)); page = context.new_page()
                 page.set_default_navigation_timeout(settings.navigation_timeout_ms)
+                from .pagechecks import PageHealth
+                health = PageHealth(page, url)  # listeners go on BEFORE goto, or the load itself goes unseen
                 page.goto(url, wait_until='domcontentloaded')
-                inventory = explore(page, url, settings.explore_probe_max, log)
+                inventory = explore(page, url, settings.explore_probe_max, log, health=health)
                 (settings.artifacts_dir/f'{name(url)}.inventory.json').write_text(json.dumps(inventory.__dict__, indent=2, ensure_ascii=False), encoding='utf-8')
                 try:
                     with _flows_lock:

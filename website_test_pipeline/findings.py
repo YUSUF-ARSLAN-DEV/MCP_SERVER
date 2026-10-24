@@ -385,6 +385,8 @@ def collect_findings(run, tests_dir: Path, inventories: list[dict], flows_by_id:
         mismatch = direction_mismatch_finding(inv)
         if mismatch:
             findings.append(mismatch)
+        from .pagechecks import health_findings
+        findings.extend(health_findings(inv))
     order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     return sorted(findings, key=lambda f: (order.get(f.severity, 9), f.test))
 
