@@ -215,3 +215,25 @@ def test_model_client_talks_gemini_to_a_real_server(server):
 def test_model_check_lists_gemini_models_without_the_models_prefix_and_only_those_that_generate(server):
     assert check_model(_google(model="ghost", api_url=server)).endswith("served-1, served-2")
     assert check_model(_google(model="models/served-1", api_url=server)) is None
+
+
+# ------------------------------------------------------------------ Cerebras: its own switch for thinking, not chat_template_kwargs
+
+CEREBRAS = "https://api.cerebras.ai/v1/chat/completions"
+
+
+def test_cerebras_turns_thinking_off_with_reasoning_effort_and_never_sends_the_field_it_rejects():
+    _, _, body = OpenAICompatible().request(_settings(api_url=CEREBRAS, model="qwen-3.8-27b"), "hi", "sys", [])
+    sent = json.loads(body)
+    assert sent["reasoning_effort"] == "none" and "chat_template_kwargs" not in sent
+
+
+def test_a_cerebras_model_that_cannot_stop_reasoning_is_left_alone():
+    _, _, body = OpenAICompatible().request(_settings(api_url=CEREBRAS, model="gpt-oss-120b"), "hi", "sys", [])
+    sent = json.loads(body)
+    assert "reasoning_effort" not in sent and "chat_template_kwargs" not in sent
+
+
+def test_a_reasoning_model_left_on_default_thinking_gets_no_switch_on_cerebras():
+    _, _, body = OpenAICompatible().request(_settings(api_url=CEREBRAS, model="qwen-3.8-27b", model_thinking="default"), "hi", "sys", [])
+    assert "reasoning_effort" not in json.loads(body)

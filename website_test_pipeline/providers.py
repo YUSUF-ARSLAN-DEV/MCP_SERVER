@@ -52,6 +52,10 @@ class Provider:
 REJECTED_FIELDS: dict[str, set[str]] = {}
 
 
+def _is_cerebras(api_url: str) -> bool:
+    return "cerebras.ai" in (api_url or "").lower()
+
+
 class OpenAICompatible(Provider):
     """POST <API_URL> with {model, messages, ...}; API_URL is the full chat-completions URL."""
     name = "openai"
@@ -61,8 +65,15 @@ class OpenAICompatible(Provider):
                                           *({"type": "image_url", "image_url": {"url": u}} for u in images)]
         body = {"model": s.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "temperature": 0.1, "max_tokens": getattr(s, "model_max_tokens", 3072), "stream": False}
-        if getattr(s, "model_thinking", "off") == "off" and "chat_template_kwargs" not in REJECTED_FIELDS.get(s.api_url, ()):
-            body["chat_template_kwargs"] = {"enable_thinking": False}     # non-reasoning models; a reasoning one leaves it unset
+        if getattr(s, "model_thinking", "off") == "off":
+            if _is_cerebras(s.api_url):
+                # Cerebras rejects chat_template_kwargs (400) and answers a thinking model with reasoning only; its own
+                # switch is reasoning_effort. gpt-oss cannot turn reasoning off (its levels are low/medium/high), so it is
+                # left alone, as is any model that takes no such field.
+                if not re.search(r"gpt-oss", s.model or "", re.I):
+                    body["reasoning_effort"] = "none"
+            elif "chat_template_kwargs" not in REJECTED_FIELDS.get(s.api_url, ()):
+                body["chat_template_kwargs"] = {"enable_thinking": False}     # non-reasoning models; a reasoning one leaves it unset
         headers = {"Content-Type": "application/json", **({"Authorization": f"Bearer {s.api_key}"} if s.api_key else {})}
         return s.api_url, headers, json.dumps(body).encode()
 
