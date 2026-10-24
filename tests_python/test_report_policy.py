@@ -200,12 +200,17 @@ def test_failed_checks_needing_triage_share_the_look_bullet_with_unverified_jour
         "1 journey(s) the run could not confirm either way (UNV-001), section 5."]
 
 
-def test_each_limitation_bullet_keeps_its_own_id_and_url_when_it_fits():
+def test_limitations_of_one_kind_share_one_short_front_page_line_with_an_id_range():
     records = [_rec("LIM-001", "limitation", failure_class="human_input_required", mitigation="Ask for a bypass."),
                _rec("LIM-002", "limitation", failure_class="human_input_required", mitigation="Ask for a bypass.")]
-    bullets = policy.build_conditions(records, [], "GO")
-    assert len(bullets) == 2 and "LIM-001" in bullets[0] and "https://x.test/LIM-001" in bullets[0]
-    assert bullets[0] != bullets[1]                                  # identical text can still be told apart
+    assert policy.build_conditions(records, [], "GO") == [
+        "2 form(s) need a CAPTCHA or code that no automated test can pass (LIM-001, LIM-002, section 5)."]
+
+
+def test_a_lone_limitation_names_its_url_and_never_pastes_the_how_to_unblock_paragraph():
+    records = [_rec("LIM-001", "limitation", failure_class="human_input_required", mitigation="Ask the site owner for a bypass.")]
+    (line,) = policy.build_conditions(records, [], "GO")
+    assert "https://x.test/LIM-001" in line and "Ask the site owner" not in line
 
 
 def test_the_conditions_never_exceed_five_bullets():

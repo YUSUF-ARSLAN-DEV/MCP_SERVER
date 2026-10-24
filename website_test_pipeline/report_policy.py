@@ -397,22 +397,18 @@ def build_conditions(records: list[dict[str, Any]], cov_ids: list[str], verdict:
         fixed.append(f"{len(harness)} tooling issue(s) left tests unrun or invalid; they hide real results ({id_range(harness)}, section 5).")
     limits = [r for r in records if r["category"] == "limitation"]
     lim_bullets: list[str] = []
-    if limits and len(fixed) + len(limits) <= 5:
-        for r in limits:
-            lim_bullets.append(f"{plain_id(r['id'])} ({r.get('url') or 'no URL'}): {r.get('mitigation') or r['title']}")
-    elif limits:
-        by_class: dict[str, list[dict]] = {}
-        for r in limits:
-            by_class.setdefault(r.get("failure_class", "limitation"), []).append(r)
-        if len(fixed) + len(by_class) <= 5:
-            label = {"human_input_required": "form(s) need a CAPTCHA or code that no automated test can pass",
-                     "authentication_required": "sign-in wall(s) need a test account"}
-            for cls, rows in by_class.items():
-                lim_bullets.append(f"{len(rows)} {label.get(cls, 'item(s) cannot be tested automatically')} "
-                                   f"({id_range([plain_id(r['id']) for r in rows])}, section 5; each URL is in the table).")
-        else:
-            lim_bullets.append(f"{len(limits)} item(s) cannot be tested automatically "
-                               f"({id_range([plain_id(r['id']) for r in limits])}, section 5; each URL is in the table).")
+    # One short line per KIND of limitation, never the per-item mitigation paragraph: the front page is for a manager,
+    # and two forms with the same CAPTCHA need one sentence, not two. Each URL and its full how-to-unblock text is in
+    # the Limitations table (section 5).
+    by_class: dict[str, list[dict]] = {}
+    for r in limits:
+        by_class.setdefault(r.get("failure_class", "limitation"), []).append(r)
+    label = {"human_input_required": "form(s) need a CAPTCHA or code that no automated test can pass",
+             "authentication_required": "sign-in wall(s) need a test account"}
+    for cls, rows in by_class.items():
+        where = f" at {rows[0].get('url')}" if len(rows) == 1 and rows[0].get("url") else ""
+        lim_bullets.append(f"{len(rows)} {label.get(cls, 'item(s) cannot be tested automatically')}{where} "
+                           f"({id_range([plain_id(r['id']) for r in rows])}, section 5).")
     bullets = fixed + lim_bullets
     if len(bullets) > 5:
         raise ReportConsistencyError(f"executive summary has {len(bullets)} bullets; the maximum is five")
