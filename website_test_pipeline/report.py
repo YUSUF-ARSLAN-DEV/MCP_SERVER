@@ -2219,6 +2219,10 @@ def _at_a_glance(document, run: RunReport, data: dict[str, Any]) -> None:
     if not journeys:
         document.add_paragraph("No user journey was confirmed from start to finish in this run.")
 
+    document.add_heading("What this report cannot tell you", 2)
+    for limit in policy.main_limits(data):
+        document.add_paragraph(limit, style="List Bullet")
+
     document.add_heading("What a person should look at", 2)
     for condition in data["conditions"]:
         document.add_paragraph(condition, style="List Bullet")

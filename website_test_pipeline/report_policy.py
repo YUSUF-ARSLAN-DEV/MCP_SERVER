@@ -315,6 +315,41 @@ def confidence_sentence(confidence: dict[str, Any] | None) -> str:
     return f"Confidence: {confidence['level']}. {confidence.get('note', '')}".strip()
 
 
+def main_limits(data: dict[str, Any], how_many: int = 3) -> list[str]:
+    """The biggest reasons to trust THIS run less than its verdict word suggests, worst first, in plain words. Each one is
+    read off facts the run recorded (nothing is guessed), so a reader does not have to piece them together from five
+    tables. The last two are true of every run and only appear when fewer than `how_many` specific limits apply."""
+    records = data.get("defects") or []
+    counts, cov = data.get("counts") or {}, data.get("coverage") or {}
+    confidence = data.get("confidence") or {}
+    out: list[str] = []
+    if counts.get("executed_tests") == 0:
+        out.append("No test ran, so this report says nothing about the site either way.")
+    if confidence.get("missing_pages"):
+        out.append(f"{confidence['missing_pages']} of {confidence.get('pages_total')} page(s) were not tested at all, because the tool could "
+                   "not generate or run a test for them (a model or tooling failure, not a finding about the site).")
+    high = [r for r in records if r.get("category") == "unverified" and r.get("severity") in {"Critical", "High"}]
+    if high:
+        title = high[0].get("title") or ""
+        if len(title) > 90:
+            title = title[:90].rsplit(" ", 1)[0] + "..."      # cut at a word, never mid-word
+        out.append(f"{len(high)} high-priority journey(s) could not be confirmed, e.g. \"{title}\" - "
+                   "the thing visitors most likely come to do may be broken, or may only be unobservable to this tool.")
+    people = [r for r in records if r.get("category") == "limitation"]
+    if people:
+        out.append(f"{len(people)} form(s) or sign-in wall(s) need a person (a CAPTCHA, a login) and were not tested.")
+    total = cov.get("controls_total") or 0
+    reached = (cov.get("controls_touched") or 0) + (cov.get("controls_swept") or 0)
+    if total and reached < total * 0.5:
+        out.append(f"Only {reached} of the {total} controls on the pages were actually used; the rest were only seen to be present.")
+    if not (data.get("delta") or {}).get("baseline"):
+        out.append("There is no earlier run to compare with, so a regression (something that used to work) cannot be detected yet.")
+    out.append("It checks that pages load and journeys work mechanically; it does not know what the site is supposed to do, "
+               "so wrong prices, wrong text or wrong business rules would not be caught.")
+    out.append("One run shows one moment: a problem that appears only sometimes (a flaky service, a busy hour) can be missed.")
+    return out[:how_many]
+
+
 def release_rule_text() -> str:
     """P5: the ONE statement of the release rule - S5 and S8 both render this, never their own restatement,
     so the two can never drift apart from each other."""

@@ -621,3 +621,38 @@ def test_compute_delta_counts_the_change_in_skipped_tests_so_added_tests_reconci
     delta = policy.compute_delta(prev, cur)
     assert len(delta["added"]) == 3 and delta["skipped_delta"] == 1
     assert delta["previous_tests_ran"] - 0 + len(delta["added"]) - delta["skipped_delta"] == 2     # the two that ran
+
+
+# ------------------------------------------------------------------ the three biggest limits of THIS run, worst first
+
+def _limits_data(**over):
+    base = {"counts": {"executed_tests": 20}, "coverage": {"controls_total": 10, "controls_touched": 6, "controls_swept": 2},
+            "confidence": {}, "defects": [], "delta": {"baseline": True}}
+    return {**base, **over}
+
+
+def test_a_clean_complete_run_still_states_the_two_limits_true_of_every_run():
+    limits = policy.main_limits(_limits_data())
+    assert len(limits) == 2 and "does not know what the site is supposed to do" in limits[0] and "one moment" in limits[1]
+
+
+def test_specific_limits_come_first_worst_first_and_the_list_is_capped_at_three():
+    data = _limits_data(counts={"executed_tests": 5}, confidence={"missing_pages": 7, "pages_total": 10},
+                        defects=[{"category": "unverified", "severity": "High", "title": "A visitor searches for frequencies"},
+                                 {"category": "limitation", "severity": "Low", "title": "x"}],
+                        coverage={"controls_total": 57, "controls_touched": 5, "controls_swept": 0}, delta={"baseline": False})
+    limits = policy.main_limits(data)
+    assert len(limits) == 3
+    assert limits[0].startswith("7 of 10 page(s) were not tested at all")
+    assert "A visitor searches for frequencies" in limits[1]
+    assert limits[2].startswith("1 form(s) or sign-in wall(s) need a person")
+
+
+def test_low_control_use_and_a_missing_baseline_are_named_when_nothing_worse_applies():
+    limits = policy.main_limits(_limits_data(coverage={"controls_total": 57, "controls_touched": 5, "controls_swept": 3},
+                                             delta={"baseline": False}))
+    assert limits[0].startswith("Only 8 of the 57 controls") and "no earlier run" in limits[1]
+
+
+def test_a_run_where_nothing_executed_leads_with_that():
+    assert policy.main_limits(_limits_data(counts={"executed_tests": 0}))[0].startswith("No test ran")
