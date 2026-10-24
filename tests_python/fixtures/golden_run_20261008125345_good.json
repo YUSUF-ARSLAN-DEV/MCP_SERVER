@@ -52,10 +52,7 @@
     "LIM-002 (https://sat-stg.aljazeera.tv/en/subscribe): Not an application defect: an automated test cannot pass a CAPTCHA. Ask the site owner for a staging bypass (test key or disabled check) so the form can be automated, or run it with someone at the terminal: a window then shows the form and the CAPTCHA and a person types the code during the run."
   ],
   "exit_criteria": [
-    "Every unverified journey (UNV-001 to UNV-008) is manually signed off, with an owner named on each.",
-    "Each limitation (LIM-001, LIM-002) is either automated (staging bypass or test account) or accepted in writing by the site owner.",
-    "The tooling issues (TOOL-001 to TOOL-003) are repaired and the affected pages and journeys rerun with a real result.",
-    "The coverage gaps (COV-001 to COV-008) are reviewed by a person or covered by a new journey."
+    "At least 60% of written requirements are backed by a passing result (currently 32%)."
   ],
   "defects": [
     {
