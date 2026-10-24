@@ -103,6 +103,11 @@ def outcome_matches(predicted: dict, observed: dict) -> bool:
                 or (got == "navigates" and bool(observed.get("new_headings"))))
     if want in {"reveals", "validation"}:
         return got in {"reveals", "results"}
+    if want == "no-visible-result":
+        # What the explore probe saw happen when it tried the journey - an observation, not a promise. It is often an
+        # under-observation (found live: the probe pressed Search with the channel still unchosen and saw nothing, so the
+        # journey could never match anything better). A run that completes every step and then sees a real effect confirms it.
+        return got in {"navigates", "reveals", "results", "validation"}
     return False
 
 
@@ -206,6 +211,8 @@ def apply_result(flow: dict, result: dict, now: str) -> dict:
     if passed:
         flow["observed"] = {**observed, "step_effects": result["step_effects"],
                             "landed_url": result.get("landed_url"), "step_urls": result.get("step_urls", [])}
+        if (flow.get("outcome") or {}).get("effect") == "no-visible-result":      # replace the probe's guess with what really happened
+            flow["outcome"] = {"effect": observed["effect"], **({"to": observed["url"]} if observed["effect"] == "navigates" else {})}
     flow["last_run_at"] = now
     if flow.get("status") not in HUMAN_STATUSES:
         flow["status"] = "verified" if passed else "candidate"
@@ -420,7 +427,7 @@ def _do_step(page, step: dict, seen: dict | None = None) -> None:
     if kind == "select":
         if step.get("value"):
             try:
-                loc.select_option(label=step["value"], timeout=2000)
+                loc.select_option(label=step["value"], timeout=6000)      # a slow page (a busy machine) must not read as "no such option"
                 return
             except Exception:
                 pass

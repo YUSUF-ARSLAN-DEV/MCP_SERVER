@@ -726,7 +726,16 @@ def _pick_multiselect(page, control: dict) -> str | None:
             loc.click(timeout=2000)
             page.wait_for_timeout(700)
             menu = page.locator(_menu_selector()).first
-            option = menu.locator('li label, li [role="option"], li a').first
+            # A real choice: a labelled checkbox / radio, or an ARIA option. The first plain `li a` is the menu HEADER's
+            # "check all" / "close" link (jQuery UI multiselect), which is hidden and cannot be clicked - taking it made
+            # the search journey of a real production site unrecordable.
+            options = menu.locator('li label:has(input[type="checkbox"]), li label:has(input[type="radio"]), li [role="option"]')
+            # one specific choice, not the "Select All" toggle that sits first in the list
+            option = options.filter(has_not_text=re.compile(r"^\s*(select|check|uncheck)\s+(all|none)\s*$", re.I)).first
+            if not option.count():
+                option = options.first
+            if not option.count():
+                option = menu.locator('li label, li a:not([class*="close"]):not([class*="all"]):not([class*="none"]):not([class*="flip"])').first
             if option.count():
                 label = (option.inner_text(timeout=1000) or "").strip()
                 option.click(timeout=1500)
