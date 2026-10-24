@@ -435,6 +435,44 @@ def _guessed_disabled_state(tree: ast.AST, inventory) -> str | None:
                     "do not guess a disabled/enabled business rule; assert an observed post-state instead")
     return None
 
+def _recorded_names(inventory) -> set[str]:
+    """Every name the explorer actually recorded on the page: control names, revealed controls, headings."""
+    def field(item, key):
+        return item.get(key) if isinstance(item, dict) else getattr(item, key, None)
+    names: set[str] = set()
+    groups = [field(inventory, "controls") or [], field(inventory, "headings") or []]
+    for entry in field(inventory, "revealed") or []:
+        groups.append(entry.get("controls") or [])
+    for group in groups:
+        for item in group:
+            for key in ("name", "text"):
+                if isinstance(item.get(key), str):
+                    names.add(item[key])
+    return names
+
+
+def _without_recorded_text_lookups(source: str, inventory) -> str:
+    """Hide `get_by_text("<a name the page really has>", exact=True)` from the unstable-text-selector rule. The rule
+    exists to stop guessed, fuzzy text matches; an exact match on a name the explorer recorded is neither - and it is
+    exactly what autorepair writes for a name that has no ARIA role (a fieldset legend, a plain heading), so without this
+    the validator rejected the repair's own output and the page was left with no test at all."""
+    if inventory is None:
+        return source
+    allowed = _recorded_names(inventory)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return source
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get_by_text"
+                and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value in allowed
+                and any(k.arg == "exact" and isinstance(k.value, ast.Constant) and k.value.value is True for k in node.keywords)):
+            segment = ast.get_source_segment(source, node)
+            if segment:
+                source = source.replace(segment, "page.locator('body')", 1)
+    return source
+
+
 def validate_python_spec(source: str, url: str, inventory=None) -> None:
     if re.search(r"\.\s*(click|fill|select_option|check|uncheck|press)\s*\(", source) and "action_evidence" not in source:
         raise SpecError("action requires action_evidence")
@@ -442,7 +480,7 @@ def validate_python_spec(source: str, url: str, inventory=None) -> None:
     except SyntaxError as exc: raise SpecError(f"syntax error at line {exc.lineno}: {exc.msg}") from exc
     if not re.search(r"assert\s+", source) and "expect(" not in source: raise SpecError("no assertion found")
     if url not in source: raise SpecError("target URL missing from spec")
-    text_selector = re.search(r"get_by_text|getByText|:has-text|text=", source)
+    text_selector = re.search(r"get_by_text|getByText|:has-text|text=", _without_recorded_text_lookups(source, inventory))
     if text_selector: raise SpecError(f"unstable text selector {text_selector.group(0)!r} - use page.get_by_role(<role>, name=<accessible name from ACCESSIBILITY SIGNALS>) or an id/attribute locator instead")
     if any(isinstance(node, (ast.Import, ast.ImportFrom)) and any(alias.name in {"os", "subprocess", "socket"} for alias in node.names) for node in ast.walk(tree)):
         raise SpecError("unsafe system import found")
