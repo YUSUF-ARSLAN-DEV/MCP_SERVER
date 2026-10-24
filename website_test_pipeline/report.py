@@ -1441,6 +1441,7 @@ def _report_data(run: "RunReport", report_dir: Path,
     recommendation = policy.release_decision(records, requirements_backed_percent=backed_percent,
                                              executed_tests=counts["executed_tests"])
     conditions = policy.build_conditions(records, [g["id"] for g in gaps], recommendation)
+    confidence = policy.evidence_confidence(records, run.coverage.pages_total if run.coverage else 0, counts["executed_tests"])
     env = environment_block(run)
     snap = _run_snapshot(run, counts, records, env, requirements["total"])
     delta = policy.compute_delta(policy.previous_run(policy.load_history(Path(report_dir) / policy.HISTORY_FILE), run.run_id), snap,
@@ -1457,6 +1458,7 @@ def _report_data(run: "RunReport", report_dir: Path,
         "counts": counts,
         "taxonomy": tax,
         "recommendation": recommendation,
+        "confidence": confidence,
         "conditions": conditions,
         "exit_criteria": policy.exit_criteria(records, [g["id"] for g in gaps], recommendation,
                                               requirements_backed_percent=backed_percent),
@@ -2198,6 +2200,9 @@ def _at_a_glance(document, run: RunReport, data: dict[str, Any]) -> None:
     verdict = document.add_paragraph()
     verdict.add_run(f"Release decision: {recommendation}").bold = True
     verdict.add_run((f" ({trigger})" if trigger else "") + f". {_VERDICT_MEANING.get(recommendation, '')}")
+    caveat = policy.confidence_sentence(data.get("confidence"))
+    if caveat:
+        document.add_paragraph(caveat).runs[0].bold = True
 
     document.add_heading("What was confirmed working", 2)
     pages = [r for r in run.url_reports if r.total]
@@ -2262,6 +2267,8 @@ def _executive_summary_section(document, run: RunReport, report_data: dict[str, 
         f'({counts["pass_rate_percent"]}%{quarantine_note}); {defect_clause}, {counts["blocked_flows"]} journeys had no result, and {counts["skipped"]} were skipped. '
         f'Journeys passed: {counts["journeys_passed"]} of {counts["journeys_total"]} ({counts["journeys_passed_percent"]}%). '
         + policy.taxonomy_sentence(tax))
+    if policy.confidence_sentence(data.get("confidence")):
+        document.add_paragraph(policy.confidence_sentence(data["confidence"]))
     document.add_paragraph(
         f'Requirements coverage: {reqs["not_backed"]} of {reqs["total"]} requirements ({reqs["percent"]}%) are not backed by a passing result '
         f'(section 6), next to a {counts["pass_rate_percent"]}% pass rate among the tests that ran.'
@@ -2383,6 +2390,9 @@ def _conclusion_section(document, run: RunReport, report_data: dict[str, Any] | 
         document.add_paragraph(f"Final verdict: CONDITIONAL GO{trigger_note}. No application defect blocks the release, but it is not unconditional until the exit criteria below are met.")
     else:
         document.add_paragraph(f"Final verdict: NO-GO{trigger_note}. Do not release based on this run.")
+    caveat = policy.confidence_sentence(data.get("confidence"))
+    if caveat:
+        document.add_paragraph(caveat)
     document.add_paragraph(policy.taxonomy_sentence(data["taxonomy"]))
     document.add_paragraph("Exit criteria: the conditions that move the current verdict to GO.")
     for criterion in data["exit_criteria"]:

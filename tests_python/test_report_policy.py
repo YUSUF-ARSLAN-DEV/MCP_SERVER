@@ -572,3 +572,39 @@ def test_ledger_round_trips_through_disk(tmp_path):
     reloaded = policy.load_ledger(path)
     assert reloaded["defects"]["k1"]["total_failures"] == 1
     assert policy.load_ledger(tmp_path / "missing.json") == {"version": 1, "defects": {}}
+
+
+# ------------------------------------------------------------------ evidence confidence: the verdict word is about the
+# site; how much of the site it rests on is stated beside it, never folded into it
+
+def _conf_rec(category, severity="Medium", id_="TOOL-001"):
+    return {"category": category, "severity": severity, "id": id_}
+
+
+def test_a_complete_run_has_full_confidence_and_says_nothing_extra():
+    c = policy.evidence_confidence([], pages_total=10, executed_tests=30)
+    assert c["level"] == "Full" and policy.confidence_sentence(c) == ""
+
+
+def test_pages_with_no_test_make_confidence_partial_without_changing_the_verdict():
+    records = [_conf_rec("tooling", id_=f"TOOL-00{i}") for i in range(1, 3)]
+    c = policy.evidence_confidence(records, pages_total=10, executed_tests=27)
+    assert c["level"] == "Partial" and "2 of 10 page(s)" in c["note"]
+    assert policy.release_decision(records, executed_tests=27) == "GO"       # the site is not blamed for the tool
+
+
+def test_fewer_than_sixty_percent_of_pages_tested_is_limited_and_named_in_the_sentence():
+    records = [_conf_rec("tooling", id_=f"TOOL-{i:03d}") for i in range(1, 8)]
+    c = policy.evidence_confidence(records, pages_total=10, executed_tests=5)
+    assert c["level"] == "Limited"
+    assert policy.confidence_sentence(c).startswith("Confidence: Limited.")
+
+
+def test_an_open_high_priority_journey_lowers_confidence():
+    c = policy.evidence_confidence([_conf_rec("unverified", "High", "UNV-003")], pages_total=5, executed_tests=10)
+    assert c["level"] == "Partial" and "UNV-003" in c["note"]
+
+
+def test_a_run_where_nothing_executed_has_no_confidence_line_because_it_has_no_verdict():
+    c = policy.evidence_confidence([], pages_total=3, executed_tests=0)
+    assert c["level"] == "None" and policy.confidence_sentence(c) == ""

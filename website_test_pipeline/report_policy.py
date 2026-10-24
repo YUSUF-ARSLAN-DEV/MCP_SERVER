@@ -268,6 +268,41 @@ def release_decision(records: list[dict[str, Any]], requirements_backed_percent:
     return "GO"
 
 
+def evidence_confidence(records: list[dict[str, Any]], pages_total: int, executed_tests: int) -> dict[str, Any]:
+    """How much of the site this verdict actually rests on. The verdict WORD is about the site and is never
+    changed by what the tool could not test (a production site must not read as broken because a model rate-limited
+    the run) - but "GO" on a run that tested a third of the pages is a weaker claim than "GO" on a full one, and a
+    reader must be able to see that without opening section 5. Full: every explored page got a result and no
+    high-priority journey is open. Partial: some page or high-priority journey has no result. Limited: fewer than
+    60% of the pages have a result."""
+    missing = sum(r["category"] == "tooling" for r in records)
+    high_open = [r for r in records if r["category"] == "unverified" and r.get("severity") in {"Critical", "High"}]
+    tested_share = max(0.0, 1 - missing / pages_total) if pages_total else 0.0
+    if executed_tests == 0:
+        level = "None"
+    elif tested_share < 0.6:
+        level = "Limited"
+    elif missing or high_open:
+        level = "Partial"
+    else:
+        level = "Full"
+    parts = []
+    if missing:
+        parts.append(f"{missing} of {pages_total} page(s) have no test result because the tool could not generate or run "
+                     "one (section 5)")
+    if high_open:
+        parts.append(f"{len(high_open)} high-priority journey(s) could not be confirmed ({id_range([r['id'] for r in high_open])})")
+    note = ("This verdict rests on what was tested: " + "; ".join(parts) + ".") if parts else ""
+    return {"level": level, "missing_pages": missing, "pages_total": pages_total, "note": note}
+
+
+def confidence_sentence(confidence: dict[str, Any] | None) -> str:
+    """One line for the verdict: empty when there is nothing to qualify, so a full run reads cleanly."""
+    if not confidence or confidence.get("level") in {None, "Full", "None"}:
+        return ""
+    return f"Confidence: {confidence['level']}. {confidence.get('note', '')}".strip()
+
+
 def release_rule_text() -> str:
     """P5: the ONE statement of the release rule - S5 and S8 both render this, never their own restatement,
     so the two can never drift apart from each other."""
