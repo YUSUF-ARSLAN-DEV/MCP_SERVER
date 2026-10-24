@@ -7,6 +7,34 @@ from .providers import REJECTED_FIELDS, ModelError, get_provider      # ModelErr
 
 TRANSIENT = {408, 409, 425, 429, 500, 502, 503, 504, 524, 530}
 
+# When a provider says "too many requests, try again in N seconds", EVERY worker thread of this process must wait, not
+# just the one that was told: four threads each retrying after 3 s keep the limit tripped and burn the whole retry budget
+# (found live: three pages of a run got no test at all because the endpoint was throttling). Seconds, monotonic clock.
+_COOLDOWN = {"until": 0.0}
+MAX_COOLDOWN_S = 90.0
+
+
+def retry_after_seconds(headers) -> float | None:
+    """The server's own "wait this long" (Retry-After, in seconds), or None when it gave none we can read."""
+    try:
+        value = headers.get("Retry-After") if headers is not None else None
+        seconds = float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds is not None and seconds >= 0 else None
+
+
+def note_cooldown(seconds: float) -> None:
+    _COOLDOWN["until"] = max(_COOLDOWN["until"], time.monotonic() + min(max(seconds, 0.0), MAX_COOLDOWN_S))
+
+
+def wait_out_cooldown() -> float:
+    remaining = _COOLDOWN["until"] - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
+        return remaining
+    return 0.0
+
 # HTTP statuses that mean "the model service is not available", as opposed to "it answered badly".
 UNAVAILABLE = {401, 403, 429, 500, 502, 503, 504, 524, 530}
 
@@ -45,6 +73,8 @@ class ModelClient:
             raise ModelError(problem)
         url, headers, payload = provider.request(self.s, prompt, system, images)
         for attempt in range(1, self.s.model_retries + 2):
+            waited = wait_out_cooldown()
+            if waited > 0.5: self.log.info("model rate limit: waited %.0fs before asking again", waited)
             request_id = uuid.uuid4().hex[:10]; started = time.monotonic()
             req = urllib.request.Request(url, data=payload, headers={"User-Agent": "website-test-pipeline/0.1", **headers})
             try:
@@ -68,6 +98,9 @@ class ModelClient:
                     REJECTED_FIELDS.setdefault(self.s.api_url, set()).add("chat_template_kwargs")
                     self.log.info("model endpoint does not accept chat_template_kwargs; sending without it from now on")
                     return self.generate(prompt, system, images)
+                if exc.code in (429, 503):
+                    told = retry_after_seconds(exc.headers)
+                    note_cooldown(told if told is not None else self.s.retry_base_ms / 1000 * 2 ** (attempt - 1))
                 if exc.code not in TRANSIENT or attempt > self.s.model_retries: raise error
             except (urllib.error.URLError, TimeoutError, ModelError) as exc:
                 status = getattr(exc, "status", None); transient = isinstance(exc, ModelError) and status in TRANSIENT or not isinstance(exc, ModelError)
