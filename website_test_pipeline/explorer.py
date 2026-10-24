@@ -140,6 +140,10 @@ _CONTROLS_JS = "els => {" + _JS_HELPERS + r"""
             third_party: !!e.closest(WIDGET),
             region: regionOf(e),
             type: e.getAttribute('type'),
+            // what kind of picker this is by STRUCTURE, not by what its caption says: the caption of a channel picker is
+            // "Please select a channel" in English and "اختر قناة" in Arabic, but its class / aria-haspopup are the same
+            popup: e.getAttribute('aria-haspopup'),
+            widget: (typeof e.className === 'string' && /ui-multiselect|select2-selection|chosen-single|multiselect/i.test(e.className)) ? 'picker' : null,
             href: e.getAttribute('href'),
             value: e.value || null,
             placeholder: e.getAttribute('placeholder') || null,
@@ -611,6 +615,14 @@ _PLACEHOLDER_OPT = re.compile(
 _PLACEHOLDER_VAL = {"", "-1", "0", "null", "none", "all", "any", "undefined"}
 _MS_HINT = re.compile(r"select|choose|channel|category|option|type|brand|make|model|topic", re.I)
 
+
+def _is_picker(control: dict) -> bool:
+    """A button that opens a list of choices. Recognised by what it IS (a jQuery-UI / select2 / chosen widget, or
+    aria-haspopup=listbox|menu), so it works on a site in any language, and only then by an English caption."""
+    if control.get("widget") == "picker" or (control.get("popup") or "").lower() in {"listbox", "menu", "true"}:
+        return True
+    return bool(_MS_HINT.search(control.get("name") or ""))
+
 _RESULTS_SEL = (
     'main,[role="main"],#content,#main,.site-main,article,[role="feed"],[aria-live],'
     'table,[role="table"],[role="grid"],[role="list"],'
@@ -889,7 +901,7 @@ def _probe_primary_flow(page, url: str, controls: list[dict], forms: list[dict] 
               {"text", "search", "tel", "email", "number", "date"}]
     ms_buttons = [c for c in content
                   if (c.get("tag") == "button" or c.get("role") == "button")
-                  and c is not action and _MS_HINT.search((c.get("name") or ""))]
+                  and c is not action and _is_picker(c)]
     if not (selects or inputs or ms_buttons):
         if log:
             log.info('primary-flow: action "%s" found but no fillable select/input/multiselect - skipping',
@@ -993,7 +1005,8 @@ def explore(page, url: str, probe_max: int = 5, log=None, health=None) -> PageIn
     prime_lazy_content(page)  # mount lazy footers / newsletter widgets before scraping
     if health is not None:
         health.measure(page)
-        health.freeze()  # the probes below navigate away and reload; what they trigger is not this page's health
+        health.freeze()
+        health.confirm(page)        # a failure the site answers fine a moment later was a hiccup, not a fault  # the probes below navigate away and reload; what they trigger is not this page's health
     title = page.title()
     try:
         direction = page.evaluate("() => document.documentElement.getAttribute('dir')")

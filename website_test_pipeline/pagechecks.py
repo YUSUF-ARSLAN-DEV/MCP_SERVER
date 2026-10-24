@@ -127,6 +127,27 @@ class PageHealth:
         except Exception:
             return
 
+    def confirm(self, page, limit: int = 6) -> None:
+        """Ask again about every request of the site's own that failed while the page loaded. A backend that answers 502 once
+        under load and is fine a second later is a hiccup, not a defect (found live: one 502 on a production API call turned a
+        clean report into CONDITIONAL GO, and the endpoint answered 200 every time afterwards). A request that still fails on
+        the second and third ask is real. Marks each with `transient`."""
+        import time
+        checked = 0
+        for item in self.bad_responses + self.failed_requests:
+            if checked >= limit or not item.get("same_site") or item.get("type") == "document":
+                continue
+            checked += 1
+            item["transient"] = False
+            for attempt in range(2):
+                try:
+                    if page.request.get(item["url"], timeout=8000).status < 400:
+                        item["transient"] = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.8)
+
     def measure(self, page) -> None:
         try:
             self.measured = page.evaluate(_MEASURE_JS)
@@ -190,12 +211,15 @@ def health_findings(inv: dict):
     for e in health.get("page_errors", [])[:3]:
         add("P2", "script_error", f'an uncaught script error was thrown: "{e["text"]}"', "fix the script error; it can break features on this page")
     # the page's own document answering an error is already the page_http_error above, not a second "failed request"
-    own_bad = [r for r in health.get("bad_responses", []) if r.get("same_site")
+    own_bad = [r for r in health.get("bad_responses", []) if r.get("same_site") and not r.get("transient")
                and not (r.get("type") == "document" and r["url"].rstrip("/") == url.rstrip("/"))]
+    for r in [r for r in health.get("bad_responses", []) + health.get("failed_requests", []) if r.get("transient")][:3]:
+        add("P3", "transient_request_error", f'{r.get("type", "request")} {r["url"]} failed once while the page loaded '
+            f'({r.get("status") or r.get("reason")}) but answered fine when asked again', "watch it: if it keeps recurring it is worth a look")
     for r in own_bad[:3]:
         sev = "P2" if r["status"] >= 500 or r.get("type") in {"script", "stylesheet", "xhr", "fetch", "document"} else "P3"
         add(sev, "failed_request", f'{r.get("type", "request")} {r["url"]} returned HTTP {r["status"]}', "fix or remove the reference")
-    for r in [r for r in health.get("failed_requests", []) if r.get("same_site")][:3]:
+    for r in [r for r in health.get("failed_requests", []) if r.get("same_site") and not r.get("transient")][:3]:
         add("P2", "failed_request", f'{r.get("type", "request")} {r["url"]} could not load ({r.get("reason")})', "check the file exists and the server allows it")
     if m.get("broken_image_count"):
         add("P2", "broken_image", f'{m["broken_image_count"]} visible image(s) did not load, e.g. {m["broken_images"][0]}', "fix the image URL or remove the element")

@@ -108,3 +108,11 @@ def test_a_script_error_is_recorded_while_listening_and_not_after_freeze(page):
 def test_the_pages_own_error_response_is_one_finding_not_two():
     health = {"main_status": 500, "bad_responses": [{"url": "https://shop.example.com/", "status": 500, "type": "document", "same_site": True}]}
     assert [f.kind for f in health_findings(_inv(health))] == ["page_http_error"]
+
+
+def test_a_request_that_failed_once_but_answered_fine_when_asked_again_is_only_a_note():
+    flaky = {"url": "https://shop.example.com/api/list", "status": 502, "type": "xhr", "same_site": True, "transient": True}
+    real = {"url": "https://shop.example.com/api/down", "status": 500, "type": "xhr", "same_site": True, "transient": False}
+    kinds = {f.kind: f.severity for f in health_findings(_inv({"bad_responses": [flaky, real]}))}
+    assert kinds == {"failed_request": "P2", "transient_request_error": "P3"}
+    assert "transient_request_error" in __import__("website_test_pipeline.report_policy", fromlist=["x"]).ADVISORY_KINDS

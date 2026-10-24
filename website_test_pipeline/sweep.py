@@ -56,6 +56,9 @@ def sweep_links(page, url: str, controls: list[dict]) -> list[dict]:
             break
         try:
             status = page.request.head(target, timeout=8000, max_redirects=5).status
+            if status >= 500:           # a server error once is a hiccup: ask again before calling the link broken
+                page.wait_for_timeout(800)
+                status = page.request.head(target, timeout=8000, max_redirects=5).status
         except Exception:
             out.append(_entry(control, "link", "unreachable", href=target))
             continue

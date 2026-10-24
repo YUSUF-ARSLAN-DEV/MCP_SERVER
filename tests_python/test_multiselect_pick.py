@@ -54,3 +54,18 @@ def test_the_picker_takes_one_real_option_not_the_menu_headers_hidden_links_and_
         return picked, page.locator("#out").inner_text()
     picked, out = _run(check)
     assert picked == "Al Jazeera 2 Channel" and out == "picked 1"
+
+
+def test_a_picker_is_recognised_by_what_it_is_so_an_arabic_caption_works_too():
+    from website_test_pipeline.explorer import _CONTROL_SEL, _CONTROLS_JS, _is_picker
+
+    def check(page):
+        page.set_content('<main><button class="ui-multiselect ui-widget" type="button">اختر قناة</button>'
+                         '<button aria-haspopup="listbox" type="button">اختر</button>'
+                         '<button type="button">بحث</button><button type="button">Choose a topic</button></main>')
+        return {c["name"]: c for c in page.locator(_CONTROL_SEL).evaluate_all(_CONTROLS_JS)}
+    controls = _run(check)
+    assert _is_picker(controls["اختر قناة"]) and controls["اختر قناة"]["widget"] == "picker"
+    assert _is_picker(controls["اختر"]) and controls["اختر"]["popup"] == "listbox"
+    assert not _is_picker(controls["بحث"])                           # an Arabic "Search" button is not a picker
+    assert _is_picker(controls["Choose a topic"])                    # the English caption still counts as a hint

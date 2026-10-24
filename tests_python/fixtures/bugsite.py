@@ -17,6 +17,12 @@ HOME = """<!doctype html><html lang="en"><head><title>Seeded shop</title></head>
 <button type="button" id="fault" onclick="setTimeout(()=>{throw new Error('seeded script fault')},0)">Apply discount</button>
 <button type="button" id="dead" onclick="location.href='/gone'">Open the manual</button>
 <button type="button" id="del" onclick="document.title='deleted'">Delete my account</button>
+<script>fetch('/api/down')</script>
+</main></body></html>"""
+
+FLAKY = """<!doctype html><html lang="en"><head><title>Flaky backend</title></head><body><main>
+<h1>Flaky backend</h1><p>One of this page's data calls fails once, then recovers.</p>
+<script>fetch('/api/flaky')</script>
 </main></body></html>"""
 
 CLEAN = """<!doctype html><html lang="en"><head><title>Clean page</title></head><body><main>
@@ -28,11 +34,15 @@ CLEAN = """<!doctype html><html lang="en"><head><title>Clean page</title></head>
 
 # What each page should be reported for. "/clean" must produce no P1/P2 finding at all.
 SEEDED = {
-    "/": {"broken_link", "broken_image", "click_script_error", "click_error_page"},
+    "/": {"broken_link", "broken_image", "click_script_error", "click_error_page", "failed_request"},
+    "/flaky": set(),            # a call that fails once and then answers fine is a hiccup: no serious finding
     "/boom": {"page_http_error"},
     "/blank": {"blank_page"},
     "/clean": set(),
 }
+
+
+_calls: dict[str, int] = {}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -49,6 +59,13 @@ class _Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         if path == "/":
             self._send(200, HOME, head)
+        elif path == "/flaky":
+            self._send(200, FLAKY, head)
+        elif path == "/api/down":
+            self._send(500, "{}", head)
+        elif path == "/api/flaky":
+            _calls[path] = _calls.get(path, 0) + 1
+            self._send(502 if _calls[path] == 1 else 200, "{}", head)
         elif path == "/clean":
             self._send(200, CLEAN, head)
         elif path == "/boom":

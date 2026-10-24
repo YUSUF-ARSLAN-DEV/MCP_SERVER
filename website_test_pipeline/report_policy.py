@@ -41,7 +41,7 @@ TOOLING_SKIP = re.compile(r"no spec passed validation|did not return a python co
 # Findings from the browser's own report of a page (pagechecks.py). Quality notes - a console error, a missing title,
 # an unlabelled field - are worth a person's time but are not "the site is broken": on a real production site there are
 # always some, so as records they would turn every run into CONDITIONAL GO. They stay out of the Defect Report.
-ADVISORY_KINDS = {"console_error", "missing_title", "missing_h1", "unnamed_control", "unlabeled_field",
+ADVISORY_KINDS = {"transient_request_error", "console_error", "missing_title", "missing_h1", "unnamed_control", "unlabeled_field",
                   "image_without_alt", "missing_lang"}
 # What a visitor would hit. Severity is set from user impact once, like any defect: a page or a click that lands on an
 # error page, or a blank page, stops a visitor (High); a broken link, image, request or script error is Medium.
