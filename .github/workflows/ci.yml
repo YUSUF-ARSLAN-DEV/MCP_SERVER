@@ -12,10 +12,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements.txt
+      - name: Install Playwright's Chromium
+        run: python -m playwright install --with-deps chromium
       - name: Byte-compile the package
         run: python -m compileall -q website_test_pipeline tests_python
       - name: Unit tests
