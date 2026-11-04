@@ -40,15 +40,17 @@ def _serve(pages: dict[str, bytes]):
 @pytest.fixture()
 def real_page():
     sync_api = pytest.importorskip("playwright.sync_api")
+    pw = sync_api.sync_playwright().start()
     try:
-        pw = sync_api.sync_playwright().start()
         browser = pw.chromium.launch()
     except Exception as exc:                       # no browser installed here
-        pytest.skip(f"no Chromium: {exc}")
-    page = browser.new_page()
-    yield page
-    browser.close()
-    pw.stop()
+        pw.stop()                                  # a started-and-abandoned Playwright keeps a loop running on this thread
+        pytest.skip(f"no Chromium: {exc}")         # and every later sync_playwright() in the session then refuses to start
+    try:
+        yield browser.new_page()
+    finally:
+        browser.close()
+        pw.stop()
 
 
 def _spy_do_step(monkeypatch):
