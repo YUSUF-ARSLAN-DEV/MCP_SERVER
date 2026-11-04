@@ -1,0 +1,135 @@
+{
+  "requestedUrl": "https://the-internet.herokuapp.com/login",
+  "finalUrl": "https://the-internet.herokuapp.com/login",
+  "status": 200,
+  "title": "The Internet",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "blockedOtherOrigins": [
+    "https://298279967.log.optimizely.com"
+  ],
+  "notes": [],
+  "controls": [
+    {
+      "role": "link",
+      "name": "Fork me on GitHub",
+      "tag": "a",
+      "href": "https://github.com/saucelabs/the-internet",
+      "volatileId": false,
+      "region": "other",
+      "visible": false,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": false,
+      "selector": "a",
+      "ambiguous": false
+    },
+    {
+      "role": "textbox",
+      "name": "Username",
+      "tag": "input",
+      "type": "text",
+      "id": "username",
+      "volatileId": false,
+      "region": "other",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": true,
+      "selector": "#username",
+      "ambiguous": false
+    },
+    {
+      "role": "textbox",
+      "name": "Password",
+      "tag": "input",
+      "type": "password",
+      "id": "password",
+      "volatileId": false,
+      "region": "other",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": true,
+      "selector": "#password",
+      "ambiguous": false
+    },
+    {
+      "role": "button",
+      "name": "Login",
+      "tag": "button",
+      "type": "submit",
+      "volatileId": false,
+      "region": "other",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": true,
+      "selector": "button",
+      "ambiguous": false,
+      "ariaName": " Login"
+    },
+    {
+      "role": "link",
+      "name": "Elemental Selenium",
+      "tag": "a",
+      "href": "http://elementalselenium.com/",
+      "volatileId": false,
+      "region": "other",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": false,
+      "selector": "a",
+      "ambiguous": false
+    },
+    {
+      "role": "link",
+      "name": "Sauce Labs",
+      "tag": "a",
+      "href": "https://saucelabs.com/",
+      "volatileId": false,
+      "region": "other",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": false,
+      "selector": "a",
+      "ambiguous": false
+    }
+  ],
+  "headings": [
+    {
+      "level": 2,
+      "text": "Login Page",
+      "region": "other",
+      "hiddenByDesign": false,
+      "inFeed": false
+    },
+    {
+      "level": 4,
+      "text": "This is where you can log into the secure area. Enter tomsmith for the username and SuperSecretPassword! for the passwor",
+      "region": "other",
+      "hiddenByDesign": false,
+      "inFeed": false
+    }
+  ],
+  "forms": [
+    {
+      "id": "login",
+      "fields": 2,
+      "requiredFields": 0,
+      "hasSubmit": true,
+      "asksPersonalData": true,
+      "hasCaptcha": false
+    }
+  ]
+}

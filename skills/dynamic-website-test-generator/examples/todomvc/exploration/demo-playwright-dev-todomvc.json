@@ -1,0 +1,83 @@
+{
+  "requestedUrl": "https://demo.playwright.dev/todomvc",
+  "finalUrl": "https://demo.playwright.dev/todomvc/#/",
+  "status": 200,
+  "title": "React • TodoMVC",
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "blockedOtherOrigins": [],
+  "notes": [],
+  "controls": [
+    {
+      "role": "link",
+      "name": "real TodoMVC app.",
+      "tag": "a",
+      "href": "https://todomvc.com/",
+      "volatileId": false,
+      "region": "other",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": false,
+      "selector": "a",
+      "ambiguous": false
+    },
+    {
+      "role": "textbox",
+      "name": "What needs to be done?",
+      "tag": "input",
+      "volatileId": false,
+      "region": "chrome",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": false,
+      "selector": "input",
+      "ambiguous": false
+    },
+    {
+      "role": "link",
+      "name": "Remo H. Jansen",
+      "tag": "a",
+      "href": "http://github.com/remojansen/",
+      "volatileId": false,
+      "region": "chrome",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": false,
+      "selector": "a",
+      "ambiguous": false
+    },
+    {
+      "role": "link",
+      "name": "TodoMVC",
+      "tag": "a",
+      "href": "http://todomvc.com",
+      "volatileId": false,
+      "region": "chrome",
+      "visible": true,
+      "disabled": false,
+      "required": false,
+      "readonly": false,
+      "inForm": false,
+      "selector": "a",
+      "ambiguous": false
+    }
+  ],
+  "headings": [
+    {
+      "level": 1,
+      "text": "todos",
+      "region": "chrome",
+      "hiddenByDesign": false,
+      "inFeed": false
+    }
+  ],
+  "forms": []
+}

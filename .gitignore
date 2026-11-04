@@ -46,3 +46,6 @@ docker.env
 
 # Local test-account credentials (never commit)
 credentials.txt
+
+# Packaged skill zips
+dist/
