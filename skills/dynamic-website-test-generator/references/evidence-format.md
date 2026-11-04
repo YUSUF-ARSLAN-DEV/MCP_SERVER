@@ -21,7 +21,11 @@ test("<behaviour and target>", async ({ page }, testInfo) => {
   }, dir);
 });
 ```
-- Every action (`click, fill, selectOption, check, uncheck, press`) goes through `actionEvidence`, including setup steps.
+- **Key actions** go through `actionEvidence`: the action under test (a form submit, an important click, the select-and-search
+  step) and any action after the first screenshot. **Setup steps** (typing into fields, ticking, navigating) before the first
+  evidence call may be plain Playwright calls; add a short `// setup` comment so the intent is clear.
+- A test that changes the page but has no `actionEvidence` for its key action is rejected. Validate with `--strict-evidence` to
+  require `actionEvidence` around *every* state-changing action (`click, fill, selectOption, check, uncheck, press`).
 - The screenshot is taken **after** the verify callback passed, so a screenshot proves the state that was asserted.
 - `actionEvidence` retries the action once after a Playwright timeout (a not-yet-interactable element), never more.
 - Labels are descriptive and page-specific (`country-selected-post-state`), not `after-click`. A native select: verify the

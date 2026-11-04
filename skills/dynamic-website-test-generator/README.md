@@ -2,7 +2,7 @@
 
 An agent skill that writes **Playwright TypeScript tests for a website from what is really on the page**. It explores only the
 URLs you give it, writes tests the page supports, rejects weak or unsafe specs with a mechanical validator, runs them, and
-keeps a screenshot for every action plus a trace per test.
+keeps a screenshot for each key action plus a trace per test.
 
 Works with any coding agent that can read a `SKILL.md`, run shell commands and edit files (Claude Code, Cursor, Copilot,
 Codex CLI and others). Nothing in it is agent-specific.
@@ -40,14 +40,23 @@ node SKILL_DIR/scripts/validate-spec.mjs --url https://demo.playwright.dev/todom
 npx playwright test
 node SKILL_DIR/scripts/summarize-evidence.mjs
 ```
-A complete finished run is in `examples/todomvc/`.
+Complete finished runs are in `examples/todomvc/` and `examples/the-internet-login/` (a login form on a public demo site).
 
-## Safety and privacy
-- Visits **only** the URLs you provide; requests to other origins are blocked during exploration.
-- No telemetry. The only network use is the target site you name and the standard npm / Playwright downloads.
-- Does not read files outside the test project, does not run remote scripts, does not submit forms that ask for personal data.
-- `--probe N` (off by default) clicks up to N buttons outside forms to learn what they reveal; that can change page state, so
-  use it only on sites you are allowed to test.
+By default, setup steps (typing, navigating) can be plain Playwright calls and the action under test goes through
+`actionEvidence`. Add `--strict-evidence` to `validate-spec.mjs` to require it for every action.
+
+## Security
+- **Read-only exploration:** `explore.mjs` loads and reads pages; it never clicks, types or submits.
+- **Only user-provided URLs:** it never follows links, and the validator rejects a spec that navigates anywhere else.
+- **Third-party origins blocked:** during exploration every request to an origin you did not name is aborted with
+  `page.route`, and the blocked hosts are listed in the output (`blockedOtherOrigins`).
+- **No network calls** besides the target site you name and the standard `npm` and `npx playwright install` downloads. No
+  telemetry, no remote scripts downloaded or run.
+- **No API keys needed.** Your own agent does the writing; the skill never asks for or stores a key, token or password.
+- The validator rejects generated specs that import system or network modules, run processes, evaluate strings as code, read
+  secrets from the environment, or delete files. Its list of those patterns is a defensive denylist, not functionality.
+- Forms that ask for personal data (e-mail, phone, password, card) are not submitted unless you explicitly ask and the site is
+  yours to test.
 - Screenshots and traces contain whatever the page shows. Review them before sharing.
 
 ## Limits
@@ -60,5 +69,10 @@ reviewed drafts: read them before relying on them.
 SKILL.md                 the workflow the agent follows
 scripts/                 explore.mjs, validate-spec.mjs, summarize-evidence.mjs, evidence.ts, playwright.config.template.ts
 references/              exploration-inventory.md, test-conventions.md, selector-strategy.md, evidence-format.md
-examples/todomvc/        one small complete run
+examples/                two small complete runs (todomvc, the-internet-login)
+LICENSE                  licence terms
 ```
+
+## Licence
+Commercial single-user licence: see [LICENSE](LICENSE). In short, you may use and modify the skill in your own and your
+employer's projects; redistribution, resale or republishing, modified or not, is not permitted.

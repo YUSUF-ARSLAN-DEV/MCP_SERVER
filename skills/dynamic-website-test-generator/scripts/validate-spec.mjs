@@ -3,15 +3,21 @@
 //
 // Usage:  node validate-spec.mjs --urls urls.txt tests/home.spec.ts [more.spec.ts ...]
 //         node validate-spec.mjs --url https://example.com/ tests/home.spec.ts
+//         add --strict-evidence to require actionEvidence(...) around EVERY state-changing action
 // Exit code 0 = every spec passed, 1 = at least one rule failed (each failure is printed with a fix hint).
 // Plain text pattern checks on purpose: no parser, no dependencies, nothing executed.
+//
+// Evidence rule: by default setup steps (typing, ticking, navigating before the first screenshot) may be bare, but
+// the action under test and every action after the first screenshot must go through actionEvidence(...).
 import fs from "node:fs";
 
 const args = process.argv.slice(2);
 const urls = [];
 const files = [];
+let strictEvidence = false;
 for (let i = 0; i < args.length; i++) {
-  if (args[i] === "--url") urls.push(args[++i]);
+  if (args[i] === "--strict-evidence") strictEvidence = true;
+  else if (args[i] === "--url") urls.push(args[++i]);
   else if (args[i] === "--urls") {
     urls.push(...fs.readFileSync(args[++i], "utf8").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#")));
   } else files.push(args[i]);
@@ -33,9 +39,9 @@ function testBlocks(src) {
 }
 
 
-// Text of each `name(...)` call, parentheses balanced (strings with parentheses are rare in specs and still balance).
-function callsOf(body, name) {
-  const calls = [];
+// Position and text of each `name(...)` call, parentheses balanced (parentheses inside strings are rare in specs).
+function callSpans(body, name) {
+  const spans = [];
   const re = new RegExp("\\b" + name + "\\s*\\(", "g");
   let m;
   while ((m = re.exec(body))) {
@@ -45,9 +51,9 @@ function callsOf(body, name) {
       else if (body[i] === ")") depth--;
       i++;
     }
-    calls.push(body.slice(m.index, i));
+    spans.push({ start: m.index, end: i, text: body.slice(m.index, i) });
   }
-  return calls;
+  return spans;
 }
 
 const GENERIC_NAME = /^(works?|test\d*|navigation|displays? correctly|basic|smoke|page loads?)$/i;
@@ -64,7 +70,10 @@ for (const file of files) {
 
   if (!/\bexpect\s*\(/.test(src)) add("no assertion", "at least one expect(...) is required; a test that only clicks proves nothing");
 
-  // Safety and portability.
+  // Safety and portability: a DEFENSIVE DENYLIST. These patterns are here to REJECT unsafe generated specs
+  // (code that runs processes, evaluates strings as code, makes its own network calls, reads secrets from the
+  // environment, or deletes/writes files). Nothing below is executed or used by this skill; the words appear only
+  // because the validator has to name what it refuses.
   for (const [re, why] of [
     [/from\s+['"](?:node:)?(?:child_process|net|dgram|http|https|http2|tls|os|vm|worker_threads|cluster)['"]/, "system/network module import"],
     [/require\(\s*['"](?:node:)?(?:child_process|net|dgram|http|https|http2|tls|os|vm|worker_threads|cluster)['"]\s*\)/, "system/network module require"],
@@ -111,17 +120,28 @@ for (const file of files) {
     const skipped = /test\.(?:skip|fixme)\(/.test(b.body);
     if (!skipped && !/\b(?:actionEvidence|observationEvidence)\s*\(/.test(b.body)) add(`${where}: no evidence call`, "capture at least one screenshot via evidenceDir + actionEvidence/observationEvidence");
     if (/\bevidenceDir\s*\(/.test(b.body) === false && /\b(?:actionEvidence|observationEvidence)\s*\(/.test(b.body)) add(`${where}: evidence without evidenceDir`, "const dir = evidenceDir(testInfo)");
-    // An action outside actionEvidence: .click( / .fill( ... on a line that is not inside an action callback.
-    const lines = b.body.split("\n");
-    lines.forEach((ln, i) => {
-      if (/\.(?:click|fill|selectOption|check|uncheck|press|dblclick|setInputFiles|dragTo)\(/.test(ln)) {
-        const context = lines.slice(Math.max(0, i - 2), i + 1).join("\n");
-        if (!/actionEvidence\s*\(|async\s*\(\)\s*=>|\(\)\s*=>/.test(context)) add(`${where}: bare action on line ${i + 1}`, "wrap every state-changing action in actionEvidence(...)");
+    // State-changing actions that are not inside an actionEvidence(...) call ("bare" actions).
+    const spans = callSpans(b.body, "actionEvidence");
+    const firstEvidenceAt = Math.min(
+      ...callSpans(b.body, "actionEvidence").concat(callSpans(b.body, "observationEvidence")).map((s) => s.start),
+      Infinity,
+    );
+    const bare = [...b.body.matchAll(/\.(?:click|fill|selectOption|check|uncheck|press|dblclick|setInputFiles|dragTo)\(/g)]
+      .filter((m) => !spans.some((s) => m.index >= s.start && m.index < s.end));
+    const lineOf = (idx) => b.body.slice(0, idx).split("\n").length;
+    if (strictEvidence) {
+      for (const m of bare) add(`${where}: bare action on line ${lineOf(m.index)}`, "strict evidence: wrap every state-changing action in actionEvidence(...)");
+    } else if (bare.length) {
+      // Default: setup before the first evidence call is free. The action under test, and anything after the first
+      // screenshot (a later submit or click that is asserted), must go through actionEvidence.
+      if (!spans.length) add(`${where}: the key action is not evidenced`, "wrap the action under test (the click or submit you assert on) in actionEvidence(...); setup steps may stay bare");
+      for (const m of bare) {
+        if (m.index > firstEvidenceAt) add(`${where}: bare action on line ${lineOf(m.index)} after evidence started`, "a click or submit that you assert on belongs in actionEvidence(...); only setup before the first evidence call may stay bare");
       }
-    });
+    }
     // verify callback must assert: look at the whole call, with balanced parentheses
-    for (const call of callsOf(b.body, "actionEvidence")) {
-      if (!/expect\s*\(/.test(call)) add(`${where}: actionEvidence verify has no expect(...)`, "the assertion must be inside the verify callback");
+    for (const s of spans) {
+      if (!/expect\s*\(/.test(s.text)) add(`${where}: actionEvidence verify has no expect(...)`, "the assertion must be inside the verify callback");
     }
     if (/observationEvidence\s*\(\s*page\s*,\s*['"`][^'"`]+['"`]\s*,\s*(?:async\s*)?\(\)\s*=>\s*(?:\{\s*\}|undefined|null)\s*,/.test(b.body)) add(`${where}: empty verify`, "observationEvidence needs a real expect(...)");
   }

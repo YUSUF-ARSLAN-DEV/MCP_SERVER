@@ -10,6 +10,7 @@ Rules learned from repeated real-world failures. They exist because ignoring the
 
 ## Names
 - Copy the accessible name **verbatim** from the inventory or the ARIA snapshot. Never guess, translate or paraphrase.
+  If a control has `ariaName`, use that: it is what the browser reports (often with an icon glyph) and `name` will not match.
 - Always `exact: true` with a name. A partial match on a busy page (header + footer + widget) matches several elements and
   raises a strict-mode violation.
 - Never use one shared word or an OR-regex as a name.

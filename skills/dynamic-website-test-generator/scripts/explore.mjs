@@ -2,8 +2,9 @@
 // explore.mjs - record what is really on each page you name, so tests are written from observation.
 //
 // Usage:  node explore.mjs --out exploration --url https://example.com/ [--url https://example.com/about ...]
-//         node explore.mjs --out exploration --urls-file urls.txt [--probe 5] [--viewport 1280x800]
+//         node explore.mjs --out exploration --urls-file urls.txt [--viewport 1280x800]
 //
+// Read-only: it loads each page and reads it; it never clicks, types or submits anything.
 // Visits ONLY the URLs given (it never follows links). Requests to any other origin are blocked, and so is any
 // redirect that leaves the origins you named. Writes <out>/<slug>.json (inventory) and <out>/<slug>.aria.txt
 // (accessibility snapshot) per page, plus <out>/index.json. Needs @playwright/test in the project (npm i -D).
@@ -19,7 +20,6 @@ const opt = (name, fallback) => {
 const all = (name) => args.flatMap((a, i) => (a === name && args[i + 1] ? [args[i + 1]] : []));
 
 const out = opt("--out", "exploration");
-const probeMax = Number(opt("--probe", "0"));
 const [vw, vh] = opt("--viewport", "1280x800").split("x").map(Number);
 let urls = all("--url");
 const urlsFile = opt("--urls-file", "");
@@ -82,7 +82,10 @@ function inventoryInPage() {
     if (el.labels && el.labels.length) return [...el.labels].map((l) => l.textContent.trim()).join(" ").trim();
     const alt = el.getAttribute("alt") || el.getAttribute("title") || el.getAttribute("placeholder");
     if (alt) return alt.trim();
-    return (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (text) return text;
+    const img = el.querySelector("img[alt], svg title");
+    return (img && (img.getAttribute("alt") || img.textContent) || "").trim();
   };
   const roleOf = (el) => {
     const explicit = el.getAttribute("role");
@@ -174,25 +177,15 @@ for (const url of urls) {
     await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
     const inv = await page.evaluate(inventoryInPage);
     const aria = await page.locator("body").ariaSnapshot().catch(() => "");
-    const revealed = [];
-    if (probeMax > 0) {
-      // Opt-in: click a few buttons that are outside forms to learn what they reveal. This CAN change page state.
-      const candidates = inv.controls.filter((c) => c.role === "button" && c.visible && !c.inForm && !c.disabled && c.region !== "chrome").slice(0, probeMax);
-      for (const c of candidates) {
-        const before = new Set((await page.evaluate(inventoryInPage)).controls.map((x) => `${x.role}|${x.name}`));
-        const loc = page.getByRole("button", { name: c.name, exact: true }).first();
-        try {
-          await loc.click({ timeout: 3000 });
-          await page.waitForTimeout(400);
-          const after = (await page.evaluate(inventoryInPage)).controls;
-          const added = after.filter((x) => x.visible && !before.has(`${x.role}|${x.name}`)).map((x) => `${x.role}:${x.name}`).slice(0, 8);
-          revealed.push({ trigger: c.name, effect: added.length ? "reveals" : "no-visible-result", newControls: added, urlAfter: page.url() });
-        } catch (e) {
-          revealed.push({ trigger: c.name, effect: "not-clickable" });
-        }
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
-        await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
-      }
+    // The hand-computed name can differ from the browser's real accessible name (an icon glyph in a button, text from a
+    // child image). When the snapshot has the same role with a name that only differs by symbols or spacing, record it
+    // as ariaName: that is the string getByRole(..., { name, exact: true }) must use.
+    const squash = (s) => s.replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const ariaEntries = [...aria.matchAll(/^\s*- (\w+) "((?:[^"\\]|\\.)*)"/gm)].map((m) => ({ role: m[1], name: m[2].replace(/\\(["\\])/g, "$1") }));
+    for (const c of inv.controls) {
+      if (ariaEntries.some((e) => e.role === c.role && e.name === c.name)) continue;
+      const near = [...new Set(ariaEntries.filter((e) => e.role === c.role && squash(e.name) === squash(c.name) && squash(c.name) !== "").map((e) => e.name))];
+      if (near.length === 1) c.ariaName = near[0];
     }
     const finalUrl = page.url();
     if (!allowedOrigins.has(new URL(finalUrl).origin)) notes.push(`redirected off-list to ${new URL(finalUrl).origin}`);
@@ -205,7 +198,6 @@ for (const url of urls) {
       blockedOtherOrigins: [...blocked],
       notes,
       ...inv,
-      revealedByInteraction: revealed,
     };
     fs.writeFileSync(path.join(out, `${slug}.json`), JSON.stringify(record, null, 2));
     fs.writeFileSync(path.join(out, `${slug}.aria.txt`), aria);

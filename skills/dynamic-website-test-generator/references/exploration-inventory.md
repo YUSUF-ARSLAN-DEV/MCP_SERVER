@@ -14,19 +14,22 @@
 | `headings[].hiddenByDesign` | screen-reader-only heading | assert `toHaveCount(1)`, not visible |
 | `headings[].inFeed` | inside an article or feed | its text rotates: never assert it |
 | `forms[]` | field counts, required fields, submit button, `asksPersonalData`, `hasCaptcha` | a form that asks personal data or has a CAPTCHA is not submitted; list it as "needs a person" |
-| `revealedByInteraction[]` | with `--probe`: trigger, effect (`reveals`, `no-visible-result`, `not-clickable`), new controls | for `reveals`, test "click trigger, assert one of the new controls is visible" |
+| `controls[].ariaName` | present only when the browser's real accessible name differs from `name` (an icon glyph in a button, text taken from an image) | use `ariaName` in `getByRole(role, { name: ariaName, exact: true })`; `name` would not match |
 | `blockedOtherOrigins` | other hosts the page tried to call (blocked) | informational: third-party scripts were not loaded |
 | `notes` | page errors, off-list redirects | mention in the report; an off-list redirect means the page left the user's origin |
 
 `<slug>.aria.txt` is the accessibility snapshot. Use it to confirm the exact accessible name and the page structure.
 
 ## What a page does not tell you
-Result text after a search, a success message after a submit, prices, permissions. If a behaviour was not observed (no
-`--probe` effect, nothing in the snapshot), you may test that the control exists, but you may not assert what it produces.
-Say so in the report, or write the test as `NOT TESTABLE`.
+Exploration is read-only, so it never sees what a click or submit produces: result text after a search, a success message,
+a page reached after a login, prices, permissions. You may assert such an outcome only when the user described it or the page
+itself states it (for example a demo page that prints "enter these credentials to log in to the secure area"). Otherwise test
+that the control exists, say in the report that its effect was not verified, or write the test as `NOT TESTABLE`. After a first
+run, the screenshot and trace show what really happened and can refine the assertion, but never turn a failing test green by
+copying whatever the page did without checking it is correct.
 
 ## Forms
-- Required fields with a client-side error region observed (via probe or user instruction): submit empty and assert an error
+- Required fields with a client-side error region (stated by the user or the page): submit empty and assert an error
   *region or state* (`[role=alert]`, `aria-invalid="true"`), never the message text.
 - Search or filter form (a select plus a button): choose a real listed option, submit, assert a results region or heading;
   never individual result rows.

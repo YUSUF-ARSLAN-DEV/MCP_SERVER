@@ -1,6 +1,6 @@
 ---
 name: dynamic-website-test-generator
-description: Use when the user wants Playwright TypeScript tests for a website they name. Explores only the URLs the user provides, writes validated tests from what was actually observed on the page, runs them, and saves screenshot and trace evidence for every action.
+description: Use when the user wants Playwright TypeScript tests for a website they name. Explores only the URLs the user provides, writes validated tests from what was actually observed on the page, runs them, and saves screenshot and trace evidence for the key actions.
 ---
 
 # Dynamic Website Test Generator
@@ -15,7 +15,8 @@ supports, check them mechanically, run them, and keep evidence.
 2. **Stay inside the project folder.** Read and write only the test project (tests, `exploration/`, `evidence/`). Do not read
    other files, home directories, `.env` files, or browser profiles.
 3. **No secrets in tests.** Never put real passwords, tokens or API keys into a spec or an artifact. If a page needs a login,
-   say so and ask the user how to proceed; do not invent credentials.
+   say so and ask the user how to proceed; do not invent credentials. The only exception is test credentials a public demo
+   page prints for visitors, and only when the user asked you to test that page.
 4. **Do not submit forms that collect personal data** (email, phone, password, card) or create real records on the site, unless
    the user explicitly says that site is theirs to test and asks for it.
 5. **Only the standard installs**: `@playwright/test` from npm and `npx playwright install chromium`. Do not download or run any
@@ -25,8 +26,8 @@ supports, check them mechanically, run them, and keep evidence.
 ## Inputs to collect
 
 - One or more page URLs (required).
-- Optional: what the page should do ("search by country returns a table"), a viewport, whether to run the opt-in click probe
-  (`--probe N`, clicks a few buttons outside forms and so can change page state).
+- Optional: what the page should do ("search by country returns a table") and a viewport. Behaviour that exploration cannot
+  see (what a click produces) has to come from the user's description or from the page's own printed instructions.
 
 ## Workflow
 
@@ -45,10 +46,12 @@ Node 18 or newer. Details: `README.md`.
 
 ### 2. Explore the named pages
 ```
-node SKILL_DIR/scripts/explore.mjs --out exploration --url <URL> [--url <URL2>] [--probe 3]
+node SKILL_DIR/scripts/explore.mjs --out exploration --url <URL> [--url <URL2>]
 ```
-Writes `exploration/<slug>.json` (headings, controls with role, name, region, volatile-id and ambiguous flags, forms, what
-probed buttons revealed) and `exploration/<slug>.aria.txt` (accessibility snapshot). **Read both before writing anything.**
+Exploration is **read-only**: it loads each page and reads it; it never clicks, types or submits.
+Writes `exploration/<slug>.json` (headings, controls with role, name, region, volatile-id and ambiguous flags, forms) and
+`exploration/<slug>.aria.txt` (accessibility snapshot). When a control has an `ariaName`, that is its true accessible name:
+use it (it can contain an icon glyph) instead of `name`. **Read both files before writing anything.**
 The inventory is your only source of truth: never assume a control, route, message or business rule exists because it is
 common elsewhere. How to read it: `references/exploration-inventory.md`.
 
@@ -58,8 +61,10 @@ common elsewhere. How to read it: `references/exploration-inventory.md`.
 - At least half the tests should DO something (click, fill, select) and assert the result.
 - Use `references/test-conventions.md` (assertions, structure, what not to test) and `references/selector-strategy.md`
   (locator order, `exact: true`, ambiguous names, selects, hidden elements).
-- Every action goes through `actionEvidence(...)`, every plain check through `observationEvidence(...)`
-  (`references/evidence-format.md`). The assertion goes **inside** the verify callback.
+- Evidence (`references/evidence-format.md`): the action under test (a form submit, an important click) goes through
+  `actionEvidence(...)`, a plain check through `observationEvidence(...)`, and the assertion goes **inside** the verify
+  callback. Setup steps (typing, ticking, navigating) before the first evidence call may stay bare. If the user asks for
+  every action to be evidenced, write it that way and validate with `--strict-evidence`.
 - If the page does not expose enough to prove a behaviour, write `test.skip(true, "NOT TESTABLE: <reason>")`
   instead of inventing a workflow.
 
@@ -68,8 +73,9 @@ common elsewhere. How to read it: `references/exploration-inventory.md`.
 node SKILL_DIR/scripts/validate-spec.mjs --url <URL> [--url <URL2>] tests/*.spec.ts
 ```
 It rejects: no assertion, text selectors, `getByRole` name without `exact: true`, fixed sleeps, exact-URL assertions,
-a bare action outside `actionEvidence`, a verify without `expect`, a missing screenshot, navigation to a URL you were not given,
-and system/network imports. Fix every line it prints, then re-run it. Try fixing a spec **once or twice**; if a rule keeps
+a test whose key action is not in `actionEvidence` (or a bare action after the first screenshot), a verify without `expect`,
+a missing screenshot, navigation to a URL you were not given, and system/network imports. Add `--strict-evidence` to also
+reject every bare action. Fix every line it prints, then re-run it. Try fixing a spec **once or twice**; if a rule keeps
 failing, simplify the test or mark it NOT TESTABLE rather than weakening the rule.
 
 ### 5. Run and collect evidence
@@ -100,4 +106,5 @@ agent cannot run shell commands, give the user the commands above to run and ask
 ## Files
 - `scripts/explore.mjs`, `validate-spec.mjs`, `summarize-evidence.mjs`, `evidence.ts`, `playwright.config.template.ts`
 - `references/exploration-inventory.md`, `test-conventions.md`, `selector-strategy.md`, `evidence-format.md`
-- `examples/todomvc/` - a complete small run (exploration, spec, evidence)
+- `examples/todomvc/`, `examples/the-internet-login/` - two complete small runs (exploration, spec, evidence); the second has a form
+- `LICENSE` - single-user commercial licence

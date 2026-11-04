@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | todos heading and new-todo textbox are present on load | passed | 1 |
 | adding a todo with Enter lists it and updates the items-left counter | passed | 1 |
-| ticking a todo's checkbox marks it completed | passed | 2 |
+| ticking a todo's checkbox marks it completed | passed | 1 |
 
 ## Evidence
 
@@ -17,5 +17,4 @@
 - adding-a-todo-with-Enter-lists-it-and-updates-the-items-left-counter/todo-added.png
 
 ### ticking a todo's checkbox marks it completed (passed)
-- ticking-a-todo-s-checkbox-marks-it-completed/todo-added-for-setup.png
 - ticking-a-todo-s-checkbox-marks-it-completed/todo-completed.png
